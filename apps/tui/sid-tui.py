@@ -74,7 +74,11 @@ def recent_jobs():
                     "id": key.rsplit(":", 1)[-1],
                     "status": data.get("status", "?"),
                     "worker": data.get("worker_id", "-"),
+                    "role": data.get("job_role") or data.get("role", "builder"),
                     "model": data.get("model", "-"),
+                    "review_status": data.get("review_status", ""),
+                    "review_verdict": data.get("review_verdict", ""),
+                    "review_job_id": data.get("review_job_id", ""),
                     "input_tokens": data.get("input_tokens", "-"),
                     "cached_input_tokens": data.get("cached_input_tokens", "-"),
                     "output_tokens": data.get("output_tokens", "-"),
@@ -165,6 +169,29 @@ def format_tokens(value):
         return "-"
 
 
+def review_display(job):
+    if job["role"] == "reviewer":
+        verdict = job["review_verdict"]
+        if verdict == "pass":
+            return "PASS"
+        if verdict == "changes_required":
+            return "CHANGES_REQUIRED"
+        if job["status"] == "review_complete":
+            return "UNKNOWN"
+        return "-"
+
+    verdict = job["review_verdict"]
+    if verdict == "pass":
+        return "PASS"
+    if verdict == "changes_required":
+        return "CHANGES_REQUIRED"
+    if job["review_status"] == "complete":
+        return "UNKNOWN"
+    if job["status"] == "awaiting_review":
+        return "NEEDED"
+    return "-"
+
+
 def draw():
     branch, state = git_info()
 
@@ -203,17 +230,13 @@ def draw():
     job_rows = [
         (
             job["id"],
-            "AWAITING_REVIEW (ACTION REQUIRED)"
-            if job["status"] == "awaiting_review"
-            else job["status"],
+            job["status"],
+            job["role"],
+            review_display(job),
             job["worker"],
             job["model"],
-            format_tokens(job["input_tokens"]),
-            format_tokens(job["cached_input_tokens"]),
-            format_tokens(job["output_tokens"]),
             format_tokens(job["total_tokens"]),
             format_duration(job["duration"]),
-            job["branch"],
         )
         for job in jobs
     ]
@@ -222,29 +245,66 @@ def draw():
         (
             "JOB ID",
             "STATUS",
+            "ROLE",
+            "REVIEW",
             "WORKER",
             "MODEL",
-            "INPUT",
-            "CACHED INPUT",
-            "OUTPUT",
-            "TOTAL",
+            "TOKENS",
             "DURATION",
-            "GIT BRANCH",
         ),
         job_rows,
         "No jobs yet",
     )
 
-    review_jobs = [job for job in jobs if job["status"] == "awaiting_review"]
-    if review_jobs:
+    review_jobs = [
+        job
+        for job in jobs
+        if job["status"] == "awaiting_review"
+    ]
+
+    needs_reviewer = [
+        job for job in review_jobs
+        if job["review_verdict"] not in {"pass", "changes_required"}
+    ]
+
+    ready_for_human = [
+        job for job in review_jobs
+        if job["review_verdict"] == "pass"
+    ]
+
+    changes_required = [
+        job for job in review_jobs
+        if job["review_verdict"] == "changes_required"
+    ]
+
+    if needs_reviewer:
         print()
-        print("HUMAN REVIEW REQUIRED")
+        print("AGENT REVIEW REQUIRED")
         print(rule())
-        for job in review_jobs:
+        for job in needs_reviewer:
             job_id = job["id"]
-            print(f" Job {job_id} is awaiting review; human action is required.")
+            print(f" Job {job_id} needs independent review.")
+            print(f" Review : ./scripts/submit-review.py {job_id}")
+
+    if ready_for_human:
+        print()
+        print("READY FOR HUMAN APPROVAL")
+        print(rule())
+        for job in ready_for_human:
+            job_id = job["id"]
+            print(f" Job {job_id} passed independent review.")
             print(f" Approve: python3 {REVIEW_SCRIPT} approve {job_id}")
             print(f" Reject : python3 {REVIEW_SCRIPT} reject {job_id}")
+
+    if changes_required:
+        print()
+        print("CHANGES REQUIRED")
+        print(rule())
+        for job in changes_required:
+            job_id = job["id"]
+            print(f" Job {job_id} did not pass independent review.")
+            print(f" Review job: {job['review_job_id'] or '-'}")
+            print(f" Reject    : python3 {REVIEW_SCRIPT} reject {job_id}")
 
     print()
     print(rule())
