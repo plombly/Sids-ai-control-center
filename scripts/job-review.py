@@ -69,6 +69,24 @@ def safe_branch(job_id, data):
     return actual
 
 
+def safe_integration_worktree(job_id, data):
+    expected = (WORKTREE_ROOT / f"job-{job_id}-integration").resolve()
+    actual = Path(data.get("integration_worktree", "")).resolve()
+    if actual != expected:
+        fail(f"unexpected integration worktree: {actual}")
+    if not actual.exists():
+        fail(f"integration worktree does not exist: {actual}")
+    return actual
+
+
+def safe_integration_branch(job_id, data):
+    expected = f"sid/integration-{job_id}"
+    actual = data.get("integration_branch")
+    if actual != expected:
+        fail(f"unexpected integration branch: {actual}")
+    return actual
+
+
 def ensure_main_clean():
     status = git("status", "--porcelain").stdout.strip()
     if status:
@@ -117,73 +135,63 @@ def approve(job_id):
     if review.get("review_verdict") != "pass":
         fail(f"reviewer {review_job_id} verdict is not pass")
 
-    candidate_commit = data.get("candidate_commit")
-    if not candidate_commit:
-        fail(f"Job {job_id} has no immutable candidate commit")
-    if data.get("reviewed_commit") != candidate_commit:
-        fail(f"Job {job_id} review does not match candidate commit")
-    if review.get("candidate_commit") != candidate_commit:
-        fail(f"reviewer {review_job_id} candidate does not match builder")
-    if review.get("reviewed_commit") != candidate_commit:
-        fail(f"reviewer {review_job_id} did not review current candidate")
+    integrated_commit = data.get("integrated_candidate_commit")
+    if data.get("integration_status") != "passed":
+        fail(f"Job {job_id} cannot be approved: integration did not pass")
+    if not integrated_commit:
+        fail(f"Job {job_id} has no integrated candidate commit")
+    if data.get("reviewed_commit") != integrated_commit:
+        fail("review did not target the exact integrated candidate")
+    if review.get("candidate_commit") != integrated_commit:
+        fail(f"reviewer {review_job_id} candidate does not match integrated candidate")
+    if review.get("reviewed_commit") != integrated_commit:
+        fail("reviewer did not target the exact integrated candidate")
 
     ensure_main_clean()
 
-    worktree = safe_worktree(job_id, data)
-    branch = safe_branch(job_id, data)
+    base_commit = data.get("integration_base_commit")
+    if not base_commit:
+        fail("integration base commit is missing")
+    current_main = git("rev-parse", "HEAD").stdout.strip()
+    if current_main != base_commit:
+        fail(
+            "stale main: current main no longer equals integration base; "
+            "reintegration and fresh review are required"
+        )
+
+    worktree = safe_integration_worktree(job_id, data)
+    branch = safe_integration_branch(job_id, data)
 
     head = git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
-    if head != candidate_commit:
-        fail("candidate worktree HEAD changed after review")
+    if head != integrated_commit:
+        fail("integrated worktree HEAD changed after review")
     if git("status", "--porcelain", cwd=worktree).stdout.strip():
-        fail("candidate worktree changed after review")
+        fail("integrated worktree changed after review")
 
     branch_head = git("rev-parse", branch).stdout.strip()
-    if branch_head != candidate_commit:
-        fail("candidate branch changed after review")
+    if branch_head != integrated_commit:
+        fail("integrated branch changed after review")
 
-    print(f"Approved candidate: {candidate_commit}")
+    print(f"Approved integrated candidate: {integrated_commit}")
 
     git(
         "merge",
-        "--no-ff",
+        "--ff-only",
         branch,
-        "-m",
-        f"Merge SID job {job_id}",
         cwd=REPO_ROOT,
     )
 
     commit_sha = git("rev-parse", "HEAD").stdout.strip()
 
-    print()
-    print("Running integration gate...")
-    integration = subprocess.run(
-        [str(REPO_ROOT / "scripts/integration-check.py")],
-        cwd=REPO_ROOT,
-        text=True,
-    )
-
     now = str(time.time())
-
-    if integration.returncode != 0:
-        r.hset(
-            key,
-            mapping={
-                "status": "integration_failed",
-                "merged_at": now,
-                "merge_commit": commit_sha,
-                "integration_status": "failed",
-                "updated_at": now,
-            },
-        )
-
-        print()
-        print(f"INTEGRATION FAILED: {job_id}")
-        print(f"Merge commit retained for diagnosis: {commit_sha}")
-        raise SystemExit(1)
 
     git("worktree", "remove", str(worktree))
     git("branch", "-d", branch)
+
+    builder_worktree = safe_worktree(job_id, data)
+    builder_branch = safe_branch(job_id, data)
+    git("worktree", "remove", "--force", str(builder_worktree))
+    git("branch", "-D", builder_branch)
 
     r.hset(
         key,
@@ -192,6 +200,7 @@ def approve(job_id):
             "merged_at": now,
             "merge_commit": commit_sha,
             "integration_status": "passed",
+            "integrated_candidate_commit": integrated_commit,
             "updated_at": now,
         },
     )
@@ -213,7 +222,11 @@ def reject(job_id):
 
     worktree = safe_worktree(job_id, data)
     branch = safe_branch(job_id, data)
+    integration_worktree = safe_integration_worktree(job_id, data)
+    integration_branch = safe_integration_branch(job_id, data)
 
+    git("worktree", "remove", "--force", str(integration_worktree))
+    git("branch", "-D", integration_branch)
     git("worktree", "remove", "--force", str(worktree))
     git("branch", "-D", branch)
 

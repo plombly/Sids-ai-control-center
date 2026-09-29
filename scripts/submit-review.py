@@ -33,13 +33,13 @@ if builder.get("status") != "awaiting_review":
         "expected 'awaiting_review'"
     )
 
-worktree = builder.get("worktree")
+worktree = builder.get("integration_worktree")
 if not worktree:
-    raise SystemExit("Builder job has no worktree")
+    raise SystemExit("Builder job has no integrated worktree")
 
-candidate_commit = builder.get("candidate_commit")
+candidate_commit = builder.get("integrated_candidate_commit")
 if not candidate_commit:
-    raise SystemExit("Builder job has no candidate commit")
+    raise SystemExit("Builder job has no integrated candidate commit")
 
 existing_review = builder.get("review_job_id")
 if existing_review:
@@ -61,7 +61,7 @@ if not r.hsetnx(builder_key, "review_job_id", job_id):
 prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {args.builder_job_id}.
-Review immutable candidate commit {candidate_commit}.
+Review immutable integrated candidate commit {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}

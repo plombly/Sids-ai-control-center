@@ -77,6 +77,108 @@ def run_git(*args, cwd=REPO_ROOT, check=True):
     )
 
 
+def integration_worktree(job_id):
+    return (WORKTREE_ROOT / f"job-{job_id}-integration").resolve()
+
+
+def cleanup_integration(job_id, data=None):
+    data = data or redis.hgetall(f"sid:jobs:{job_id}")
+    path = integration_worktree(job_id)
+    branch = f"sid/integration-{job_id}"
+    recorded_value = data.get("integration_worktree", "")
+    recorded = Path(recorded_value).resolve() if recorded_value else None
+    if recorded is not None and recorded != path:
+        raise RuntimeError(f"Unexpected integration worktree: {recorded}")
+    if path.exists():
+        run_git("worktree", "remove", "--force", str(path))
+    branch_exists = run_git("show-ref", "--verify", f"refs/heads/{branch}", check=False)
+    if branch_exists.returncode == 0:
+        run_git("branch", "-D", branch)
+
+
+def prepare_integration(job_id):
+    """Integrate source candidates without touching main, then run the gate."""
+    key = f"sid:jobs:{job_id}"
+    data = redis.hgetall(key)
+    if data.get("integration_status") == "passed" and data.get("integrated_candidate_commit"):
+        return True
+
+    if run_git("status", "--porcelain").stdout.strip():
+        redis.hset(key, mapping={"status": "integration_failed", "integration_status": "failed",
+                                  "integration_error": "main worktree is not clean",
+                                  "updated_at": str(time.time())})
+        return False
+
+    try:
+        cleanup_integration(job_id, data)
+        base = run_git("rev-parse", "HEAD").stdout.strip()
+        raw_sources = data.get("source_candidate_commits", "")
+        if raw_sources:
+            sources = json.loads(raw_sources)
+        else:
+            sources = [data.get("candidate_commit", "")]
+        if not isinstance(sources, list) or not sources or not all(sources):
+            raise RuntimeError("missing ordered source candidate commits")
+
+        path = integration_worktree(job_id)
+        branch = f"sid/integration-{job_id}"
+        WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
+        run_git("worktree", "add", "-b", branch, str(path), base)
+        redis.hset(key, mapping={
+            "integration_worktree": str(path),
+            "integration_branch": branch,
+            "integration_base_commit": base,
+            "source_candidate_commits": json.dumps(sources, separators=(",", ":")),
+            "integration_status": "running",
+            "updated_at": str(time.time()),
+        })
+
+        for source in sources:
+            result = run_git("cherry-pick", "--no-edit", source, cwd=path, check=False)
+            if result.returncode != 0:
+                run_git("cherry-pick", "--abort", cwd=path, check=False)
+                raise RuntimeError(f"cannot apply source candidate {source}: {result.stderr.strip()}")
+
+        env = os.environ.copy()
+        env["REPO_ROOT"] = str(path)
+        gate = subprocess.run(
+            [str(REPO_ROOT / "scripts/integration-check.py")],
+            cwd=path, env=env, text=True, capture_output=True,
+        )
+        integrated = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
+        metadata = {
+            "returncode": gate.returncode,
+            "stdout": gate.stdout[-4000:],
+            "stderr": gate.stderr[-4000:],
+            "commit": integrated,
+        }
+        if gate.returncode != 0:
+            raise RuntimeError("deterministic integration gate failed")
+
+        redis.hset(key, mapping={
+            "status": "awaiting_review",
+            "integration_status": "passed",
+            "integrated_candidate_commit": integrated,
+            "integration_result": json.dumps(metadata, separators=(",", ":")),
+            "updated_at": str(time.time()),
+        })
+        return True
+    except Exception as exc:
+        current = redis.hgetall(key)
+        try:
+            cleanup_integration(job_id, current)
+        except Exception:
+            pass
+        redis.hset(key, mapping={
+            "status": "integration_failed",
+            "integration_status": "failed",
+            "integration_error": str(exc),
+            "integration_result": json.dumps({"error": str(exc)}, separators=(",", ":")),
+            "updated_at": str(time.time()),
+        })
+        return False
+
+
 def create_worktree(job_id):
     WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -316,13 +418,13 @@ def queue_review_job(builder_job_id):
             "expected 'awaiting_review'"
         )
 
-    worktree = builder.get("worktree")
+    worktree = builder.get("integration_worktree")
     if not worktree:
-        raise RuntimeError("Builder job has no worktree")
+        raise RuntimeError("Builder job has no integrated worktree")
 
-    candidate_commit = builder.get("candidate_commit")
+    candidate_commit = builder.get("integrated_candidate_commit")
     if not candidate_commit:
-        raise RuntimeError("Builder job has no candidate commit")
+        raise RuntimeError("Builder job has no integrated candidate commit")
 
     review_job_id = uuid.uuid4().hex[:8]
 
@@ -343,7 +445,7 @@ def queue_review_job(builder_job_id):
     prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {builder_job_id}.
-Review immutable candidate commit {candidate_commit}.
+Review immutable integrated candidate commit {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}
@@ -394,6 +496,7 @@ material findings, explicitly say so.
         "builder_job_id": builder_job_id,
         "worktree": worktree,
         "candidate_commit": candidate_commit,
+        "integrated_candidate_commit": candidate_commit,
         "created_at": created_at,
     }
 
@@ -408,6 +511,7 @@ material findings, explicitly say so.
                 "builder_job_id": builder_job_id,
                 "worktree": worktree,
                 "candidate_commit": candidate_commit,
+                "integrated_candidate_commit": candidate_commit,
                 "prompt": prompt,
                 "created_at": str(created_at),
             },
@@ -446,7 +550,7 @@ def process_review_job(job, key, log_path):
         raise RuntimeError("Reviewer job missing builder worktree")
 
     worktree = Path(worktree_value).resolve()
-    expected = (WORKTREE_ROOT / f"job-{builder_job_id}").resolve()
+    expected = integration_worktree(builder_job_id)
 
     if worktree != expected:
         raise RuntimeError(f"Unexpected reviewer worktree: {worktree}")
@@ -464,11 +568,11 @@ def process_review_job(job, key, log_path):
             "expected 'awaiting_review'"
         )
 
-    candidate_commit = str(job.get("candidate_commit", ""))
+    candidate_commit = str(job.get("integrated_candidate_commit") or job.get("candidate_commit", ""))
     if not candidate_commit:
         raise RuntimeError("Reviewer job missing candidate_commit")
-    if builder.get("candidate_commit") != candidate_commit:
-        raise RuntimeError("Reviewer candidate does not match builder candidate")
+    if builder.get("integrated_candidate_commit") != candidate_commit:
+        raise RuntimeError("Reviewer candidate does not match integrated candidate")
 
     head = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
     if head != candidate_commit:
@@ -488,6 +592,7 @@ def process_review_job(job, key, log_path):
             "builder_job_id": builder_job_id,
             "worktree": str(worktree),
             "candidate_commit": candidate_commit,
+            "integrated_candidate_commit": candidate_commit,
             "log": str(log_path),
             "token_budget": str(job.get("token_budget") or role_limit("reviewer", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
             "enforcement_budget": str(job.get("enforcement_budget") or role_limit("reviewer", "ENFORCEMENT_BUDGET", ROLE_ENFORCEMENT_DEFAULTS)),
@@ -768,6 +873,7 @@ def process_repair_job(job, key, log_path, test_log):
         builder_key,
         mapping={
             "candidate_commit": candidate_after,
+            "source_candidate_commits": json.dumps([candidate_after], separators=(",", ":")),
             "review_history": history,
             "repair_status": "completed",
             "last_repair_job_id": job_id,
@@ -785,6 +891,13 @@ def process_repair_job(job, key, log_path, test_log):
             "updated_at": str(time.time()),
         },
     )
+
+    if not prepare_integration(builder_job_id):
+        print(
+            f"[{WORKER_ID}] repair={job_id} integration failed",
+            flush=True,
+        )
+        return
 
     review_job_id, queued = queue_review_job(builder_job_id)
 
@@ -935,9 +1048,17 @@ def process_job(raw_job):
                 "test_log": str(test_log),
                 "changes": diff,
                 "candidate_commit": candidate_commit,
+                "source_candidate_commits": json.dumps([candidate_commit], separators=(",", ":")),
                 "updated_at": str(time.time()),
             },
         )
+
+        if not prepare_integration(job_id):
+            print(
+                f"[{WORKER_ID}] job={job_id} integration FAILED",
+                flush=True,
+            )
+            return
 
         try:
             review_job_id, queued = queue_review_job(job_id)

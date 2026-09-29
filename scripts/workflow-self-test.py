@@ -46,6 +46,9 @@ def test_approval_review_gate():
         "review_verdict": "pass",
         "review_job_id": "review123",
         "candidate_commit": "abc123",
+        "integrated_candidate_commit": "abc123",
+        "integration_base_commit": "base123",
+        "integration_status": "passed",
         "reviewed_commit": "abc123",
     }
     reviewer = {
@@ -110,13 +113,36 @@ def test_immutable_candidate_contract():
     assert 'Builder worktree changed after candidate commit' in worker
     assert 'Candidate changed during read-only review' in worker
 
-    assert 'data.get("reviewed_commit") != candidate_commit' in approval
-    assert 'review.get("reviewed_commit") != candidate_commit' in approval
-    assert 'candidate worktree HEAD changed after review' in approval
-    assert 'candidate branch changed after review' in approval
+    assert 'data.get("reviewed_commit") != integrated_commit' in approval
+    assert 'review.get("reviewed_commit") != integrated_commit' in approval
+    assert 'integrated worktree HEAD changed after review' in approval
+    assert 'integrated branch changed after review' in approval
 
-    assert 'candidate_commit = builder.get("candidate_commit")' in manual
+    assert 'candidate_commit = builder.get("integrated_candidate_commit")' in manual
     assert '"candidate_commit": candidate_commit' in manual
+
+
+def test_parallel_integration_contract():
+    worker = (ROOT / "services/worker/worker.py").read_text()
+    approval = (ROOT / "scripts/job-review.py").read_text()
+    manual = (ROOT / "scripts/submit-review.py").read_text()
+
+    assert "source_candidate_commits" in worker
+    assert "integration_base_commit" in worker
+    assert "integrated_candidate_commit" in worker
+    assert "integration_status" in worker
+    assert "integration_result" in worker
+    assert '"--ff-only"' in approval
+    assert "stale main" in approval
+    assert "safe_integration_worktree" in approval
+    assert 'builder.get("integrated_candidate_commit")' in manual
+
+
+def test_integration_and_review_duplicate_guards():
+    worker = (ROOT / "services/worker/worker.py").read_text()
+    submitter = (ROOT / "scripts/submit-review.py").read_text()
+    assert 'data.get("integration_status") == "passed"' in worker
+    assert 'hsetnx(builder_key, "review_job_id", job_id)' in submitter
 
 
 def main():
@@ -125,6 +151,8 @@ def main():
         test_worker_noop_precedes_review_dispatch,
         test_manual_review_duplicate_guard,
         test_immutable_candidate_contract,
+        test_parallel_integration_contract,
+        test_integration_and_review_duplicate_guards,
     ]
     for test in tests:
         test()
