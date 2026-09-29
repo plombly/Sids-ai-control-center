@@ -128,7 +128,7 @@ def run_codex(job, worktree, log_path):
     prompt = job["prompt"]
     role = job.get("role", "builder")
 
-    if role not in {"builder", "reviewer"}:
+    if role not in {"builder", "reviewer", "repair"}:
         raise RuntimeError(f"Unsupported job role: {role}")
 
     sandbox = "read-only" if role == "reviewer" else "workspace-write"
@@ -284,7 +284,14 @@ Review the implementation for:
 - security or unsafe behavior
 - maintainability issues
 
-Inspect the Git diff and relevant surrounding code.
+Inspect the candidate diff first. Read surrounding code only when needed
+to validate a concrete concern. Keep the review focused on the requested task.
+
+The builder's deterministic test gate has already run. Do not broadly rerun
+the entire repository test suite merely to repeat that gate. If a focused
+Python test is necessary, use SID's existing environment explicitly:
+
+/tmp/sid-agent-venv/bin/python -m pytest <focused-test-path> -q
 
 Do not modify any files.
 Do not commit anything.
@@ -482,6 +489,222 @@ def process_review_job(job, key, log_path):
     )
 
 
+
+def process_repair_job(job, key, log_path, test_log):
+    job_id = str(job["id"])
+    builder_job_id = str(job.get("target_builder_id", ""))
+
+    if not builder_job_id:
+        raise RuntimeError("Repair job missing target_builder_id")
+
+    builder_key = f"sid:jobs:{builder_job_id}"
+    builder = redis.hgetall(builder_key)
+
+    if not builder:
+        raise RuntimeError(f"Repair target not found: {builder_job_id}")
+
+    if builder.get("status") != "awaiting_review":
+        raise RuntimeError(
+            f"Repair target status is {builder.get('status')!r}; "
+            "expected 'awaiting_review'"
+        )
+
+    if builder.get("review_verdict") != "changes_required":
+        raise RuntimeError(
+            "Repair target does not currently require changes"
+        )
+
+    worktree_value = builder.get("worktree")
+    if not worktree_value:
+        raise RuntimeError("Repair target has no worktree")
+
+    worktree = Path(worktree_value).resolve()
+    expected = (WORKTREE_ROOT / f"job-{builder_job_id}").resolve()
+
+    if worktree != expected:
+        raise RuntimeError(f"Unexpected repair worktree: {worktree}")
+
+    if not worktree.exists():
+        raise RuntimeError(f"Repair worktree missing: {worktree}")
+
+    candidate_before = builder.get("candidate_commit")
+    if not candidate_before:
+        raise RuntimeError("Repair target has no candidate commit")
+
+    head = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+
+    if head != candidate_before:
+        raise RuntimeError(
+            "Repair worktree HEAD does not match reviewed candidate"
+        )
+
+    if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
+        raise RuntimeError("Repair worktree is dirty before repair")
+
+    redis.hset(
+        key,
+        mapping={
+            "status": "repairing",
+            "worker_id": WORKER_ID,
+            "worker_role": WORKER_ROLE,
+            "job_role": "repair",
+            "target_builder_id": builder_job_id,
+            "worktree": str(worktree),
+            "candidate_before": candidate_before,
+            "log": str(log_path),
+            "updated_at": str(time.time()),
+        },
+    )
+
+    redis.hset(
+        builder_key,
+        mapping={
+            "repair_status": "running",
+            "updated_at": str(time.time()),
+        },
+    )
+
+    returncode, duration = run_codex(job, worktree, log_path)
+    session_id, usage = parse_codex_log(log_path)
+
+    common = {
+        "codex_exit_code": str(returncode),
+        "duration_seconds": f"{duration:.2f}",
+        "session_id": session_id,
+        "tokens": usage["total_tokens"],
+        "input_tokens": usage["input_tokens"],
+        "cached_input_tokens": usage["cached_input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "reasoning_tokens": usage["reasoning_tokens"],
+        "updated_at": str(time.time()),
+    }
+
+    redis.hset(key, mapping=common)
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"Repair Codex exited with status {returncode}"
+        )
+
+    redis.hset(key, mapping={"status": "testing"})
+
+    tests_ok, tests_output = run_tests(worktree)
+    test_log.write_text(tests_output)
+
+    if not tests_ok:
+        redis.hset(
+            key,
+            mapping={
+                "status": "test_failed",
+                "test_log": str(test_log),
+                "updated_at": str(time.time()),
+            },
+        )
+        redis.hset(
+            builder_key,
+            mapping={
+                "repair_status": "test_failed",
+                "updated_at": str(time.time()),
+            },
+        )
+        return
+
+    diff = run_git("status", "--porcelain", cwd=worktree).stdout
+
+    if not diff.strip():
+        redis.hset(
+            key,
+            mapping={
+                "status": "repair_no_changes",
+                "test_log": str(test_log),
+                "updated_at": str(time.time()),
+            },
+        )
+        redis.hset(
+            builder_key,
+            mapping={
+                "repair_status": "no_changes",
+                "updated_at": str(time.time()),
+            },
+        )
+        return
+
+    run_git("add", "-A", cwd=worktree)
+    run_git(
+        "commit",
+        "-m",
+        f"Repair SID job {builder_job_id} via {job_id}",
+        cwd=worktree,
+    )
+
+    candidate_after = run_git(
+        "rev-parse", "HEAD", cwd=worktree
+    ).stdout.strip()
+
+    if candidate_after == candidate_before:
+        raise RuntimeError("Repair did not create a new candidate")
+
+    if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
+        raise RuntimeError("Repair candidate is dirty after commit")
+
+    old_review = builder.get("review_job_id", "")
+
+    history = builder.get("review_history", "")
+    history_item = (
+        f"{old_review}:{candidate_before}:"
+        f"{builder.get('review_verdict', '')}"
+    )
+
+    history = (
+        f"{history},{history_item}"
+        if history
+        else history_item
+    )
+
+    # Remove the old review reservation so queue_review_job() can
+    # atomically reserve a fresh independent reviewer.
+    redis.hdel(
+        builder_key,
+        "review_job_id",
+        "review_status",
+        "review_verdict",
+        "reviewed_commit",
+        "review_error",
+    )
+
+    redis.hset(
+        builder_key,
+        mapping={
+            "candidate_commit": candidate_after,
+            "review_history": history,
+            "repair_status": "completed",
+            "last_repair_job_id": job_id,
+            "updated_at": str(time.time()),
+        },
+    )
+
+    redis.hset(
+        key,
+        mapping={
+            "status": "repair_complete",
+            "candidate_before": candidate_before,
+            "candidate_after": candidate_after,
+            "test_log": str(test_log),
+            "updated_at": str(time.time()),
+        },
+    )
+
+    review_job_id, queued = queue_review_job(builder_job_id)
+
+    print(
+        f"[{WORKER_ID}] repair={job_id} "
+        f"builder={builder_job_id} "
+        f"candidate={candidate_after[:12]} "
+        f"review={review_job_id} "
+        f"{'queued' if queued else 'already queued'}",
+        flush=True,
+    )
+
 def process_job(raw_job):
     job = json.loads(raw_job)
     job_id = str(job["id"])
@@ -496,6 +719,15 @@ def process_job(raw_job):
 
         if job.get("role", "builder") == "reviewer":
             process_review_job(job, key, log_path)
+            return
+
+        if job.get("role") == "repair":
+            process_repair_job(
+                job,
+                key,
+                log_path,
+                test_log,
+            )
             return
 
         redis.hset(
@@ -640,6 +872,24 @@ def process_job(raw_job):
                 "updated_at": str(time.time()),
             },
         )
+
+        if job.get("role", "builder") == "repair":
+            target_builder_id = str(
+                job.get("target_builder_id", "")
+            )
+            if target_builder_id:
+                redis.hset(
+                    f"sid:jobs:{target_builder_id}",
+                    mapping={
+                        "repair_status": "failed",
+                        "repair_error": str(exc),
+                        "updated_at": str(time.time()),
+                    },
+                )
+                redis.hdel(
+                    f"sid:jobs:{target_builder_id}",
+                    "repair_job_id",
+                )
 
         if job.get("role", "builder") == "reviewer":
             builder_job_id = str(job.get("builder_job_id", ""))

@@ -20,6 +20,9 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.6-luna")
 ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "sid-orchestrator-01")
 PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "900"))
+MAX_REPAIR_ATTEMPTS = int(
+    os.getenv("MAX_REPAIR_ATTEMPTS", "2")
+)
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -336,6 +339,195 @@ def process_goal(raw):
     )
 
 
+
+def review_findings(review):
+    log_value = review.get("log", "")
+    if not log_value:
+        return "Reviewer requested changes but supplied no readable log."
+
+    path = Path(log_value)
+
+    if not path.exists():
+        return "Reviewer requested changes; review log is unavailable."
+
+    messages = []
+
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if event.get("type") != "item.completed":
+                continue
+
+            item = event.get("item") or {}
+
+            if item.get("type") == "agent_message":
+                text = str(item.get("text", "")).strip()
+                if text:
+                    messages.append(text)
+    except OSError as exc:
+        return f"Reviewer requested changes; log read failed: {exc}"
+
+    if not messages:
+        return "Reviewer requested changes but emitted no findings."
+
+    # Keep the repair prompt focused. The final reviewer messages contain
+    # the actionable findings and verdict; do not replay the full session.
+    return "\n\n".join(messages[-3:])
+
+
+def queue_repairs():
+    for key in r.scan_iter("sid:jobs:*"):
+        builder = r.hgetall(key)
+
+        if builder.get("status") != "awaiting_review":
+            continue
+
+        if builder.get("review_status") != "complete":
+            continue
+
+        if builder.get("review_verdict") != "changes_required":
+            continue
+
+        if builder.get("role", "builder") not in {"", "builder"}:
+            continue
+
+        attempts = int(builder.get("repair_attempts", "0") or "0")
+
+        if attempts >= MAX_REPAIR_ATTEMPTS:
+            if builder.get("repair_status") != "exhausted":
+                r.hset(
+                    key,
+                    mapping={
+                        "repair_status": "exhausted",
+                        "updated_at": now(),
+                    },
+                )
+            continue
+
+        existing = builder.get("repair_job_id")
+        if existing:
+            repair = r.hgetall(f"sid:jobs:{existing}")
+            if repair.get("status") in {
+                "queued",
+                "claimed",
+                "repairing",
+                "testing",
+            }:
+                continue
+
+        review_job_id = builder.get("review_job_id")
+        if not review_job_id:
+            continue
+
+        review = r.hgetall(f"sid:jobs:{review_job_id}")
+
+        if not review:
+            continue
+
+        findings = review_findings(review)
+        repair_job_id = uuid.uuid4().hex[:8]
+        next_attempt = attempts + 1
+
+        # Atomic reservation prevents the orchestrator loop from
+        # dispatching the same repair twice.
+        if not r.hsetnx(key, "repair_job_id", repair_job_id):
+            continue
+
+        prompt = f"""You are a focused repair agent for SID's AI Command Center.
+
+Builder job:
+{builder.get("id", "")}
+
+Original task:
+{builder.get("prompt", "")}
+
+The immutable candidate was independently reviewed and changes were required.
+
+Reviewer findings:
+{findings}
+
+Repair attempt:
+{next_attempt} of {MAX_REPAIR_ATTEMPTS}
+
+Work ONLY on the concrete reviewer findings necessary to satisfy the original
+task. Preserve correct existing work. Do not broaden the scope, redesign
+unrelated code, merge branches, or commit changes yourself.
+
+Inspect the existing candidate first. Make the smallest correct repair.
+Validate the affected behavior. SID will run its deterministic test gate
+after you finish.
+"""
+
+        created = now()
+
+        payload = {
+            "id": repair_job_id,
+            "prompt": prompt,
+            "provider": builder.get(
+                "provider",
+                DEFAULT_PROVIDER,
+            ),
+            "model": builder.get(
+                "model",
+                DEFAULT_MODEL,
+            ),
+            "role": "repair",
+            "target_builder_id": builder.get("id", ""),
+            "worktree": builder.get("worktree", ""),
+            "created_at": created,
+        }
+
+        try:
+            r.hset(
+                f"sid:jobs:{repair_job_id}",
+                mapping={
+                    "id": repair_job_id,
+                    "status": "queued",
+                    "role": "repair",
+                    "provider": payload["provider"],
+                    "model": payload["model"],
+                    "target_builder_id": payload[
+                        "target_builder_id"
+                    ],
+                    "worktree": payload["worktree"],
+                    "prompt": prompt,
+                    "repair_attempt": str(next_attempt),
+                    "created_at": created,
+                    "updated_at": created,
+                },
+            )
+
+            r.hset(
+                key,
+                mapping={
+                    "repair_attempts": str(next_attempt),
+                    "repair_status": "queued",
+                    "updated_at": now(),
+                },
+            )
+
+            r.rpush(JOB_QUEUE, json.dumps(payload))
+
+            print(
+                f"[{ORCHESTRATOR_ID}] repair={repair_job_id} "
+                f"builder={builder.get('id')} "
+                f"attempt={next_attempt}/{MAX_REPAIR_ATTEMPTS}",
+                flush=True,
+            )
+
+        except Exception:
+            current = r.hget(key, "repair_job_id")
+
+            if current == repair_job_id:
+                r.hdel(key, "repair_job_id", "repair_status")
+
+            r.delete(f"sid:jobs:{repair_job_id}")
+            raise
+
 def release_dependencies():
     for key in r.scan_iter("sid:jobs:*"):
         job = r.hgetall(key)
@@ -450,6 +642,7 @@ def main():
     while True:
         try:
             heartbeat()
+            queue_repairs()
             release_dependencies()
             update_goals()
 
