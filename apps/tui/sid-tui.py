@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import json
+import math
 import os
 import shutil
 import subprocess
@@ -62,6 +64,109 @@ def workers():
     return result
 
 
+def _text(value, fallback="-"):
+    """Return a printable, non-empty value from a possibly bad hash field."""
+    if value is None:
+        return fallback
+    value = str(value).strip()
+    return value or fallback
+
+
+def _json_list(value):
+    if isinstance(value, (list, tuple)):
+        values = value
+    else:
+        try:
+            values = json.loads(value or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+    if not isinstance(values, (list, tuple)):
+        return []
+    ids = {
+        str(item).strip()
+        for item in values
+        if isinstance(item, (str, int, float)) and str(item).strip()
+    }
+    return sorted(ids)
+
+
+def normalize_orchestrator(key, data):
+    """Normalize one orchestrator hash without making assumptions about it."""
+    data = data if isinstance(data, dict) else {}
+    return {
+        "id": _text(data.get("id"), key.rsplit(":", 1)[-1]),
+        "status": _text(data.get("status"), "unknown"),
+        "model": _text(data.get("model")),
+        "active_goal": _text(data.get("goal_id") or data.get("active_goal")),
+        "heartbeat_age": heartbeat_age(data.get("last_seen")),
+    }
+
+
+def orchestrators():
+    """Read-only, deterministically ordered orchestrator records."""
+    result = []
+    for key in sorted(r.scan_iter("sid:orchestrators:*")):
+        try:
+            data = r.hgetall(key)
+        except Exception:
+            data = {}
+        result.append(normalize_orchestrator(key, data))
+    return sorted(result, key=lambda item: (item["id"], item["status"], item["model"]))
+
+
+def normalize_goal(goal_id, data, job_statuses=None):
+    """Normalize a goal and derive progress solely from its child job statuses."""
+    data = data if isinstance(data, dict) else {}
+    child_ids = _json_list(data.get("jobs") or data.get("job_ids"))
+    statuses = {
+        job_id: _text((job_statuses or {}).get(job_id), "unknown")
+        for job_id in child_ids
+    }
+    status_counts = {}
+    for status in statuses.values():
+        status_counts[status] = status_counts.get(status, 0) + 1
+    status_counts = dict(sorted(status_counts.items()))
+    complete_statuses = {"completed", "completed_no_changes", "merged", "done", "succeeded"}
+    progress = {
+        "total": len(child_ids),
+        "completed": sum(status in complete_statuses for status in statuses.values()),
+        "status_counts": status_counts,
+    }
+    return {
+        "id": _text(data.get("id"), goal_id),
+        "status": _text(data.get("status"), "unknown"),
+        "summary": _text(data.get("summary") or data.get("text") or data.get("goal")),
+        "created_at": _text(data.get("created_at")),
+        "updated_at": _text(data.get("updated_at")),
+        "child_job_ids": child_ids,
+        "child_job_progress": progress,
+        "sort_time": timestamp(data.get("updated_at") or data.get("created_at")),
+    }
+
+
+def recent_goals(limit=8):
+    """Read a bounded, newest-first view of goals and their child jobs."""
+    result = []
+    for key in sorted(r.scan_iter("sid:goals:*")):
+        goal_id = key.rsplit(":", 1)[-1]
+        try:
+            data = r.hgetall(key)
+        except Exception:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        child_ids = _json_list(data.get("jobs") or data.get("job_ids"))
+        statuses = {}
+        for job_id in child_ids:
+            try:
+                job = r.hgetall(f"sid:jobs:{job_id}")
+            except Exception:
+                job = {}
+            statuses[job_id] = job.get("status") if isinstance(job, dict) else None
+        result.append(normalize_goal(goal_id, data, statuses))
+    result.sort(key=lambda item: (-item["sort_time"], item["id"]))
+    return result[:max(0, int(limit))]
+
+
 def recent_jobs():
     result = []
 
@@ -101,9 +206,10 @@ def recent_jobs():
 
 def timestamp(value):
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return 0.0
+    return parsed if math.isfinite(parsed) else 0.0
 
 
 def heartbeat_age(value):
@@ -112,6 +218,11 @@ def heartbeat_age(value):
         return -1
 
     return max(int(time.time() - seen_at), 0)
+
+
+def format_heartbeat_age(value):
+    age = value if isinstance(value, (int, float)) else heartbeat_age(value)
+    return f"{int(age)}s ago" if age >= 0 else "unknown"
 
 
 def clip(value, width):
@@ -227,6 +338,44 @@ def draw():
         ("WORKER ID", "ROLE", "PROVIDER", "MODEL", "STATUS", "HEARTBEAT"),
         worker_rows,
         "No workers online",
+    )
+
+    print()
+    orch_rows = [
+        (
+            item["id"],
+            item["status"],
+            item["model"],
+            item["active_goal"],
+            format_heartbeat_age(item["heartbeat_age"]),
+        )
+        for item in orchestrators()
+    ]
+    table(
+        "ORCHESTRATORS",
+        ("ORCHESTRATOR ID", "STATUS", "MODEL", "ACTIVE GOAL", "HEARTBEAT"),
+        orch_rows,
+        "No orchestrators online",
+    )
+
+    print()
+    goal_rows = []
+    for goal in recent_goals():
+        progress = goal["child_job_progress"]
+        goal_rows.append(
+            (
+                goal["id"],
+                goal["status"],
+                goal["summary"],
+                f"{progress['completed']}/{progress['total']}",
+                ",".join(goal["child_job_ids"]) or "-",
+            )
+        )
+    table(
+        "RECENT GOALS",
+        ("GOAL ID", "STATUS", "SUMMARY", "DONE", "CHILD JOBS"),
+        goal_rows,
+        "No goals yet",
     )
 
     print()
