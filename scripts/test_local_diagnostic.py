@@ -10,7 +10,7 @@ SPEC.loader.exec_module(diagnostic)
 
 
 def test_main_passes_when_all_checks_pass(monkeypatch, capsys):
-    checks = ["redis", "orchestrator", "worker", "repository", "api"]
+    checks = ["redis", "orchestrator", *diagnostic.WORKER_SERVICES, "repository", "api"]
     monkeypatch.setattr(
         diagnostic,
         "check_redis",
@@ -50,21 +50,24 @@ def test_main_fails_and_reports_failed_check(monkeypatch, capsys):
     assert diagnostic.main() == 1
     output = capsys.readouterr().out
     assert "[FAIL] Redis: connection refused" in output
-    assert output.count("[PASS]") == 4
+    assert output.count("[PASS]") == len(diagnostic.WORKER_SERVICES) + 3
 
 
 def test_redis_check_uses_fixed_local_endpoint(monkeypatch):
     calls = []
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="PONG\n", stderr="")
+    class FakeRedis:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
 
-    monkeypatch.setattr(diagnostic.subprocess, "run", fake_run)
+        def ping(self):
+            return True
+
+    monkeypatch.setattr(diagnostic.redis, "Redis", FakeRedis)
 
     assert diagnostic.check_redis()[0] is True
-    assert calls[0][0] == ["redis-cli", "-h", "127.0.0.1", "-p", "6379", "ping"]
-
+    assert calls[0]["host"] == "127.0.0.1"
+    assert calls[0]["port"] == 6379
 
 def test_service_check_reports_systemd_state(monkeypatch):
     calls = []

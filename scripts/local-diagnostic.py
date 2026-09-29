@@ -5,6 +5,7 @@
 import json
 import os
 import subprocess
+import redis
 import sys
 from pathlib import Path
 from urllib.error import URLError
@@ -15,8 +16,15 @@ REPO = Path(os.getenv("REPO_ROOT", Path(__file__).resolve().parent.parent))
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = "6379"
 API_HEALTH_URL = os.getenv("SID_API_HEALTH_URL", "http://127.0.0.1:8000/health")
-ORCHESTRATOR_SERVICE = os.getenv("SID_ORCHESTRATOR_SERVICE", "sid-orchestrator.service")
-WORKER_SERVICE = os.getenv("SID_WORKER_SERVICE", "sid-worker.service")
+ORCHESTRATOR_SERVICE = os.getenv("SID_ORCHESTRATOR_SERVICE", "sid-ai-orchestrator.service")
+WORKER_SERVICES = tuple(
+    value.strip()
+    for value in os.getenv(
+        "SID_WORKER_SERVICES",
+        "sid-ai-worker@01.service,sid-ai-worker@02.service,sid-ai-worker@03.service,sid-ai-worker@04.service",
+    ).split(",")
+    if value.strip()
+)
 
 
 def command_check(label, command, expected_output=None):
@@ -41,11 +49,18 @@ def command_check(label, command, expected_output=None):
 
 
 def check_redis():
-    return command_check(
-        "Redis responded to PING",
-        ["redis-cli", "-h", REDIS_HOST, "-p", REDIS_PORT, "ping"],
-        "PONG",
-    )
+    try:
+        client = redis.Redis(
+            host=REDIS_HOST,
+            port=int(REDIS_PORT),
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+        if client.ping() is not True:
+            return False, "Redis PING returned an unexpected response"
+    except Exception as exc:
+        return False, f"Redis responded to PING: {exc}"
+    return True, f"Redis responded to PING ({REDIS_HOST}:{REDIS_PORT})"
 
 
 def check_service(label, service):
@@ -82,7 +97,10 @@ def main():
     checks = [
         ("redis", check_redis),
         ("orchestrator", lambda: check_service("orchestrator", ORCHESTRATOR_SERVICE)),
-        ("worker", lambda: check_service("worker", WORKER_SERVICE)),
+        *(
+            (service, lambda service=service: check_service("worker", service))
+            for service in WORKER_SERVICES
+        ),
         ("repository", check_repository),
         ("api", check_api),
     ]
