@@ -5,6 +5,7 @@ import signal
 import socket
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from redis import Redis
@@ -237,6 +238,110 @@ def run_tests(worktree):
     return True, "\n".join(output)
 
 
+def queue_review_job(builder_job_id):
+    builder_key = f"sid:jobs:{builder_job_id}"
+    builder = redis.hgetall(builder_key)
+
+    if not builder:
+        raise RuntimeError(f"Builder job not found: {builder_job_id}")
+
+    if builder.get("status") != "awaiting_review":
+        raise RuntimeError(
+            f"Builder job status is {builder.get('status')!r}; "
+            "expected 'awaiting_review'"
+        )
+
+    worktree = builder.get("worktree")
+    if not worktree:
+        raise RuntimeError("Builder job has no worktree")
+
+    review_job_id = uuid.uuid4().hex[:8]
+
+    # Atomic duplicate guard. Only the process that successfully creates
+    # review_job_id is allowed to enqueue the reviewer.
+    if not redis.hsetnx(builder_key, "review_job_id", review_job_id):
+        return builder.get("review_job_id", ""), False
+
+    prompt = f"""You are the review agent for SID's AI Command Center.
+
+Review builder job {builder_job_id}.
+
+Original task:
+{builder.get("prompt", "")}
+
+You are operating inside the builder's completed worktree.
+
+Review the implementation for:
+- correctness
+- missed requirements
+- regressions
+- integration problems
+- security or unsafe behavior
+- maintainability issues
+
+Inspect the Git diff and relevant surrounding code.
+
+Do not modify any files.
+Do not commit anything.
+
+End your response with exactly one verdict line:
+VERDICT: PASS
+or
+VERDICT: CHANGES_REQUIRED
+
+Before the verdict, provide concise actionable findings. If there are no
+material findings, explicitly say so.
+"""
+
+    created_at = time.time()
+
+    review_job = {
+        "id": review_job_id,
+        "prompt": prompt,
+        "provider": builder.get("provider", DEFAULT_PROVIDER),
+        "model": builder.get("model", DEFAULT_MODEL),
+        "role": "reviewer",
+        "builder_job_id": builder_job_id,
+        "worktree": worktree,
+        "created_at": created_at,
+    }
+
+    try:
+        redis.hset(
+            f"sid:jobs:{review_job_id}",
+            mapping={
+                "status": "queued",
+                "provider": review_job["provider"],
+                "model": review_job["model"],
+                "role": "reviewer",
+                "builder_job_id": builder_job_id,
+                "worktree": worktree,
+                "prompt": prompt,
+                "created_at": str(created_at),
+            },
+        )
+
+        redis.hset(
+            builder_key,
+            mapping={
+                "review_status": "queued",
+                "updated_at": str(time.time()),
+            },
+        )
+
+        redis.rpush(QUEUE_NAME, json.dumps(review_job))
+
+    except Exception:
+        # Release the reservation only if it is still ours.
+        current = redis.hget(builder_key, "review_job_id")
+        if current == review_job_id:
+            redis.hdel(builder_key, "review_job_id", "review_status")
+        redis.delete(f"sid:jobs:{review_job_id}")
+        raise
+
+    return review_job_id, True
+
+
 def process_review_job(job, key, log_path):
     job_id = str(job["id"])
     builder_job_id = str(job.get("builder_job_id", ""))
@@ -430,6 +535,14 @@ def process_job(raw_job):
                 "changes": diff,
                 "updated_at": str(time.time()),
             },
+        )
+
+        review_job_id, queued = queue_review_job(job_id)
+
+        print(
+            f"[{WORKER_ID}] job={job_id} review={review_job_id} "
+            f"{'queued' if queued else 'already queued'}",
+            flush=True,
         )
 
     except Exception as exc:
