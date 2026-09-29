@@ -108,6 +108,35 @@ def test_heartbeat_formatting_is_stable(monkeypatch):
     assert sid_tui.format_heartbeat_age("bad") == "unknown"
 
 
+def test_timestamp_display_formats_local_time_and_rejects_unusable_values(monkeypatch):
+    converted = []
+    local_values = {
+        0.0: (1970, 1, 1, 0, 0, 0, 3, 1, 0),
+        123.5: (2024, 2, 3, 4, 5, 6, 0, 34, 0),
+    }
+
+    def localtime(value):
+        converted.append(value)
+        return local_values[value]
+
+    monkeypatch.setattr(sid_tui.time, "localtime", localtime)
+
+    assert sid_tui.format_timestamp("0") == "1970-01-01 00:00:00"
+    assert sid_tui.format_timestamp("123.5") == "2024-02-03 04:05:06"
+    assert converted == [0.0, 123.5]
+    for value in (None, "", "bad", "nan", "inf"):
+        assert sid_tui.format_timestamp(value) == "-"
+
+
+def test_timestamp_display_returns_fallback_for_unrepresentable_epoch(monkeypatch):
+    def localtime(_value):
+        raise OverflowError
+
+    monkeypatch.setattr(sid_tui.time, "localtime", localtime)
+
+    assert sid_tui.format_timestamp("1") == "-"
+
+
 def test_goal_progress_format_includes_completion_and_status_breakdown():
     assert sid_tui.format_goal_progress(
         {
@@ -121,6 +150,15 @@ def test_goal_progress_format_includes_completion_and_status_breakdown():
 def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatch):
     monkeypatch.setattr(sid_tui, "clear", lambda: None)
     monkeypatch.setattr(sid_tui, "git_info", lambda: ("main", "clean"))
+    monkeypatch.setattr(
+        sid_tui.time,
+        "localtime",
+        lambda value: (
+            (2024, 2, 3, 4, 5, 6, 0, 34, 0)
+            if value == 1706933106.0
+            else (2024, 2, 3, 4, 6, 6, 0, 34, 0)
+        ),
+    )
     monkeypatch.setattr(sid_tui, "r", FakeRedis({}))
     monkeypatch.setattr(
         sid_tui,
@@ -148,8 +186,8 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
                 "id": "goal-1",
                 "status": "running",
                 "summary": "Ship the TUI",
-                "created_at": "1",
-                "updated_at": "2",
+                "created_at": "1706933106",
+                "updated_at": "1706933166",
                 "child_job_ids": ["job-1", "job-2", "job-3"],
                 "child_job_progress": {
                     "completed": 1,
@@ -215,6 +253,10 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
     assert "RECENT GOALS" in rendered
     assert "goal-1" in rendered
     assert "Ship the TUI" in rendered
+    assert "2024-02-03 04:05:06" in rendered
+    assert "2024-02-03 04:06:06" in rendered
+    assert "1706933106" not in rendered
+    assert "1706933166" not in rendered
     assert "1/3 (merged:1,queued:1,running:1)" in rendered
     assert "WORKERS" in rendered
     assert "RECENT JOBS" in rendered
