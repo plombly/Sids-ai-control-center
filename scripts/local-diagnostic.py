@@ -51,7 +51,7 @@ def check_redis():
 def check_service(label, service):
     return command_check(
         f"{label} is active ({service})",
-        ["systemctl", "is-active", "--quiet", service],
+        ["systemctl", "is-active", service],
     )
 
 

@@ -64,3 +64,19 @@ def test_redis_check_uses_fixed_local_endpoint(monkeypatch):
 
     assert diagnostic.check_redis()[0] is True
     assert calls[0][0] == ["redis-cli", "-h", "127.0.0.1", "-p", "6379", "ping"]
+
+
+def test_service_check_reports_systemd_state(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=3, stdout="inactive\n", stderr="")
+
+    monkeypatch.setattr(diagnostic.subprocess, "run", fake_run)
+
+    passed, detail = diagnostic.check_service("worker", "sid-worker.service")
+
+    assert passed is False
+    assert "inactive" in detail
+    assert calls == [["systemctl", "is-active", "sid-worker.service"]]
