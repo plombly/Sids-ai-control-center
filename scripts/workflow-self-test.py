@@ -152,11 +152,18 @@ def test_integration_and_review_duplicate_guards():
     # merely an optimistic integration_status check.
     assert 'lock_key = f"sid:integration-lock:{job_id}"' in worker
     assert 'redis.set(lock_key, lock_owner, nx=True, ex=lock_ttl)' in worker
+    assert 'lock_ttl = max(MAX_RUNTIME + 300, 7200)' in worker
     assert 'if not acquired:' in worker
     assert 'return _prepare_integration_locked(job_id, key)' in worker
     assert "redis.eval(" in worker
     assert "redis.call('get', KEYS[1]) == ARGV[1]" in worker
     assert "redis.call('del', KEYS[1])" in worker
+
+    # Repairs preserve the ordered source chain instead of replacing it
+    # with a dependent repair commit that cannot stand alone on main.
+    assert 'raw_sources = builder.get("source_candidate_commits", "")' in worker
+    assert 'sources.append(candidate_after)' in worker
+    assert '"source_candidate_commits": json.dumps(sources' in worker
 
     # Review reservation remains atomic as well.
     assert 'hsetnx(builder_key, "review_job_id", job_id)' in submitter

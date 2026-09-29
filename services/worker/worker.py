@@ -101,7 +101,7 @@ def prepare_integration(job_id):
     key = f"sid:jobs:{job_id}"
     lock_key = f"sid:integration-lock:{job_id}"
     lock_owner = f"{WORKER_ID}:{uuid.uuid4().hex}"
-    lock_ttl = max(MAX_RUNTIME, 600) + 300
+    lock_ttl = max(MAX_RUNTIME + 300, 7200)
 
     # Exactly one worker may create/replace a job's integration candidate.
     # The TTL provides crash recovery; ownership-safe release prevents an
@@ -913,11 +913,31 @@ def process_repair_job(job, key, log_path, test_log):
         "integration_error",
     )
 
+    raw_sources = builder.get("source_candidate_commits", "")
+    if raw_sources:
+        try:
+            sources = json.loads(raw_sources)
+        except (TypeError, ValueError):
+            sources = []
+    else:
+        sources = []
+
+    if not isinstance(sources, list):
+        sources = []
+
+    if not sources:
+        original_candidate = builder.get("candidate_commit", "")
+        if original_candidate:
+            sources = [original_candidate]
+
+    if not sources or sources[-1] != candidate_after:
+        sources.append(candidate_after)
+
     redis.hset(
         builder_key,
         mapping={
             "candidate_commit": candidate_after,
-            "source_candidate_commits": json.dumps([candidate_after], separators=(",", ":")),
+            "source_candidate_commits": json.dumps(sources, separators=(",", ":")),
             "review_history": history,
             "repair_status": "completed",
             "last_repair_job_id": job_id,
