@@ -15,6 +15,12 @@ checks = {
     'planner scope contract': '"scope": ["likely/relevant/path"]' in orch and 'scoped_builder_prompt' in orch,
     'bounded repair findings': 'findings[-6000:]' in orch,
     'terminal repair exhaustion': '"status": "repair_exhausted"' in orch,
+    'final repair in-flight safety': (
+        'existing = builder.get("repair_job_id")' in orch
+        and 'if attempts >= MAX_REPAIR_ATTEMPTS:' in orch
+        and orch.index('existing = builder.get("repair_job_id")')
+        < orch.index('if attempts >= MAX_REPAIR_ATTEMPTS:')
+    ),
     'bounded builder context packet': 'scoped_context_packet' in orch and 'CONTEXT_TOTAL_CHARS' in orch and '"6000"' in orch,
     'exact-file context only': 'candidates = [path] if path.is_file() else []' in orch,
     'atomic goal enforcement': 'atomic goal requires exactly one job' in orch and '--atomic' in (root / 'scripts/submit-goal.py').read_text(),
