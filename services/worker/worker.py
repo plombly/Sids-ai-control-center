@@ -125,12 +125,18 @@ def parse_codex_log(log_path):
 def run_codex(job, worktree, log_path):
     model = job.get("model", DEFAULT_MODEL)
     prompt = job["prompt"]
+    role = job.get("role", "builder")
+
+    if role not in {"builder", "reviewer"}:
+        raise RuntimeError(f"Unsupported job role: {role}")
+
+    sandbox = "read-only" if role == "reviewer" else "workspace-write"
 
     command = [
         "codex",
         "exec",
         "--model", model,
-        "--sandbox", "workspace-write",
+        "--sandbox", sandbox,
         "--ephemeral",
         "--color", "never",
         "--json",
@@ -249,6 +255,7 @@ def process_job(raw_job):
                 "status": "claimed",
                 "worker_id": WORKER_ID,
                 "worker_role": WORKER_ROLE,
+                "job_role": job.get("role", "builder"),
                 "provider": job.get("provider", DEFAULT_PROVIDER),
                 "model": job.get("model", DEFAULT_MODEL),
                 "updated_at": str(time.time()),

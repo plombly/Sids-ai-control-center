@@ -13,6 +13,12 @@ parser.add_argument("task", help="Task description")
 parser.add_argument("--model", default="gpt-5.6-luna", help="Model to use")
 parser.add_argument("--provider", default="codex", help="Provider to use")
 parser.add_argument(
+    "--role",
+    choices=("builder", "reviewer"),
+    default="builder",
+    help="Job role (default: builder)",
+)
+parser.add_argument(
     "--priority",
     type=int,
     default=0,
@@ -32,6 +38,7 @@ job = {
     "prompt": args.task,
     "provider": args.provider,
     "model": args.model,
+    "role": args.role,
     "priority": args.priority,
     "created_at": time.time(),
 }
