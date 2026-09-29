@@ -23,6 +23,8 @@ services:
     container_name: sid-ai-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - ./data/redis:/data
     healthcheck:
