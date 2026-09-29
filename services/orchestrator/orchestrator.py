@@ -277,18 +277,61 @@ def create_job(goal_id, planned_job, number_to_id):
 
 
 
+CONTEXT_FILE_LIMIT = int(os.getenv("CONTEXT_FILE_LIMIT", "8"))
+CONTEXT_FILE_CHARS = int(os.getenv("CONTEXT_FILE_CHARS", "6000"))
+CONTEXT_TOTAL_CHARS = int(os.getenv("CONTEXT_TOTAL_CHARS", "24000"))
+
+
+def scoped_context_packet(item):
+    """Build a deterministic, bounded starting context from planner scope."""
+    scope = [p.strip() for p in item.get("scope", []) if p.strip()][:12]
+    chunks = []
+    used = 0
+    for raw in scope:
+        path = (REPO_ROOT / raw).resolve()
+        try:
+            path.relative_to(REPO_ROOT)
+        except ValueError:
+            continue
+        candidates = []
+        if path.is_file():
+            candidates = [path]
+        elif path.is_dir():
+            candidates = [p for p in sorted(path.rglob("*")) if p.is_file()]
+        for candidate in candidates:
+            if len(chunks) >= CONTEXT_FILE_LIMIT or used >= CONTEXT_TOTAL_CHARS:
+                break
+            try:
+                text = candidate.read_text(errors="replace")
+            except OSError:
+                continue
+            remaining = CONTEXT_TOTAL_CHARS - used
+            body = text[:min(CONTEXT_FILE_CHARS, remaining)]
+            rel = candidate.relative_to(REPO_ROOT)
+            chunks.append(f"--- {rel} ---\n{body}")
+            used += len(body)
+        if len(chunks) >= CONTEXT_FILE_LIMIT or used >= CONTEXT_TOTAL_CHARS:
+            break
+    return "\n\n".join(chunks) or "(No scoped file content available; inspect only the likely scope below.)"
+
+
 def scoped_builder_prompt(item):
     scope = [p.strip() for p in item.get("scope", []) if p.strip()]
     scope_text = "\n".join(f"- {p}" for p in scope) or "- infer the smallest relevant scope"
+    context = scoped_context_packet(item)
     return f"""Task:
 {item['task']}
 
 Likely scope (start here; expand only if required):
 {scope_text}
 
+SID context packet (bounded starting context; trust repository files over this snapshot if you edit them):
+{context}
+
 Efficiency requirements:
+- Start from the context packet and likely scope; do not rediscover information already provided.
 - Do not inventory or read the whole repository.
-- Use targeted git/rg/sed inspection.
+- Expand beyond likely scope only for a concrete dependency required by the task.
 - Make the smallest correct change.
 - Run only focused validation; SID runs the deterministic integration gate.
 - Stop when the requested implementation and focused validation are complete.

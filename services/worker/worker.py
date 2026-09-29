@@ -306,6 +306,15 @@ def queue_review_job(builder_job_id):
     if not redis.hsetnx(builder_key, "review_job_id", review_job_id):
         return builder.get("review_job_id", ""), False
 
+    diff_result = run_git(
+        "diff", "--no-ext-diff", "--unified=60",
+        f"{candidate_commit}^", candidate_commit,
+        cwd=Path(worktree), check=False,
+    )
+    candidate_diff = (diff_result.stdout or "")[:30000]
+    if len(diff_result.stdout or "") > 30000:
+        candidate_diff += "\n... [diff truncated by SID at 30000 chars]"
+
     prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {builder_job_id}.
@@ -313,6 +322,9 @@ Review immutable candidate commit {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}
+
+SID candidate diff (inspect this first; it is the primary review context):
+{candidate_diff}
 
 You are operating inside the builder's completed worktree.
 
@@ -324,8 +336,9 @@ Review the implementation for:
 - security or unsafe behavior
 - maintainability issues
 
-Inspect the candidate diff first. Read surrounding code only when needed
-to validate a concrete concern. Keep the review focused on the requested task.
+Use the SID-provided candidate diff above first. Do not rerun broad repository
+discovery merely to reconstruct it. Read surrounding code only when needed to
+validate a concrete concern. Keep the review focused on the requested task.
 
 The builder's deterministic test gate has already run. Do not broadly rerun
 the entire repository test suite merely to repeat that gate. If a focused

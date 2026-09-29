@@ -14,6 +14,8 @@ checks = {
     'planner scope contract': '"scope": ["likely/relevant/path"]' in orch and 'scoped_builder_prompt' in orch,
     'bounded repair findings': 'findings[-6000:]' in orch,
     'terminal repair exhaustion': '"status": "repair_exhausted"' in orch,
+    'bounded builder context packet': 'scoped_context_packet' in orch and 'CONTEXT_TOTAL_CHARS' in orch,
+    'review candidate diff packet': 'candidate_diff' in worker and 'diff truncated by SID' in worker,
 }
 failed = [name for name, ok in checks.items() if not ok]
 for name, ok in checks.items():
