@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SID's AI Command Center</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">SID // OPERATIONS</p>
+        <h1>AI Command Center</h1>
+      </div>
+      <div class="live-status"><span id="live-dot" class="dot"></span><span id="last-updated">Connecting…</span></div>
+    </header>
+
+    <section id="banner" class="banner" hidden></section>
+    <section class="metric-grid" aria-label="System overview">
+      <article class="metric-card accent"><span>System status</span><strong id="metric-status">—</strong><small id="metric-services">Awaiting telemetry</small></article>
+      <article class="metric-card"><span>Repository</span><strong id="metric-branch">—</strong><small id="metric-repo">Unknown state</small></article>
+      <article class="metric-card"><span>Queue depth</span><strong id="metric-queue">—</strong><small id="metric-queue-name">Awaiting queue data</small></article>
+      <article class="metric-card"><span>Active workers</span><strong id="metric-workers">—</strong><small id="metric-orchestrators">Orchestrators —</small></article>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">CONTROL PLANE</p><h2>Orchestrator state</h2></div><span class="count" id="orchestrator-count">—</span></div><div id="orchestrators" class="entity-list" data-empty="No orchestrators reporting"></div></section>
+      <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HUMAN GATE</p><h2>Pending approvals</h2></div><span class="count warning" id="approval-count">—</span></div><div id="approvals" class="stack" data-empty="No approvals waiting"></div></section>
+
+      <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">EXECUTION FLEET</p><h2>Worker activity</h2></div></div><div id="workers" class="entity-list" data-empty="No workers reporting"></div></section>
+      <section class="panel"><div class="panel-heading"><div><p class="eyebrow">RECENT WORK</p><h2>Goals</h2></div></div><div id="goals" class="stack" data-empty="No goals found"></div></section>
+
+      <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">JOB STREAM</p><h2>Recent jobs</h2></div></div><div id="jobs" class="table-wrap" data-empty="No jobs found"></div></section>
+      <section class="panel"><div class="panel-heading"><div><p class="eyebrow">ATTENTION</p><h2>Failures</h2></div><span class="count danger" id="failure-count">—</span></div><div id="failures" class="stack" data-empty="No recent failures"></div></section>
+    </div>
+    <footer>Read-only telemetry · refreshes every 2 seconds · <span id="poll-state">No data yet</span></footer>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
