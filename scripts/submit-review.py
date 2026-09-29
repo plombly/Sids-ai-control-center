@@ -37,7 +37,22 @@ worktree = builder.get("worktree")
 if not worktree:
     raise SystemExit("Builder job has no worktree")
 
+existing_review = builder.get("review_job_id")
+if existing_review:
+    existing = r.hgetall(f"sid:jobs:{existing_review}")
+    status = existing.get("status", "unknown") if existing else "missing"
+    raise SystemExit(
+        f"Builder job already has reviewer {existing_review} ({status})"
+    )
+
 job_id = uuid.uuid4().hex[:8]
+
+# Reserve the reviewer slot atomically so manual and automatic dispatch
+# cannot enqueue duplicate reviews for the same builder.
+if not r.hsetnx(builder_key, "review_job_id", job_id):
+    raise SystemExit(
+        f"Builder job already has reviewer {r.hget(builder_key, 'review_job_id')}"
+    )
 
 prompt = f"""You are the review agent for SID's AI Command Center.
 
@@ -81,20 +96,32 @@ job = {
     "created_at": time.time(),
 }
 
-r.hset(
-    f"sid:jobs:{job_id}",
-    mapping={
-        "status": "queued",
-        "provider": args.provider,
-        "model": args.model,
-        "role": "reviewer",
-        "builder_job_id": args.builder_job_id,
-        "worktree": worktree,
-        "prompt": prompt,
-        "created_at": str(job["created_at"]),
-    },
-)
-
-r.rpush("sid:jobs", json.dumps(job))
+try:
+    r.hset(
+        f"sid:jobs:{job_id}",
+        mapping={
+            "status": "queued",
+            "provider": args.provider,
+            "model": args.model,
+            "role": "reviewer",
+            "builder_job_id": args.builder_job_id,
+            "worktree": worktree,
+            "prompt": prompt,
+            "created_at": str(job["created_at"]),
+        },
+    )
+    r.hset(
+        builder_key,
+        mapping={
+            "review_status": "queued",
+            "updated_at": str(time.time()),
+        },
+    )
+    r.rpush("sid:jobs", json.dumps(job))
+except Exception:
+    if r.hget(builder_key, "review_job_id") == job_id:
+        r.hdel(builder_key, "review_job_id", "review_status")
+    r.delete(f"sid:jobs:{job_id}")
+    raise
 
 print(job_id)

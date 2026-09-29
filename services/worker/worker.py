@@ -414,23 +414,34 @@ def process_review_job(job, key, log_path):
             elif normalized == "VERDICT: CHANGES_REQUIRED":
                 verdict = "changes_required"
 
-    redis.hset(
-        key,
-        mapping={
-            "status": "review_complete",
-            "review_verdict": verdict,
-            "codex_exit_code": str(returncode),
-            "duration_seconds": f"{duration:.2f}",
-            "session_id": session_id,
-            "tokens": usage["total_tokens"],
-            "input_tokens": usage["input_tokens"],
-            "cached_input_tokens": usage["cached_input_tokens"],
-            "output_tokens": usage["output_tokens"],
-            "reasoning_tokens": usage["reasoning_tokens"],
-            "updated_at": str(time.time()),
-        },
-    )
+    common = {
+        "review_verdict": verdict,
+        "codex_exit_code": str(returncode),
+        "duration_seconds": f"{duration:.2f}",
+        "session_id": session_id,
+        "tokens": usage["total_tokens"],
+        "input_tokens": usage["input_tokens"],
+        "cached_input_tokens": usage["cached_input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "reasoning_tokens": usage["reasoning_tokens"],
+        "updated_at": str(time.time()),
+    }
 
+    if returncode != 0:
+        redis.hset(key, mapping={"status": "failed", **common})
+        redis.hset(
+            f"sid:jobs:{builder_job_id}",
+            mapping={
+                "review_job_id": job_id,
+                "review_status": "failed",
+                "review_verdict": verdict,
+                "review_log": str(log_path),
+                "updated_at": str(time.time()),
+            },
+        )
+        raise RuntimeError(f"Reviewer Codex exited with status {returncode}")
+
+    redis.hset(key, mapping={"status": "review_complete", **common})
     redis.hset(
         f"sid:jobs:{builder_job_id}",
         mapping={
@@ -441,9 +452,6 @@ def process_review_job(job, key, log_path):
             "updated_at": str(time.time()),
         },
     )
-
-    if returncode != 0:
-        raise RuntimeError(f"Reviewer Codex exited with status {returncode}")
 
 
 def process_job(raw_job):
@@ -527,6 +535,26 @@ def process_job(raw_job):
 
         diff = run_git("status", "--porcelain", cwd=worktree).stdout
 
+        if not diff.strip():
+            redis.hset(
+                key,
+                mapping={
+                    "status": "completed_no_changes",
+                    "test_log": str(test_log),
+                    "changes": "",
+                    "updated_at": str(time.time()),
+                },
+            )
+
+            run_git("worktree", "remove", str(worktree))
+            run_git("branch", "-D", branch)
+
+            print(
+                f"[{WORKER_ID}] job={job_id} completed with no changes",
+                flush=True,
+            )
+            return
+
         redis.hset(
             key,
             mapping={
@@ -537,7 +565,22 @@ def process_job(raw_job):
             },
         )
 
-        review_job_id, queued = queue_review_job(job_id)
+        try:
+            review_job_id, queued = queue_review_job(job_id)
+        except Exception as exc:
+            redis.hset(
+                key,
+                mapping={
+                    "review_status": "queue_failed",
+                    "review_error": str(exc),
+                    "updated_at": str(time.time()),
+                },
+            )
+            print(
+                f"[{WORKER_ID}] job={job_id} review queue FAILED: {exc}",
+                flush=True,
+            )
+            return
 
         print(
             f"[{WORKER_ID}] job={job_id} review={review_job_id} "

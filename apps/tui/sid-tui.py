@@ -187,6 +187,10 @@ def review_display(job):
         return "CHANGES_REQUIRED"
     if job["review_status"] == "complete":
         return "UNKNOWN"
+    if job["review_status"] in {"queued", "reviewing"}:
+        return "PENDING"
+    if job["review_status"] in {"failed", "queue_failed"}:
+        return "FAILED"
     if job["status"] == "awaiting_review":
         return "NEEDED"
     return "-"
@@ -265,6 +269,7 @@ def draw():
     needs_reviewer = [
         job for job in review_jobs
         if job["review_verdict"] not in {"pass", "changes_required"}
+        and job["review_status"] not in {"queued", "reviewing"}
     ]
 
     ready_for_human = [

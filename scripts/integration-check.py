@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 
-REPO = Path("/opt/sids-ai-command-center")
-PYTHON = Path("/tmp/sid-agent-venv/bin/python")
-RESULT_DIR = Path("/var/log/sid-ai/integration")
+REPO = Path(os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")).resolve()
+PYTHON = Path(os.getenv("SID_PYTHON", "/tmp/sid-agent-venv/bin/python"))
+RESULT_DIR = Path(os.getenv("INTEGRATION_RESULT_DIR", "/var/log/sid-ai/integration"))
 
 
 CHECKS = [
@@ -40,6 +41,10 @@ CHECKS = [
     (
         "submit-review-syntax",
         [str(PYTHON), "-m", "py_compile", "scripts/submit-review.py"],
+    ),
+    (
+        "workflow-self-test",
+        [str(PYTHON), "scripts/workflow-self-test.py"],
     ),
     (
         "git-diff-check",

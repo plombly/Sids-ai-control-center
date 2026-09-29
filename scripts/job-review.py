@@ -85,9 +85,9 @@ def approve(job_id):
             "expected 'awaiting_review'"
         )
 
-    review_status = job.get("review_status")
-    review_verdict = job.get("review_verdict")
-    review_job_id = job.get("review_job_id")
+    review_status = data.get("review_status")
+    review_verdict = data.get("review_verdict")
+    review_job_id = data.get("review_job_id")
 
     if review_status != "complete":
         fail(
@@ -106,6 +106,16 @@ def approve(job_id):
             f"Job {job_id} cannot be approved: "
             "review job ID is missing"
         )
+
+    review = job_record(review_job_id)
+    if review.get("role") != "reviewer":
+        fail(f"linked job {review_job_id} is not a reviewer")
+    if review.get("builder_job_id") != job_id:
+        fail(f"reviewer {review_job_id} is linked to another builder")
+    if review.get("status") != "review_complete":
+        fail(f"reviewer {review_job_id} is not complete")
+    if review.get("review_verdict") != "pass":
+        fail(f"reviewer {review_job_id} verdict is not pass")
 
     ensure_main_clean()
 
