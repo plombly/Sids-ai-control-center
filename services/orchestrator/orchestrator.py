@@ -419,6 +419,13 @@ def queue_repairs():
             }:
                 continue
 
+            # The active-repair reservation must not survive a completed
+            # repair. Preserve the historical repair ID separately so a
+            # later CHANGES_REQUIRED verdict can reserve the next attempt.
+            r.hset(key, "last_repair_job_id", existing)
+            r.hdel(key, "repair_job_id")
+            builder.pop("repair_job_id", None)
+
         review_job_id = builder.get("review_job_id")
         if not review_job_id:
             continue
