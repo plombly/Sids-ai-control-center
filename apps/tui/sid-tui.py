@@ -10,7 +10,8 @@ import sys
 import termios
 import time
 import tty
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 
 try:
     import redis
@@ -24,6 +25,8 @@ QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 REVIEW_SCRIPT = "scripts/job-review.py"
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+_previous_frame = None
 
 
 def clear():
@@ -542,10 +545,8 @@ def review_display(job):
     return "-"
 
 
-def draw():
+def _render_frame():
     branch, state = git_info()
-
-    clear()
 
     print(rule())
     bounded_print(" SID'S AI COMMAND CENTER")
@@ -718,6 +719,45 @@ def draw():
     bounded_print(" q to exit, r to refresh, Ctrl-C to exit")
 
 
+def _emit_frame(frame, force=False):
+    """Emit only the changed lines of a completed frame."""
+    global _previous_frame
+
+    lines = list(frame)
+    if _previous_frame is None or force:
+        output = "\033[2J\033[H" + "\n".join(lines) + "\n"
+    else:
+        changed = []
+        for index, line in enumerate(lines):
+            if index >= len(_previous_frame) or line != _previous_frame[index]:
+                changed.append(f"\033[{index + 1};1H\033[2K{line}")
+        for index in range(len(lines), len(_previous_frame)):
+            changed.append(f"\033[{index + 1};1H\033[2K")
+        output = "".join(changed)
+
+    _previous_frame = lines
+    if output:
+        sys.stdout.write(output)
+        sys.stdout.flush()
+
+
+def draw(force=False):
+    """Render a complete frame privately, then atomically update the terminal."""
+    frame = StringIO()
+    with redirect_stdout(frame):
+        _render_frame()
+    _emit_frame(frame.getvalue().splitlines(), force=force)
+
+
+def _draw_message(message, force=False):
+    frame = StringIO()
+    with redirect_stdout(frame):
+        bounded_print("SID'S AI COMMAND CENTER")
+        print()
+        bounded_print(message)
+    _emit_frame(frame.getvalue().splitlines(), force=force)
+
+
 @contextmanager
 def _terminal_mode():
     """Put an interactive terminal in cbreak mode and always restore it."""
@@ -743,16 +783,16 @@ def _wait_for_key(timeout):
 
 
 def main():
+    force_refresh = False
     try:
         with _terminal_mode():
             while True:
                 try:
-                    draw()
+                    draw(force=force_refresh)
+                    force_refresh = False
                 except redis.RedisError as exc:
-                    clear()
-                    bounded_print("SID'S AI COMMAND CENTER")
-                    print()
-                    bounded_print(f"Redis error: {exc}")
+                    _draw_message(f"Redis error: {exc}", force=force_refresh)
+                    force_refresh = False
 
                 try:
                     key = _wait_for_key(2)
@@ -760,6 +800,8 @@ def main():
                     break
                 if key == "q":
                     break
+                if key == "r":
+                    force_refresh = True
     except KeyboardInterrupt:
         pass
     finally:

@@ -1,4 +1,5 @@
 import importlib.util
+import re
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -375,7 +376,8 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
     assert "READY FOR HUMAN APPROVAL" in rendered
     assert "CHANGES REQUIRED" in rendered
     assert "ACTION REQUIRED" in rendered
-    assert max(map(len, rendered.splitlines())) <= 80
+    ansi_free = re.sub(r"\033\[[0-9;]*[A-Za-z]", "", rendered)
+    assert max(map(len, ansi_free.splitlines())) <= 80
     assert "Ctrl-C to exit" in rendered
 
 
@@ -384,7 +386,7 @@ def test_main_refreshes_every_two_seconds_and_r_refreshes_immediately(monkeypatc
     draws = []
     waits = []
 
-    monkeypatch.setattr(sid_tui, "draw", lambda: draws.append(len(draws)))
+    monkeypatch.setattr(sid_tui, "draw", lambda **kwargs: draws.append(kwargs["force"]))
     monkeypatch.setattr(
         sid_tui,
         "_wait_for_key",
@@ -399,13 +401,13 @@ def test_main_refreshes_every_two_seconds_and_r_refreshes_immediately(monkeypatc
     with redirect_stdout(StringIO()):
         sid_tui.main()
 
-    assert draws == [0, 1]
+    assert draws == [False, True]
     assert waits == [2, 2]
 
 
 def test_main_q_terminates_without_an_extra_refresh(monkeypatch):
     draws = []
-    monkeypatch.setattr(sid_tui, "draw", lambda: draws.append(True))
+    monkeypatch.setattr(sid_tui, "draw", lambda **kwargs: draws.append(True))
     monkeypatch.setattr(sid_tui, "_wait_for_key", lambda timeout: "q")
 
     @contextmanager
@@ -448,6 +450,80 @@ def test_terminal_mode_restores_settings_after_an_exception(monkeypatch):
         pass
 
     assert restored == [("cbreak", 7), (sid_tui.termios.TCSADRAIN, ["saved"])]
+
+
+def _emit_test_frame(monkeypatch, lines, force=False):
+    sid_tui._previous_frame = None
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+    sid_tui._emit_frame(lines, force=force)
+    return output.getvalue()
+
+
+def test_identical_frame_emits_no_output(monkeypatch):
+    _emit_test_frame(monkeypatch, ["one", "two"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["one", "two"])
+
+    assert output.getvalue() == ""
+
+
+def test_one_changed_line_rewrites_only_that_line(monkeypatch):
+    _emit_test_frame(monkeypatch, ["one", "two", "three"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["one", "TWO", "three"])
+
+    assert output.getvalue() == "\033[2;1H\033[2KTWO"
+
+
+def test_multiple_changed_lines_update_only_those_lines(monkeypatch):
+    _emit_test_frame(monkeypatch, ["one", "two", "three"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["ONE", "two", "THREE"])
+
+    assert output.getvalue() == "\033[1;1H\033[2KONE\033[3;1H\033[2KTHREE"
+
+
+def test_changed_line_is_cleared_before_rewriting_when_length_changes(monkeypatch):
+    _emit_test_frame(monkeypatch, ["x"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["long line"])
+
+    assert output.getvalue() == "\033[1;1H\033[2Klong line"
+
+    output.seek(0)
+    output.truncate(0)
+    sid_tui._emit_frame(["y"])
+
+    assert output.getvalue() == "\033[1;1H\033[2Ky"
+
+
+def test_shorter_frame_clears_stale_trailing_lines(monkeypatch):
+    _emit_test_frame(monkeypatch, ["one", "two", "three"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["one"])
+
+    assert output.getvalue() == "\033[2;1H\033[2K\033[3;1H\033[2K"
+
+
+def test_forced_refresh_redraws_complete_frame(monkeypatch):
+    _emit_test_frame(monkeypatch, ["one", "two"])
+    output = StringIO()
+    monkeypatch.setattr(sid_tui.sys, "stdout", output)
+
+    sid_tui._emit_frame(["one", "two"], force=True)
+
+    assert output.getvalue() == "\033[2J\033[Hone\ntwo\n"
 
 
 def test_table_output_is_bounded_on_extremely_narrow_terminal(monkeypatch):
