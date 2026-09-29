@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
-import sys
 import time
 import uuid
 
 import redis
 
-if len(sys.argv) < 2:
-    print('Usage: submit-job.py "task description"')
-    raise SystemExit(1)
+
+parser = argparse.ArgumentParser(description="Queue a job for the SID worker")
+parser.add_argument("task", help="Task description")
+parser.add_argument("--model", default="gpt-5.6-luna", help="Model to use")
+parser.add_argument("--provider", default="codex", help="Provider to use")
+parser.add_argument(
+    "--priority",
+    type=int,
+    default=0,
+    help="Integer job priority (default: 0)",
+)
+args = parser.parse_args()
 
 r = redis.Redis.from_url(
     "redis://127.0.0.1:6379/0",
@@ -20,9 +29,10 @@ job_id = uuid.uuid4().hex[:8]
 
 job = {
     "id": job_id,
-    "prompt": sys.argv[1],
-    "provider": "codex",
-    "model": "gpt-5.6-luna",
+    "prompt": args.task,
+    "provider": args.provider,
+    "model": args.model,
+    "priority": args.priority,
     "created_at": time.time(),
 }
 
@@ -32,6 +42,7 @@ r.hset(
         "status": "queued",
         "provider": job["provider"],
         "model": job["model"],
+        "priority": str(job["priority"]),
         "prompt": job["prompt"],
         "created_at": str(job["created_at"]),
     },
