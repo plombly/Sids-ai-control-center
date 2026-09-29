@@ -14,6 +14,7 @@ except ImportError:
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
+REVIEW_SCRIPT = "scripts/job-review.py"
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -74,10 +75,19 @@ def recent_jobs():
                     "status": data.get("status", "?"),
                     "worker": data.get("worker_id", "-"),
                     "model": data.get("model", "-"),
-                    "tokens": data.get("tokens", "-"),
+                    "input_tokens": data.get("input_tokens", "-"),
+                    "cached_input_tokens": data.get("cached_input_tokens", "-"),
+                    "output_tokens": data.get("output_tokens", "-"),
+                    # Newer records may provide total_tokens; older records
+                    # store the same value under tokens.
+                    "total_tokens": data.get("total_tokens") or data.get(
+                        "tokens", "-"
+                    ),
                     "duration": data.get("duration_seconds", "-"),
                     "branch": data.get("branch", "-"),
-                    "sort_time": timestamp(data.get("updated_at") or data.get("created_at")),
+                    "sort_time": timestamp(
+                        data.get("updated_at") or data.get("created_at")
+                    ),
                 }
             )
 
@@ -193,10 +203,15 @@ def draw():
     job_rows = [
         (
             job["id"],
-            job["status"],
+            "AWAITING_REVIEW (ACTION REQUIRED)"
+            if job["status"] == "awaiting_review"
+            else job["status"],
             job["worker"],
             job["model"],
-            format_tokens(job["tokens"]),
+            format_tokens(job["input_tokens"]),
+            format_tokens(job["cached_input_tokens"]),
+            format_tokens(job["output_tokens"]),
+            format_tokens(job["total_tokens"]),
             format_duration(job["duration"]),
             job["branch"],
         )
@@ -204,10 +219,32 @@ def draw():
     ]
     table(
         "RECENT JOBS",
-        ("JOB ID", "STATUS", "WORKER", "MODEL", "TOKENS", "DURATION", "GIT BRANCH"),
+        (
+            "JOB ID",
+            "STATUS",
+            "WORKER",
+            "MODEL",
+            "INPUT",
+            "CACHED INPUT",
+            "OUTPUT",
+            "TOTAL",
+            "DURATION",
+            "GIT BRANCH",
+        ),
         job_rows,
         "No jobs yet",
     )
+
+    review_jobs = [job for job in jobs if job["status"] == "awaiting_review"]
+    if review_jobs:
+        print()
+        print("HUMAN REVIEW REQUIRED")
+        print(rule())
+        for job in review_jobs:
+            job_id = job["id"]
+            print(f" Job {job_id} is awaiting review; human action is required.")
+            print(f" Approve: python3 {REVIEW_SCRIPT} approve {job_id}")
+            print(f" Reject : python3 {REVIEW_SCRIPT} reject {job_id}")
 
     print()
     print(rule())
