@@ -23,14 +23,20 @@ export async function fetchEndpoint(key, fetchImpl=fetch) {
 }
 
 export async function poll(fetchImpl=fetch) {
-  const results = await Promise.allSettled(ENDPOINTS.map(key => fetchEndpoint(key, fetchImpl)));
-  results.forEach((result, index) => {
-    const key = ENDPOINTS[index];
-    if (result.status === 'fulfilled') state[key] = {data:result.value,error:null,stale:false};
-    else state[key] = {...state[key], error:result.reason?.message || 'Request failed', stale:state[key].data !== null};
-  });
-  state.lastUpdated = new Date();
-  render();
+  if (state.polling) return state;
+  state.polling = true;
+  try {
+    const results = await Promise.allSettled(ENDPOINTS.map(key => fetchEndpoint(key, fetchImpl)));
+    results.forEach((result, index) => {
+      const key = ENDPOINTS[index];
+      if (result.status === 'fulfilled') state[key] = {data:result.value,error:null,stale:false};
+      else state[key] = {...state[key], error:result.reason?.message || 'Request failed', stale:state[key].data !== null};
+    });
+    state.lastUpdated = new Date();
+    render();
+  } finally {
+    state.polling = false;
+  }
   return state;
 }
 
