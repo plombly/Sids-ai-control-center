@@ -24,6 +24,7 @@ DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.6-luna")
 MAX_RUNTIME = int(os.environ.get("MAX_JOB_RUNTIME", "1800"))
 ROLE_RUNTIME_DEFAULTS = {"builder": 300, "reviewer": 150, "repair": 180}
 ROLE_TOKEN_DEFAULTS = {"builder": 250000, "reviewer": 120000, "repair": 150000}
+ROLE_ENFORCEMENT_DEFAULTS = {"builder": 150000, "reviewer": 70000, "repair": 100000}
 POLL_SECONDS = int(os.environ.get("CODEX_POLL_SECONDS", "2"))
 
 
@@ -158,6 +159,10 @@ def run_codex(job, worktree, log_path):
     token_budget = int(job.get("token_budget") or role_limit(
         role, "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS
     ))
+    enforcement_budget = int(job.get("enforcement_budget") or role_limit(
+        role, "ENFORCEMENT_BUDGET", ROLE_ENFORCEMENT_DEFAULTS
+    ))
+    enforcement_budget = min(enforcement_budget, token_budget)
     prompt = efficiency_prefix(role) + prompt
 
     command = [
@@ -208,7 +213,7 @@ def run_codex(job, worktree, log_path):
 
             _, live_usage = parse_codex_log(log_path)
             live_total = int(live_usage.get("total_tokens") or 0)
-            if live_total >= token_budget:
+            if live_total >= enforcement_budget:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=10)
@@ -216,16 +221,8 @@ def run_codex(job, worktree, log_path):
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
                 raise RuntimeError(
-                    f"Codex token budget exceeded: {live_total} >= {token_budget}"
+                    f"Codex enforcement budget exceeded: {live_total} >= {enforcement_budget} (configured ceiling {token_budget})"
                 )
-
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-
-                break
 
             time.sleep(POLL_SECONDS)
 
@@ -311,9 +308,9 @@ def queue_review_job(builder_job_id):
         f"{candidate_commit}^", candidate_commit,
         cwd=Path(worktree), check=False,
     )
-    candidate_diff = (diff_result.stdout or "")[:30000]
-    if len(diff_result.stdout or "") > 30000:
-        candidate_diff += "\n... [diff truncated by SID at 30000 chars]"
+    candidate_diff = (diff_result.stdout or "")[:12000]
+    if len(diff_result.stdout or "") > 12000:
+        candidate_diff += "\n... [diff truncated by SID at 12000 chars]"
 
     prompt = f"""You are the review agent for SID's AI Command Center.
 
@@ -465,6 +462,8 @@ def process_review_job(job, key, log_path):
             "candidate_commit": candidate_commit,
             "log": str(log_path),
             "token_budget": str(job.get("token_budget") or role_limit("reviewer", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+            "enforcement_budget": str(job.get("enforcement_budget") or role_limit("reviewer", "ENFORCEMENT_BUDGET", ROLE_ENFORCEMENT_DEFAULTS)),
+            "prompt_chars": str(len(job.get("prompt", ""))),
             "timeout_seconds": str(job.get("timeout_seconds") or role_limit("reviewer", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
             "updated_at": str(time.time()),
         },
@@ -608,6 +607,8 @@ def process_repair_job(job, key, log_path, test_log):
             "candidate_before": candidate_before,
             "log": str(log_path),
             "token_budget": str(job.get("token_budget") or role_limit("repair", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+            "enforcement_budget": str(job.get("enforcement_budget") or role_limit("repair", "ENFORCEMENT_BUDGET", ROLE_ENFORCEMENT_DEFAULTS)),
+            "prompt_chars": str(len(job.get("prompt", ""))),
             "timeout_seconds": str(job.get("timeout_seconds") or role_limit("repair", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
             "updated_at": str(time.time()),
         },
@@ -797,6 +798,8 @@ def process_job(raw_job):
                 "provider": job.get("provider", DEFAULT_PROVIDER),
                 "model": job.get("model", DEFAULT_MODEL),
                 "token_budget": str(job.get("token_budget") or role_limit("builder", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+                "enforcement_budget": str(job.get("enforcement_budget") or role_limit("builder", "ENFORCEMENT_BUDGET", ROLE_ENFORCEMENT_DEFAULTS)),
+                "prompt_chars": str(len(job.get("prompt", ""))),
                 "timeout_seconds": str(job.get("timeout_seconds") or role_limit("builder", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
                 "updated_at": str(time.time()),
             },

@@ -75,7 +75,7 @@ def repository_manifest():
     except Exception:
         return "manifest unavailable"
 
-def planner_prompt(goal):
+def planner_prompt(goal, atomic=False):
     return f"""
 You are the planning agent for SID's AI Command Center.
 
@@ -84,6 +84,8 @@ Repository:
 
 High-level goal:
 {goal}
+
+ATOMIC MODE: {"ENABLED" if atomic else "disabled"}
 
 Plan from the goal and the compact repository manifest below. Do not broadly inspect the repository unless a specific ambiguity prevents a safe plan.
 
@@ -95,6 +97,8 @@ by independent coding agents.
 
 Rules:
 - Do not modify files.
+- If ATOMIC MODE is enabled, return exactly one implementation job with no dependencies.
+- Without atomic mode, use one job for a narrow independently-testable change; split only when there is a concrete dependency or separable ownership boundary.
 - Prefer 1-5 coherent jobs.
 - Avoid microscopic jobs.
 - Minimize overlapping file ownership between parallel jobs.
@@ -123,7 +127,7 @@ Return ONLY valid JSON using this exact shape:
 """.strip()
 
 
-def run_planner(goal):
+def run_planner(goal, atomic=False):
     cmd = [
         "codex",
         "exec",
@@ -142,7 +146,7 @@ def run_planner(goal):
 
     proc = subprocess.run(
         cmd,
-        input=planner_prompt(goal),
+        input=planner_prompt(goal, atomic=atomic),
         text=True,
         capture_output=True,
         timeout=PLAN_TIMEOUT,
@@ -178,7 +182,7 @@ def run_planner(goal):
     return extract_json(messages[-1])
 
 
-def validate_plan(plan):
+def validate_plan(plan, atomic=False):
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
 
@@ -189,6 +193,9 @@ def validate_plan(plan):
 
     if len(jobs) > 10:
         raise ValueError("planner produced too many jobs")
+
+    if atomic and len(jobs) != 1:
+        raise ValueError(f"atomic goal requires exactly one job; planner returned {len(jobs)}")
 
     numbers = set()
 
@@ -277,9 +284,9 @@ def create_job(goal_id, planned_job, number_to_id):
 
 
 
-CONTEXT_FILE_LIMIT = int(os.getenv("CONTEXT_FILE_LIMIT", "8"))
-CONTEXT_FILE_CHARS = int(os.getenv("CONTEXT_FILE_CHARS", "6000"))
-CONTEXT_TOTAL_CHARS = int(os.getenv("CONTEXT_TOTAL_CHARS", "24000"))
+CONTEXT_FILE_LIMIT = int(os.getenv("CONTEXT_FILE_LIMIT", "4"))
+CONTEXT_FILE_CHARS = int(os.getenv("CONTEXT_FILE_CHARS", "3000"))
+CONTEXT_TOTAL_CHARS = int(os.getenv("CONTEXT_TOTAL_CHARS", "6000"))
 
 
 def scoped_context_packet(item):
@@ -293,11 +300,9 @@ def scoped_context_packet(item):
             path.relative_to(REPO_ROOT)
         except ValueError:
             continue
-        candidates = []
-        if path.is_file():
-            candidates = [path]
-        elif path.is_dir():
-            candidates = [p for p in sorted(path.rglob("*")) if p.is_file()]
+        # V3 deliberately embeds only exact files. A directory scope is a hint,
+        # not permission to dump arbitrary alphabetical files into the prompt.
+        candidates = [path] if path.is_file() else []
         for candidate in candidates:
             if len(chunks) >= CONTEXT_FILE_LIMIT or used >= CONTEXT_TOTAL_CHARS:
                 break
@@ -354,8 +359,9 @@ def process_goal(raw):
         },
     )
 
-    plan = run_planner(goal)
-    jobs = validate_plan(plan)
+    atomic = str(data.get("atomic", "")).lower() in {"1", "true", "yes"}
+    plan = run_planner(goal, atomic=atomic)
+    jobs = validate_plan(plan, atomic=atomic)
 
     number_to_id = {}
 
@@ -385,6 +391,8 @@ def process_goal(raw):
             "status": "blocked" if dependencies else "queued",
             "created_at": now(),
             "updated_at": now(),
+            "prompt_chars": str(len(scoped_builder_prompt(item))),
+            "scope": json.dumps(item.get("scope", [])),
         }
 
         r.hset(f"sid:jobs:{job_id}", mapping=record)
