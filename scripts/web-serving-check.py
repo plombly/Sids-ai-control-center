@@ -29,7 +29,10 @@ def main():
     require(api["ports"] == ["8000:8000"], "api port must remain unchanged")
     require("healthcheck" in api, "api must have a healthcheck")
     require("ports" not in services["postgres"], "postgres must not be exposed")
-    require("ports" not in services["redis"], "redis must not be exposed")
+    require(
+        services["redis"].get("ports") == ["127.0.0.1:6379:6379"],
+        "redis must remain available to host-side SID tools only",
+    )
 
     dockerfile = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
     require("FROM nginx:" in dockerfile, "web must use nginx")
