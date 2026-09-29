@@ -47,21 +47,42 @@ def git_info():
 def workers():
     result = []
 
-    for key in sorted(r.scan_iter("sid:workers:*")):
-        data = r.hgetall(key)
+    jobs = []
+    for job_key in sorted(r.scan_iter("sid:jobs:*"), key=_key_text):
+        try:
+            job = r.hgetall(job_key)
+        except Exception:
+            job = {}
+        if isinstance(job, dict) and job:
+            jobs.append((job_key, job))
 
-        result.append(
-            {
-                "id": data.get("id") or key.rsplit(":", 1)[-1],
-                "role": data.get("role", "-"),
-                "provider": data.get("provider", "-"),
-                "model": data.get("model", "-"),
-                "status": data.get("status", "unknown"),
-                "heartbeat_age": heartbeat_age(data.get("last_seen")),
-            }
+    for key in sorted(r.scan_iter("sid:workers:*"), key=_key_text):
+        try:
+            data = r.hgetall(key)
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        worker_id = _text(_first(data, "id", "worker_id", fallback=None), _key_suffix(key))
+        matching = [
+            (job_key, job)
+            for job_key, job in jobs
+            if _text(_first(job, "worker_id", "worker", fallback=None)) == worker_id
+        ]
+        active = [
+            item for item in matching
+            if _text(item[1].get("status"), "unknown")
+            not in {"completed", "completed_no_changes", "merged", "done", "succeeded", "failed", "error"}
+        ]
+        candidates = active or matching
+        job = max(
+            candidates,
+            key=lambda item: (timestamp(_first(item[1], "updated_at", "created_at", fallback=None)), _key_text(item[0])),
+            default=None,
         )
+        result.append(normalize_worker(key, data, job[1] if job else None, job[0] if job else None))
 
-    return result
+    return sorted(result, key=lambda item: item["id"])
 
 
 def _text(value, fallback="-"):
@@ -82,6 +103,75 @@ def _key_text(value):
 def _key_suffix(value):
     key = _key_text(value)
     return key.rsplit(":", 1)[-1] or "-"
+
+
+def _number(value, fallback="-"):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if not math.isfinite(number):
+        return fallback
+    return int(number) if number.is_integer() else number
+
+
+def _first(data, *names, fallback="-"):
+    for name in names:
+        value = data.get(name)
+        if value is not None and str(value).strip():
+            return value
+    return fallback
+
+
+def _derived_effective_tokens(data):
+    explicit = _first(data, "effective_tokens", fallback=None)
+    if explicit is not None:
+        return _number(explicit)
+    uncached = _number(data.get("uncached_input_tokens"), None)
+    output = _number(data.get("output_tokens"), None)
+    if uncached is None:
+        input_tokens = _number(data.get("input_tokens"), None)
+        cached = _number(data.get("cached_input_tokens"), 0)
+        if input_tokens is not None and cached is not None:
+            uncached = max(input_tokens - min(cached, input_tokens), 0)
+    if uncached is not None and output is not None:
+        return uncached + output
+    return "-"
+
+
+def _duration(data):
+    direct = _first(data, "duration_seconds", "duration", fallback=None)
+    if direct is not None:
+        return _number(direct)
+    started = _number(_first(data, "started_at", "start_time", fallback=None), None)
+    ended = _number(_first(data, "ended_at", "completed_at", "finished_at", fallback=None), None)
+    if started is not None and ended is not None and ended >= started:
+        return ended - started
+    return "-"
+
+
+def normalize_worker(key, data, job=None, job_key=None):
+    """Normalize a worker hash, retaining explicit unknowns for absent fields."""
+    data = data if isinstance(data, dict) else {}
+    job = job if isinstance(job, dict) else {}
+    job_id = _text(
+        _first(job, "id", "job_id", fallback=None),
+        _key_suffix(job_key) if job_key else "-",
+    ) if job_key else None
+    merged = {**data, **job}
+    return {
+        "id": _text(_first(data, "id", "worker_id", fallback=None), _key_suffix(key)),
+        "role": _text(_first(data, "role", "job_role", fallback=None), _text(_first(job, "job_role", "role"))),
+        "provider": _text(data.get("provider"), _text(job.get("provider"))),
+        "job_id": _text(_first(data, "job_id", "current_job_id", "active_job_id", fallback=None), job_id or "-"),
+        "model": _text(data.get("model"), _text(job.get("model"))),
+        "status": _text(data.get("status"), _text(job.get("status"), "unknown")),
+        "heartbeat_age": heartbeat_age(_first(data, "last_seen", "heartbeat", "last_heartbeat", fallback=None)),
+        "effective_tokens": _derived_effective_tokens(merged),
+        "cached_input_tokens": _number(_first(merged, "cached_input_tokens", "cached_tokens", fallback=None)),
+        "command_count": _number(merged.get("command_count")),
+        "duration": _duration(merged),
+    }
 
 
 def _json_list(value):
@@ -183,44 +273,120 @@ def recent_goals(limit=8):
     return result[:max(0, int(limit))]
 
 
-def recent_jobs():
+def goal_by_id(goal_id):
+    """Read one explicitly referenced goal, including its child-job progress."""
+    goal_id = _text(goal_id)
+    if goal_id == "-":
+        return None
+    try:
+        data = r.hgetall(f"sid:goals:{goal_id}")
+    except Exception:
+        data = {}
+    if not isinstance(data, dict) or not data:
+        return None
+    child_ids = _json_list(data.get("jobs") or data.get("job_ids"))
+    statuses = {}
+    for job_id in child_ids:
+        try:
+            job = r.hgetall(f"sid:jobs:{job_id}")
+        except Exception:
+            job = {}
+        statuses[job_id] = job.get("status") if isinstance(job, dict) else None
+    return normalize_goal(goal_id, data, statuses)
+
+
+def recent_jobs(limit=8):
     result = []
 
-    for key in sorted(r.scan_iter("sid:jobs:*")):
-        data = r.hgetall(key)
-
+    for key in sorted(r.scan_iter("sid:jobs:*"), key=_key_text):
+        try:
+            data = r.hgetall(key)
+        except Exception:
+            data = {}
         if data:
-            result.append(
-                {
-                    "id": key.rsplit(":", 1)[-1],
-                    "status": data.get("status", "?"),
-                    "worker": data.get("worker_id", "-"),
-                    "role": data.get("job_role") or data.get("role", "builder"),
-                    "model": data.get("model", "-"),
-                    "review_status": data.get("review_status", ""),
-                    "review_verdict": data.get("review_verdict", ""),
-                    "review_job_id": data.get("review_job_id", ""),
-                    "input_tokens": data.get("input_tokens", "-"),
-                    "cached_input_tokens": data.get("cached_input_tokens", "-"),
-                    "output_tokens": data.get("output_tokens", "-"),
-                    "uncached_input_tokens": data.get("uncached_input_tokens", "-"),
-                    "effective_tokens": data.get("effective_tokens", "-"),
-                    "command_count": data.get("command_count", "-"),
-                    # Newer records may provide total_tokens; older records
-                    # store the same value under tokens.
-                    "total_tokens": data.get("total_tokens") or data.get(
-                        "tokens", "-"
-                    ),
-                    "duration": data.get("duration_seconds", "-"),
-                    "branch": data.get("branch", "-"),
-                    "sort_time": timestamp(
-                        data.get("updated_at") or data.get("created_at")
-                    ),
-                }
-            )
+            result.append(normalize_job(key, data))
 
-    result.sort(key=lambda job: job["sort_time"], reverse=True)
-    return result[:8]
+    result.sort(key=lambda job: (-job["sort_time"], job["id"]))
+    return result if limit is None else result[:max(0, int(limit))]
+
+
+def normalize_job(key, data):
+    """Normalize a job hash without changing its workflow meaning."""
+    data = data if isinstance(data, dict) else {}
+    job_id = _key_suffix(key)
+    return {
+        "id": _text(data.get("id"), job_id),
+        "status": _text(data.get("status"), "unknown"),
+        "worker": _text(_first(data, "worker_id", "worker")),
+        "role": _text(_first(data, "job_role", "role")),
+        "model": _text(data.get("model")),
+        "provider": _text(data.get("provider")),
+        "review_status": _text(data.get("review_status"), ""),
+        "review_verdict": _text(data.get("review_verdict"), ""),
+        "review_job_id": _text(data.get("review_job_id"), ""),
+        "input_tokens": _number(data.get("input_tokens")),
+        "cached_input_tokens": _number(_first(data, "cached_input_tokens", "cached_tokens", fallback=None)),
+        "output_tokens": _number(data.get("output_tokens")),
+        "uncached_input_tokens": _number(data.get("uncached_input_tokens")),
+        "effective_tokens": _derived_effective_tokens(data),
+        "command_count": _number(data.get("command_count")),
+        "total_tokens": _number(_first(data, "total_tokens", "tokens", fallback=None)),
+        "duration": _duration(data),
+        "branch": _text(data.get("branch")),
+        "error": _text(_first(data, "error", "failure", "failure_reason", fallback=None)),
+        "sort_time": timestamp(_first(data, "updated_at", "created_at", fallback=None)),
+    }
+
+
+FAILURE_STATUSES = {"failed", "error", "integration_failed", "queue_failed"}
+
+
+def failures(limit=8):
+    """Return failed jobs in the same deterministic shape as recent jobs."""
+    return [job for job in recent_jobs(limit=None) if job["status"] in FAILURE_STATUSES][:max(0, int(limit))]
+
+
+def pending_human_approvals(limit=8):
+    """Identify only jobs that have passed review and await the human gate."""
+    jobs = recent_jobs(limit=None)
+    approvals = [
+        job for job in jobs
+        if job["status"] == "awaiting_review"
+        and job["review_status"] == "complete"
+        and job["review_verdict"] == "pass"
+    ]
+    return approvals[:max(0, int(limit))]
+
+
+def snapshot(limit=8):
+    """Build one bounded, read-only view of the TUI's Redis-backed state."""
+    branch, state = git_info()
+    goals = recent_goals(limit)
+    orch = orchestrators()
+    jobs = recent_jobs()
+    active_goals = [goal for goal in goals if goal["status"] in {"active", "running", "in_progress"}]
+    active_goal_ids = {item["active_goal"] for item in orch if item["active_goal"] != "-"}
+    active_goals.sort(key=lambda goal: (goal["id"] not in active_goal_ids, -goal["sort_time"], goal["id"]))
+    explicit_goal = next((goal for goal in goals if goal["id"] in active_goal_ids), None)
+    if explicit_goal is None:
+        for goal_id in sorted(active_goal_ids):
+            explicit_goal = goal_by_id(goal_id)
+            if explicit_goal is not None:
+                break
+    try:
+        queue_depth = r.llen(QUEUE)
+    except Exception:
+        queue_depth = None
+    return {
+        "repository": {"branch": _text(branch), "status": _text(state, "unknown")},
+        "queue": {"name": QUEUE, "waiting": queue_depth if queue_depth is not None else "-"},
+        "orchestrators": orch,
+        "active_goal": explicit_goal or (active_goals[0] if active_goals else None),
+        "workers": workers(),
+        "goals": {"active": active_goals, "recent": goals},
+        "jobs": {"recent": jobs, "failures": failures(limit)},
+        "pending_human_approvals": pending_human_approvals(limit),
+    }
 
 
 def timestamp(value):

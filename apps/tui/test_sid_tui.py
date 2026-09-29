@@ -148,6 +148,69 @@ def test_timestamp_display_returns_fallback_for_unrepresentable_epoch(monkeypatc
     assert sid_tui.format_timestamp("1") == "-"
 
 
+def test_job_normalization_derives_effective_tokens_and_duration_fallbacks():
+    job = sid_tui.normalize_job(
+        "sid:jobs:j1",
+        {
+            "input_tokens": "100",
+            "cached_input_tokens": "25",
+            "output_tokens": "30",
+            "started_at": "10",
+            "completed_at": "17.5",
+        },
+    )
+
+    assert job["effective_tokens"] == 105
+    assert job["cached_input_tokens"] == 25
+    assert job["duration"] == 7.5
+    assert job["status"] == "unknown"
+    assert job["role"] == "-"
+
+
+def test_worker_normalization_preserves_unknowns_and_actual_assignment():
+    worker = sid_tui.normalize_worker(
+        "sid:workers:w1",
+        {
+            "role": "reviewer",
+            "current_job_id": "job-7",
+            "model": "model-x",
+            "last_seen": "bad",
+        },
+    )
+
+    assert worker["id"] == "w1"
+    assert worker["role"] == "reviewer"
+    assert worker["job_id"] == "job-7"
+    assert worker["model"] == "model-x"
+    assert worker["heartbeat_age"] == -1
+    assert worker["effective_tokens"] == "-"
+
+
+def test_snapshot_classifies_failures_and_human_approvals(monkeypatch):
+    monkeypatch.setattr(sid_tui, "git_info", lambda: ("main", "clean"))
+    monkeypatch.setattr(
+        sid_tui,
+        "r",
+        FakeRedis(
+            {
+                "sid:jobs:failed": {"status": "failed", "updated_at": "2"},
+                "sid:jobs:ready": {
+                    "status": "awaiting_review",
+                    "review_status": "complete",
+                    "review_verdict": "pass",
+                    "updated_at": "1",
+                },
+            }
+        ),
+    )
+
+    view = sid_tui.snapshot()
+
+    assert [job["id"] for job in view["jobs"]["failures"]] == ["failed"]
+    assert [job["id"] for job in view["pending_human_approvals"]] == ["ready"]
+    assert view["repository"] == {"branch": "main", "status": "clean"}
+
+
 def test_goal_progress_format_includes_completion_and_status_breakdown():
     assert sid_tui.format_goal_progress(
         {
