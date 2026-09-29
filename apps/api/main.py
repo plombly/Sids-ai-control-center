@@ -129,10 +129,17 @@ def _job(key, data):
         "model": _text(data.get("model")),
         "review_status": _text(data.get("review_status")),
         "review_verdict": _text(data.get("review_verdict")),
+        "review_job_id": _text(data.get("review_job_id")),
+        "input_tokens": _number(data.get("input_tokens")),
         "effective_tokens": _effective_tokens(data),
         "cached_input_tokens": _number(data.get("cached_input_tokens", data.get("cached_tokens"))),
+        "output_tokens": _number(data.get("output_tokens")),
+        "uncached_input_tokens": _number(data.get("uncached_input_tokens")),
         "command_count": _number(data.get("command_count")),
+        "total_tokens": _number(data.get("total_tokens", data.get("tokens"))),
         "duration": _duration(data),
+        "branch": _text(data.get("branch")),
+        "error": _text(data.get("error", data.get("failure", data.get("failure_reason")))),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
 
@@ -186,6 +193,8 @@ def _worker(key, data, jobs):
     matches = [job for job in jobs if job["worker"] == worker_id]
     active = [job for job in matches if job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
     job = max(active or matches, key=lambda item: (item["sort_time"], item["id"]), default={})
+    job_data = _hash(f"sid:jobs:{job.get('id')}") if job else {}
+    merged = {**data, **job_data}
     return {
         "id": worker_id,
         "role": _text(data.get("role", data.get("job_role")), job.get("role")),
@@ -195,10 +204,10 @@ def _worker(key, data, jobs):
         "model": _text(data.get("model"), job.get("model")),
         "last_seen": _number(data.get("last_seen", data.get("heartbeat"))),
         "heartbeat_age": max(int(time.time() - _timestamp(data.get("last_seen", data.get("heartbeat")))), 0) if _timestamp(data.get("last_seen", data.get("heartbeat"))) else None,
-        "effective_tokens": _effective_tokens({**data, **_hash(f"sid:jobs:{job.get('id')}")} if job else data),
-        "cached_input_tokens": _number(data.get("cached_input_tokens", data.get("cached_tokens"))),
-        "command_count": _number(data.get("command_count")),
-        "duration": _duration(data),
+        "effective_tokens": _effective_tokens(merged),
+        "cached_input_tokens": _number(merged.get("cached_input_tokens", merged.get("cached_tokens"))),
+        "command_count": _number(merged.get("command_count")),
+        "duration": _duration(merged),
     }
 
 
@@ -267,6 +276,7 @@ def health():
 def api_status():
     jobs = _all_jobs()
     goals = _all_goals()
+    workers = api_workers()
     orchestrators = [_orchestrator(key, _hash(key)) for key in _keys("sid:orchestrators:*")]
     active_ids = {item["active_goal"] for item in orchestrators if item["active_goal"]}
     active_goal = next((goal for goal in goals if goal["id"] in active_ids), None)
@@ -281,11 +291,11 @@ def api_status():
         "queue": {"name": os.getenv("WORKER_QUEUE", "sid:jobs"), "depth": queue_depth},
         "orchestrators": orchestrators,
         "active_goal": active_goal,
-        "workers": api_workers(),
-        "heartbeat": {"workers": api_workers(), "orchestrators": orchestrators},
+        "workers": workers,
+        "heartbeat": {"workers": workers, "orchestrators": orchestrators},
         "goals": {"recent": goals[:API_DEFAULT_LIMIT]},
         "jobs": {"recent": jobs[:API_DEFAULT_LIMIT], "failures": [job for job in jobs if job["status"] in FAILURE_STATUSES][:API_DEFAULT_LIMIT]},
-        "pending_human_approvals": [job for job in jobs if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"],
+        "pending_human_approvals": [job for job in jobs if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"][:API_DEFAULT_LIMIT],
     }
 
 
@@ -345,13 +355,14 @@ def api_recent_jobs(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT
 
 
 @app.get("/api/approvals")
-def api_approvals():
-    return [job for job in _all_jobs() if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"]
+def api_approvals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
+    approvals = [job for job in _all_jobs() if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"]
+    return approvals[:_limit(limit)]
 
 
 @app.get("/api/jobs/approvals")
-def api_job_approvals():
-    return api_approvals()
+def api_job_approvals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
+    return api_approvals(limit)
 
 
 @app.get("/api/failures")
