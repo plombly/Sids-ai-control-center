@@ -23,8 +23,6 @@ services:
     container_name: sid-ai-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
-    ports:
-      - "127.0.0.1:6379:6379"
     volumes:
       - ./data/redis:/data
     healthcheck:
@@ -50,6 +48,24 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health'))['status'] == 'healthy'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sid-ai-internal
+
+  web:
+    build:
+      context: ./apps/web
+    container_name: sid-ai-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:80"
     networks:
       - sid-ai-internal
 
