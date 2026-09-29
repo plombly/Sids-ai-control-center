@@ -120,6 +120,33 @@ def approve(job_id):
 
     commit_sha = git("rev-parse", "HEAD").stdout.strip()
 
+    print()
+    print("Running integration gate...")
+    integration = subprocess.run(
+        [str(REPO_ROOT / "scripts/integration-check.py")],
+        cwd=REPO_ROOT,
+        text=True,
+    )
+
+    now = str(time.time())
+
+    if integration.returncode != 0:
+        r.hset(
+            key,
+            mapping={
+                "status": "integration_failed",
+                "merged_at": now,
+                "merge_commit": commit_sha,
+                "integration_status": "failed",
+                "updated_at": now,
+            },
+        )
+
+        print()
+        print(f"INTEGRATION FAILED: {job_id}")
+        print(f"Merge commit retained for diagnosis: {commit_sha}")
+        raise SystemExit(1)
+
     git("worktree", "remove", str(worktree))
     git("branch", "-d", branch)
 
@@ -127,14 +154,15 @@ def approve(job_id):
         key,
         mapping={
             "status": "merged",
-            "merged_at": str(time.time()),
+            "merged_at": now,
             "merge_commit": commit_sha,
-            "updated_at": str(time.time()),
+            "integration_status": "passed",
+            "updated_at": now,
         },
     )
 
     print()
-    print(f"APPROVED: {job_id}")
+    print(f"APPROVED + INTEGRATED: {job_id}")
     print(f"Merge commit: {commit_sha}")
 
 
