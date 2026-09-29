@@ -47,6 +47,10 @@ CHECKS = [
         [str(PYTHON), "scripts/workflow-self-test.py"],
     ),
     (
+        "efficiency-self-test",
+        [str(PYTHON), "scripts/efficiency-self-test.py"],
+    ),
+    (
         "git-diff-check",
         ["git", "diff", "--check"],
     ),

@@ -22,6 +22,26 @@ DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.6-luna")
 
 MAX_RUNTIME = int(os.environ.get("MAX_JOB_RUNTIME", "1800"))
+ROLE_RUNTIME_DEFAULTS = {"builder": 300, "reviewer": 150, "repair": 180}
+ROLE_TOKEN_DEFAULTS = {"builder": 250000, "reviewer": 120000, "repair": 150000}
+POLL_SECONDS = int(os.environ.get("CODEX_POLL_SECONDS", "2"))
+
+
+def role_limit(role, kind, defaults):
+    name = f"{role.upper()}_{kind}"
+    return int(os.environ.get(name, str(defaults[role])))
+
+
+def efficiency_prefix(role):
+    return f"""SID execution contract ({role}):
+- Work narrowly on the requested task. Do not inventory or read the whole repository.
+- Start with git status/diff and targeted rg/sed reads of likely files only.
+- Expand scope only when a concrete dependency requires it.
+- Do not run broad test suites; SID runs deterministic gates after builders/repairs.
+- Avoid repeated reads and verbose narration. Make the smallest correct change/review.
+- Stop as soon as the task and focused validation are complete.
+
+"""
 
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -132,6 +152,13 @@ def run_codex(job, worktree, log_path):
         raise RuntimeError(f"Unsupported job role: {role}")
 
     sandbox = "read-only" if role == "reviewer" else "workspace-write"
+    runtime_limit = int(job.get("timeout_seconds") or role_limit(
+        role, "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS
+    ))
+    token_budget = int(job.get("token_budget") or role_limit(
+        role, "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS
+    ))
+    prompt = efficiency_prefix(role) + prompt
 
     command = [
         "codex",
@@ -175,9 +202,22 @@ def run_codex(job, worktree, log_path):
                     flush=True,
                 )
 
-            if time.time() - started >= MAX_RUNTIME:
+            if time.time() - started >= runtime_limit:
                 timed_out = True
                 os.killpg(process.pid, signal.SIGTERM)
+
+            _, live_usage = parse_codex_log(log_path)
+            live_total = int(live_usage.get("total_tokens") or 0)
+            if live_total >= token_budget:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                raise RuntimeError(
+                    f"Codex token budget exceeded: {live_total} >= {token_budget}"
+                )
 
                 try:
                     process.wait(timeout=10)
@@ -187,11 +227,11 @@ def run_codex(job, worktree, log_path):
 
                 break
 
-            time.sleep(5)
+            time.sleep(POLL_SECONDS)
 
         if timed_out:
             raise RuntimeError(
-                f"Codex exceeded {MAX_RUNTIME} second job timeout"
+                f"Codex exceeded {runtime_limit} second {role} timeout"
             )
 
     return process.returncode, time.time() - started
@@ -411,6 +451,8 @@ def process_review_job(job, key, log_path):
             "worktree": str(worktree),
             "candidate_commit": candidate_commit,
             "log": str(log_path),
+            "token_budget": str(job.get("token_budget") or role_limit("reviewer", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+            "timeout_seconds": str(job.get("timeout_seconds") or role_limit("reviewer", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
             "updated_at": str(time.time()),
         },
     )
@@ -552,6 +594,8 @@ def process_repair_job(job, key, log_path, test_log):
             "worktree": str(worktree),
             "candidate_before": candidate_before,
             "log": str(log_path),
+            "token_budget": str(job.get("token_budget") or role_limit("repair", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+            "timeout_seconds": str(job.get("timeout_seconds") or role_limit("repair", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
             "updated_at": str(time.time()),
         },
     )
@@ -739,6 +783,8 @@ def process_job(raw_job):
                 "job_role": job.get("role", "builder"),
                 "provider": job.get("provider", DEFAULT_PROVIDER),
                 "model": job.get("model", DEFAULT_MODEL),
+                "token_budget": str(job.get("token_budget") or role_limit("builder", "TOKEN_BUDGET", ROLE_TOKEN_DEFAULTS)),
+                "timeout_seconds": str(job.get("timeout_seconds") or role_limit("builder", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS)),
                 "updated_at": str(time.time()),
             },
         )

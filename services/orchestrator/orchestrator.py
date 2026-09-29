@@ -19,7 +19,7 @@ REPO_ROOT = Path(
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.6-luna")
 ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "sid-orchestrator-01")
-PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "900"))
+PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "180"))
 MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
@@ -62,6 +62,19 @@ def extract_json(text):
     return json.loads(text[start : end + 1])
 
 
+
+def repository_manifest():
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=REPO_ROOT, text=True, timeout=10
+        )
+        files = [line for line in out.splitlines() if line.strip()]
+        shown = files[:160]
+        suffix = f"\n... {len(files) - len(shown)} more files" if len(files) > len(shown) else ""
+        return "\n".join(shown) + suffix
+    except Exception:
+        return "manifest unavailable"
+
 def planner_prompt(goal):
     return f"""
 You are the planning agent for SID's AI Command Center.
@@ -72,7 +85,10 @@ Repository:
 High-level goal:
 {goal}
 
-Inspect the repository before planning.
+Plan from the goal and the compact repository manifest below. Do not broadly inspect the repository unless a specific ambiguity prevents a safe plan.
+
+Repository manifest:
+{repository_manifest()}
 
 Break the goal into a SMALL set of implementation jobs that can be executed
 by independent coding agents.
@@ -99,6 +115,7 @@ Return ONLY valid JSON using this exact shape:
       "number": 1,
       "title": "short title",
       "task": "complete implementation instructions",
+      "scope": ["likely/relevant/path"],
       "depends_on": []
     }}
   ]
@@ -192,6 +209,12 @@ def validate_plan(plan):
         if not str(job.get("task", "")).strip():
             raise ValueError(f"job {number} has no task")
 
+        scope = job.get("scope", [])
+        if not isinstance(scope, list) or any(not isinstance(x, str) for x in scope):
+            raise ValueError(f"job {number} scope must be a list of paths")
+        if len(scope) > 12:
+            raise ValueError(f"job {number} scope is too broad")
+
         deps = job.get("depends_on", [])
 
         if not isinstance(deps, list):
@@ -253,6 +276,24 @@ def create_job(goal_id, planned_job, number_to_id):
     return job_id
 
 
+
+def scoped_builder_prompt(item):
+    scope = [p.strip() for p in item.get("scope", []) if p.strip()]
+    scope_text = "\n".join(f"- {p}" for p in scope) or "- infer the smallest relevant scope"
+    return f"""Task:
+{item['task']}
+
+Likely scope (start here; expand only if required):
+{scope_text}
+
+Efficiency requirements:
+- Do not inventory or read the whole repository.
+- Use targeted git/rg/sed inspection.
+- Make the smallest correct change.
+- Run only focused validation; SID runs the deterministic integration gate.
+- Stop when the requested implementation and focused validation are complete.
+""".strip()
+
 def process_goal(raw):
     data = json.loads(raw)
     goal_id = data["id"]
@@ -292,7 +333,7 @@ def process_goal(raw):
             "id": job_id,
             "goal_id": goal_id,
             "title": item["title"],
-            "prompt": item["task"],
+            "prompt": scoped_builder_prompt(item),
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "role": "builder",
@@ -311,7 +352,7 @@ def process_goal(raw):
                 json.dumps({
                     "id": job_id,
                     "goal_id": goal_id,
-                    "prompt": item["task"],
+                    "prompt": scoped_builder_prompt(item),
                     "provider": DEFAULT_PROVIDER,
                     "model": DEFAULT_MODEL,
                     "role": "builder",
@@ -376,7 +417,8 @@ def review_findings(review):
 
     # Keep the repair prompt focused. The final reviewer messages contain
     # the actionable findings and verdict; do not replay the full session.
-    return "\n\n".join(messages[-3:])
+    findings = "\n\n".join(messages[-2:])
+    return findings[-6000:]
 
 
 def queue_repairs():
@@ -402,6 +444,7 @@ def queue_repairs():
                 r.hset(
                     key,
                     mapping={
+                        "status": "repair_exhausted",
                         "repair_status": "exhausted",
                         "updated_at": now(),
                     },
@@ -557,6 +600,7 @@ def release_dependencies():
             "test_failed",
             "integration_failed",
             "rejected",
+            "repair_exhausted",
         }
 
         if any(state in failed_states for state in dep_states):
@@ -626,6 +670,17 @@ def update_goals():
             r.hget(f"sid:jobs:{job_id}", "status")
             for job_id in job_ids
         ]
+
+        if any(state in {"failed", "test_failed", "integration_failed", "rejected", "repair_exhausted", "blocked_failed_dependency"} for state in states):
+            r.hset(
+                key,
+                mapping={
+                    "status": "failed",
+                    "error": "child job reached a terminal failure state",
+                    "updated_at": now(),
+                },
+            )
+            continue
 
         if all(
             state in {"merged", "completed_no_changes"}
