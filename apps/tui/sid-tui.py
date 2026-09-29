@@ -105,11 +105,15 @@ def _json_list(value):
 def normalize_orchestrator(key, data):
     """Normalize one orchestrator hash without making assumptions about it."""
     data = data if isinstance(data, dict) else {}
+    active_goal = _text(data.get("goal_id") or data.get("active_goal"))
+    status = _text(data.get("status"), "unknown")
+    if active_goal != "-" and status == "idle":
+        status = "active"
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
-        "status": _text(data.get("status"), "unknown"),
+        "status": status,
         "model": _text(data.get("model")),
-        "active_goal": _text(data.get("goal_id") or data.get("active_goal")),
+        "active_goal": active_goal,
         "heartbeat_age": heartbeat_age(data.get("last_seen")),
     }
 

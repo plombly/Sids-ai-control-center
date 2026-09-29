@@ -49,6 +49,17 @@ def test_orchestrators_are_sorted_and_malformed_records_are_safe(monkeypatch):
     assert records[1]["heartbeat_age"] == -1
 
 
+def test_active_goal_is_rendered_as_active_and_goal_less_orchestrator_stays_idle():
+    assert sid_tui.normalize_orchestrator(
+        "sid:orchestrators:active",
+        {"status": "idle", "goal_id": "goal-1"},
+    )["status"] == "active"
+    assert sid_tui.normalize_orchestrator(
+        "sid:orchestrators:idle",
+        {"status": "idle"},
+    )["status"] == "idle"
+
+
 def test_goals_use_text_fallback_and_deterministic_recent_order(monkeypatch):
     monkeypatch.setattr(
         sid_tui,
@@ -211,6 +222,9 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
                 "worker": "worker-1",
                 "model": "builder-model",
                 "total_tokens": "10",
+                "effective_tokens": "10",
+                "cached_input_tokens": "0",
+                "command_count": "1",
                 "duration": "1",
             },
             {
@@ -223,6 +237,9 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
                 "worker": "worker-1",
                 "model": "builder-model",
                 "total_tokens": "20",
+                "effective_tokens": "20",
+                "cached_input_tokens": "0",
+                "command_count": "1",
                 "duration": "2",
             },
             {
@@ -235,6 +252,9 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
                 "worker": "worker-1",
                 "model": "builder-model",
                 "total_tokens": "30",
+                "effective_tokens": "30",
+                "cached_input_tokens": "0",
+                "command_count": "1",
                 "duration": "3",
             },
         ],

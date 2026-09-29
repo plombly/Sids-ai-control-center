@@ -32,6 +32,8 @@ def now():
 
 
 def heartbeat(status="idle", goal_id=""):
+    if goal_id and status == "idle":
+        status = "active"
     r.hset(
         f"sid:orchestrators:{ORCHESTRATOR_ID}",
         mapping={
@@ -746,6 +748,13 @@ def update_goals():
             )
 
 
+def active_goal_id():
+    for key in sorted(r.scan_iter("sid:goals:*")):
+        if r.hget(key, "status") in {"planning", "running"}:
+            return key.rsplit(":", 1)[-1]
+    return ""
+
+
 def main():
     print(
         f"[{ORCHESTRATOR_ID}] started model={DEFAULT_MODEL}",
@@ -754,10 +763,12 @@ def main():
 
     while True:
         try:
-            heartbeat()
             queue_repairs()
             release_dependencies()
             update_goals()
+
+            goal_id = active_goal_id()
+            heartbeat("active", goal_id) if goal_id else heartbeat()
 
             item = r.blpop(GOAL_QUEUE, timeout=5)
 
