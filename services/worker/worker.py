@@ -873,6 +873,18 @@ def process_repair_job(job, key, log_path, test_log):
         "review_error",
     )
 
+    # A repaired candidate must be integrated and reviewed from scratch.
+    # Keep the old integration worktree/branch metadata so prepare_integration
+    # can safely clean them up before creating the new integrated candidate.
+    redis.hdel(
+        builder_key,
+        "integration_status",
+        "integration_base_commit",
+        "integrated_candidate_commit",
+        "integration_result",
+        "integration_error",
+    )
+
     redis.hset(
         builder_key,
         mapping={
