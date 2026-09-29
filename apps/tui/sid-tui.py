@@ -256,7 +256,7 @@ def rule():
 
 def table(title, columns, rows, empty_message):
     widths = [
-        max(len(column), *(len(str(values[index])) for values in rows))
+        max([len(column)] + [len(str(values[index])) for values in rows])
         for index, column in enumerate(columns)
     ]
 
@@ -290,6 +290,17 @@ def format_tokens(value):
         return f"{int(value):,}"
     except (TypeError, ValueError):
         return "-"
+
+
+def format_goal_progress(progress):
+    """Keep child completion and the status mix visible in one compact cell."""
+    completed = progress.get("completed", 0)
+    total = progress.get("total", 0)
+    status_counts = progress.get("status_counts", {})
+    breakdown = ",".join(
+        f"{status}:{count}" for status, count in sorted(status_counts.items())
+    )
+    return f"{completed}/{total}" + (f" ({breakdown})" if breakdown else "")
 
 
 def review_display(job):
@@ -364,7 +375,7 @@ def draw():
         for item in orchestrators()
     ]
     table(
-        "ORCHESTRATORS",
+        "ORCHESTRATOR",
         ("ORCHESTRATOR ID", "STATUS", "MODEL", "ACTIVE GOAL", "HEARTBEAT"),
         orch_rows,
         "No orchestrators online",
@@ -381,7 +392,7 @@ def draw():
                 goal["summary"],
                 goal["created_at"],
                 goal["updated_at"],
-                f"{progress['completed']}/{progress['total']}",
+                format_goal_progress(progress),
                 ",".join(goal["child_job_ids"]) or "-",
             )
         )
