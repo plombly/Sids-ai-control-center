@@ -85,6 +85,28 @@ def approve(job_id):
             "expected 'awaiting_review'"
         )
 
+    review_status = job.get("review_status")
+    review_verdict = job.get("review_verdict")
+    review_job_id = job.get("review_job_id")
+
+    if review_status != "complete":
+        fail(
+            f"Job {job_id} cannot be approved: "
+            "independent review is not complete"
+        )
+
+    if review_verdict != "pass":
+        fail(
+            f"Job {job_id} cannot be approved: "
+            f"review verdict is {review_verdict or 'missing'}"
+        )
+
+    if not review_job_id:
+        fail(
+            f"Job {job_id} cannot be approved: "
+            "review job ID is missing"
+        )
+
     ensure_main_clean()
 
     worktree = safe_worktree(job_id, data)
