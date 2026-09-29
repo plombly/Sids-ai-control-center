@@ -38,6 +38,10 @@ CHECKS = [
         [str(PYTHON), "-m", "py_compile", "scripts/job-review.py"],
     ),
     (
+        "submit-review-syntax",
+        [str(PYTHON), "-m", "py_compile", "scripts/submit-review.py"],
+    ),
+    (
         "git-diff-check",
         ["git", "diff", "--check"],
     ),
