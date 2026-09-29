@@ -139,3 +139,9 @@ def project_tasks(project_id: int, db: Session = Depends(get_db)):
         .order_by(Task.priority.desc(), Task.id.asc())
         .all()
     )
+
+
+# Provider inspection and persistent agent definitions (execution is internal only).
+from agent_routes import router as agent_router
+
+app.include_router(agent_router)

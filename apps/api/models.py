@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column,
+    JSON,
     Integer,
     String,
     Text,
@@ -40,6 +41,10 @@ class Agent(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tasks = relationship("Task", back_populates="agent")
+    configuration = relationship(
+        "AgentConfiguration", back_populates="agent", uselist=False,
+        cascade="all, delete-orphan", lazy="selectin",
+    )
 
 
 class Task(Base):
@@ -68,3 +73,15 @@ class Task(Base):
 
     project = relationship("Project", back_populates="tasks")
     agent = relationship("Agent", back_populates="tasks")
+
+
+class AgentConfiguration(Base):
+    """Additive table: existing agents/tasks need no ALTER TABLE or backfill."""
+    __tablename__ = "agent_configurations"
+
+    agent_id = Column(Integer, ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
+    role = Column(String(255), nullable=False, default="assistant")
+    capabilities = Column(JSON, nullable=False, default=list)
+    permissions = Column(JSON, nullable=False, default=dict)
+
+    agent = relationship("Agent", back_populates="configuration")
