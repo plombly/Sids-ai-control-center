@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import json
 import os
+import shutil
 import subprocess
 import time
 
@@ -47,17 +47,15 @@ def workers():
     for key in sorted(r.scan_iter("sid:workers:*")):
         data = r.hgetall(key)
 
-        try:
-            age = int(time.time() - float(data.get("last_seen", 0)))
-        except Exception:
-            age = -1
-
         result.append(
-            (
-                data.get("id", key),
-                data.get("status", "unknown"),
-                age,
-            )
+            {
+                "id": data.get("id") or key.rsplit(":", 1)[-1],
+                "role": data.get("role", "-"),
+                "provider": data.get("provider", "-"),
+                "model": data.get("model", "-"),
+                "status": data.get("status", "unknown"),
+                "heartbeat_age": heartbeat_age(data.get("last_seen")),
+            }
         )
 
     return result
@@ -71,15 +69,90 @@ def recent_jobs():
 
         if data:
             result.append(
-                (
-                    key.split(":")[-1],
-                    data.get("status", "?"),
-                    data.get("provider", "?"),
-                    data.get("worker_id", "-"),
-                )
+                {
+                    "id": key.rsplit(":", 1)[-1],
+                    "status": data.get("status", "?"),
+                    "worker": data.get("worker_id", "-"),
+                    "model": data.get("model", "-"),
+                    "tokens": data.get("tokens", "-"),
+                    "duration": data.get("duration_seconds", "-"),
+                    "branch": data.get("branch", "-"),
+                    "sort_time": timestamp(data.get("updated_at") or data.get("created_at")),
+                }
             )
 
-    return result[-8:]
+    result.sort(key=lambda job: job["sort_time"], reverse=True)
+    return result[:8]
+
+
+def timestamp(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def heartbeat_age(value):
+    seen_at = timestamp(value)
+    if not seen_at:
+        return -1
+
+    return max(int(time.time() - seen_at), 0)
+
+
+def clip(value, width):
+    value = str(value)
+    if len(value) <= width:
+        return value
+    if width < 2:
+        return value[:width]
+    return value[: width - 1] + "…"
+
+
+def row(values, widths):
+    return " " + "  ".join(clip(value, width).ljust(width) for value, width in zip(values, widths))
+
+
+def rule():
+    return "-" * min(shutil.get_terminal_size((110, 24)).columns, 120)
+
+
+def table(title, columns, rows, empty_message):
+    widths = [
+        max(len(column), *(len(str(values[index])) for values in rows))
+        for index, column in enumerate(columns)
+    ]
+
+    print(f" {title}")
+    print(rule())
+
+    if not rows:
+        print(f" {empty_message}")
+        return
+
+    print(row(columns, widths))
+    print(row(["-" * width for width in widths], widths))
+    for values in rows:
+        print(row(values, widths))
+
+
+def format_duration(value):
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return "-"
+
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remainder = divmod(int(seconds), 60)
+    return f"{minutes}m {remainder:02d}s"
+
+
+def format_tokens(value):
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "-"
 
 
 def draw():
@@ -96,37 +169,48 @@ def draw():
     print(f" Queue      : {r.llen(QUEUE)} waiting")
     print()
 
-    print(" WORKERS")
-    print("-" * 72)
-
     ws = workers()
-
-    if not ws:
-        print(" No workers online")
-    else:
-        for worker_id, status, age in ws:
-            freshness = f"{age}s ago" if age >= 0 else "unknown"
-            print(f" {worker_id:<35} {status:<12} heartbeat {freshness}")
+    worker_rows = [
+        (
+            worker["id"],
+            worker["role"],
+            worker["provider"],
+            worker["model"],
+            worker["status"],
+            f"{worker['heartbeat_age']}s ago" if worker["heartbeat_age"] >= 0 else "unknown",
+        )
+        for worker in ws
+    ]
+    table(
+        "WORKERS",
+        ("WORKER ID", "ROLE", "PROVIDER", "MODEL", "STATUS", "HEARTBEAT"),
+        worker_rows,
+        "No workers online",
+    )
 
     print()
-    print(" RECENT JOBS")
-    print("-" * 72)
-
     jobs = recent_jobs()
-
-    if not jobs:
-        print(" No jobs yet")
-    else:
-        for job_id, status, provider, worker in jobs:
-            print(
-                f" {job_id:<12} "
-                f"{status:<12} "
-                f"{provider:<10} "
-                f"{worker}"
-            )
+    job_rows = [
+        (
+            job["id"],
+            job["status"],
+            job["worker"],
+            job["model"],
+            format_tokens(job["tokens"]),
+            format_duration(job["duration"]),
+            job["branch"],
+        )
+        for job in jobs
+    ]
+    table(
+        "RECENT JOBS",
+        ("JOB ID", "STATUS", "WORKER", "MODEL", "TOKENS", "DURATION", "GIT BRANCH"),
+        job_rows,
+        "No jobs yet",
+    )
 
     print()
-    print("-" * 72)
+    print(rule())
     print(" Ctrl-C to exit")
 
 
