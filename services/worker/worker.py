@@ -237,6 +237,95 @@ def run_tests(worktree):
     return True, "\n".join(output)
 
 
+def process_review_job(job, key, log_path):
+    job_id = str(job["id"])
+    builder_job_id = str(job.get("builder_job_id", ""))
+    worktree_value = job.get("worktree")
+
+    if not builder_job_id:
+        raise RuntimeError("Reviewer job missing builder_job_id")
+
+    if not worktree_value:
+        raise RuntimeError("Reviewer job missing builder worktree")
+
+    worktree = Path(worktree_value).resolve()
+    expected = (WORKTREE_ROOT / f"job-{builder_job_id}").resolve()
+
+    if worktree != expected:
+        raise RuntimeError(f"Unexpected reviewer worktree: {worktree}")
+
+    if not worktree.exists():
+        raise RuntimeError(f"Builder worktree does not exist: {worktree}")
+
+    builder = redis.hgetall(f"sid:jobs:{builder_job_id}")
+    if not builder:
+        raise RuntimeError(f"Builder job not found: {builder_job_id}")
+
+    if builder.get("status") != "awaiting_review":
+        raise RuntimeError(
+            f"Builder job status is {builder.get('status')!r}; "
+            "expected 'awaiting_review'"
+        )
+
+    redis.hset(
+        key,
+        mapping={
+            "status": "reviewing",
+            "worker_id": WORKER_ID,
+            "worker_role": WORKER_ROLE,
+            "job_role": "reviewer",
+            "provider": job.get("provider", DEFAULT_PROVIDER),
+            "model": job.get("model", DEFAULT_MODEL),
+            "builder_job_id": builder_job_id,
+            "worktree": str(worktree),
+            "log": str(log_path),
+            "updated_at": str(time.time()),
+        },
+    )
+
+    returncode, duration = run_codex(job, worktree, log_path)
+    session_id, usage = parse_codex_log(log_path)
+
+    log_text = log_path.read_text(errors="replace")
+    if "VERDICT: CHANGES_REQUIRED" in log_text:
+        verdict = "changes_required"
+    elif "VERDICT: PASS" in log_text:
+        verdict = "pass"
+    else:
+        verdict = "unknown"
+
+    redis.hset(
+        key,
+        mapping={
+            "status": "review_complete",
+            "review_verdict": verdict,
+            "codex_exit_code": str(returncode),
+            "duration_seconds": f"{duration:.2f}",
+            "session_id": session_id,
+            "tokens": usage["total_tokens"],
+            "input_tokens": usage["input_tokens"],
+            "cached_input_tokens": usage["cached_input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "reasoning_tokens": usage["reasoning_tokens"],
+            "updated_at": str(time.time()),
+        },
+    )
+
+    redis.hset(
+        f"sid:jobs:{builder_job_id}",
+        mapping={
+            "review_job_id": job_id,
+            "review_status": "complete",
+            "review_verdict": verdict,
+            "review_log": str(log_path),
+            "updated_at": str(time.time()),
+        },
+    )
+
+    if returncode != 0:
+        raise RuntimeError(f"Reviewer Codex exited with status {returncode}")
+
+
 def process_job(raw_job):
     job = json.loads(raw_job)
     job_id = str(job["id"])
@@ -248,6 +337,10 @@ def process_job(raw_job):
 
     try:
         heartbeat("working")
+
+        if job.get("role", "builder") == "reviewer":
+            process_review_job(job, key, log_path)
+            return
 
         redis.hset(
             key,
