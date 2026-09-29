@@ -55,6 +55,10 @@ CHECKS = [
         [str(PYTHON), "scripts/efficiency-self-test.py"],
     ),
     (
+        "local-diagnostic",
+        [str(PYTHON), "scripts/local-diagnostic.py"],
+    ),
+    (
         "git-diff-check",
         ["git", "diff", "--check"],
     ),
