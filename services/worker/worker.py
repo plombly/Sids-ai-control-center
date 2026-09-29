@@ -100,6 +100,7 @@ def prepare_integration(job_id):
     """Integrate source candidates without touching main, then run the gate."""
     key = f"sid:jobs:{job_id}"
     data = redis.hgetall(key)
+    integration_metadata = {}
     if data.get("integration_status") == "passed" and data.get("integrated_candidate_commit"):
         return True
 
@@ -142,11 +143,11 @@ def prepare_integration(job_id):
         env = os.environ.copy()
         env["REPO_ROOT"] = str(path)
         gate = subprocess.run(
-            [str(REPO_ROOT / "scripts/integration-check.py")],
+            [str(path / "scripts/integration-check.py")],
             cwd=path, env=env, text=True, capture_output=True,
         )
         integrated = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
-        metadata = {
+        integration_metadata = {
             "returncode": gate.returncode,
             "stdout": gate.stdout[-4000:],
             "stderr": gate.stderr[-4000:],
@@ -159,7 +160,7 @@ def prepare_integration(job_id):
             "status": "awaiting_review",
             "integration_status": "passed",
             "integrated_candidate_commit": integrated,
-            "integration_result": json.dumps(metadata, separators=(",", ":")),
+            "integration_result": json.dumps(integration_metadata, separators=(",", ":")),
             "updated_at": str(time.time()),
         })
         return True
@@ -173,7 +174,10 @@ def prepare_integration(job_id):
             "status": "integration_failed",
             "integration_status": "failed",
             "integration_error": str(exc),
-            "integration_result": json.dumps({"error": str(exc)}, separators=(",", ":")),
+            "integration_result": json.dumps(
+                {**integration_metadata, "error": str(exc)},
+                separators=(",", ":"),
+            ),
             "updated_at": str(time.time()),
         })
         return False

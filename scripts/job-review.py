@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import redis
@@ -93,7 +94,28 @@ def ensure_main_clean():
         fail("main worktree is not clean")
 
 
+def release_approval_lock(lock_key, token):
+    r.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "return redis.call('del', KEYS[1]) else return 0 end",
+        1,
+        lock_key,
+        token,
+    )
+
+
 def approve(job_id):
+    lock_key = f"sid:approval-lock:{job_id}"
+    token = uuid.uuid4().hex
+    if not r.set(lock_key, token, nx=True, ex=300):
+        fail(f"Job {job_id} approval is already in progress")
+    try:
+        _approve_unlocked(job_id)
+    finally:
+        release_approval_lock(lock_key, token)
+
+
+def _approve_unlocked(job_id):
     key = f"sid:jobs:{job_id}"
     data = job_record(job_id)
 

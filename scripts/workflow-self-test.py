@@ -10,6 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeRedisClient:
+    def set(self, *args, **kwargs):
+        return True
+
+    def eval(self, *args, **kwargs):
+        return 0
+
     @classmethod
     def from_url(cls, *args, **kwargs):
         return cls()
