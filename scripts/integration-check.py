@@ -31,6 +31,10 @@ CHECKS = [
         [str(PYTHON), "-m", "py_compile", "services/worker/worker.py"],
     ),
     (
+        "web-serving-config",
+        [str(PYTHON), "scripts/web-serving-check.py"],
+    ),
+    (
         "submitter-syntax",
         [str(PYTHON), "-m", "py_compile", "scripts/submit-job.py"],
     ),
