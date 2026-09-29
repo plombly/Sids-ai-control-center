@@ -69,7 +69,13 @@ def create_worktree(job_id):
 
 def parse_codex_log(log_path):
     session_id = ""
-    tokens = ""
+    usage = {
+        "input_tokens": "",
+        "cached_input_tokens": "",
+        "output_tokens": "",
+        "reasoning_tokens": "",
+        "total_tokens": "",
+    }
 
     try:
         for line in log_path.read_text(errors="replace").splitlines():
@@ -86,22 +92,34 @@ def parse_codex_log(log_path):
                     or ""
                 )
 
-            usage = event.get("usage")
-            if isinstance(usage, dict):
-                total = usage.get("total_tokens")
-                if total is not None:
-                    tokens = str(total)
+            event_usage = event.get("usage")
+            if isinstance(event_usage, dict):
+                input_tokens = event_usage.get("input_tokens")
+                cached_tokens = event_usage.get("cached_input_tokens")
+                output_tokens = event_usage.get("output_tokens")
+                reasoning_tokens = event_usage.get("reasoning_output_tokens")
 
-            if not tokens:
-                text = json.dumps(event)
-                match = re.search(r'"total_tokens"\s*:\s*(\d+)', text)
-                if match:
-                    tokens = match.group(1)
+                if input_tokens is not None:
+                    usage["input_tokens"] = str(input_tokens)
+
+                if cached_tokens is not None:
+                    usage["cached_input_tokens"] = str(cached_tokens)
+
+                if output_tokens is not None:
+                    usage["output_tokens"] = str(output_tokens)
+
+                if reasoning_tokens is not None:
+                    usage["reasoning_tokens"] = str(reasoning_tokens)
+
+                if input_tokens is not None or output_tokens is not None:
+                    usage["total_tokens"] = str(
+                        int(input_tokens or 0) + int(output_tokens or 0)
+                    )
 
     except OSError:
         pass
 
-    return session_id, tokens
+    return session_id, usage
 
 
 def run_codex(job, worktree, log_path):
@@ -136,17 +154,35 @@ def run_codex(job, worktree, log_path):
             start_new_session=True,
         )
 
-        try:
-            process.communicate(prompt, timeout=MAX_RUNTIME)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
+        process.stdin.write(prompt)
+        process.stdin.close()
 
+        timed_out = False
+
+        while process.poll() is None:
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                heartbeat("working")
+            except Exception as exc:
+                print(
+                    f"[{WORKER_ID}] heartbeat warning: {exc}",
+                    flush=True,
+                )
 
+            if time.time() - started >= MAX_RUNTIME:
+                timed_out = True
+                os.killpg(process.pid, signal.SIGTERM)
+
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+
+                break
+
+            time.sleep(5)
+
+        if timed_out:
             raise RuntimeError(
                 f"Codex exceeded {MAX_RUNTIME} second job timeout"
             )
@@ -233,7 +269,7 @@ def process_job(raw_job):
         )
 
         returncode, duration = run_codex(job, worktree, log_path)
-        session_id, tokens = parse_codex_log(log_path)
+        session_id, usage = parse_codex_log(log_path)
 
         redis.hset(
             key,
@@ -241,7 +277,11 @@ def process_job(raw_job):
                 "codex_exit_code": str(returncode),
                 "duration_seconds": f"{duration:.2f}",
                 "session_id": session_id,
-                "tokens": tokens,
+                "tokens": usage["total_tokens"],
+                "input_tokens": usage["input_tokens"],
+                "cached_input_tokens": usage["cached_input_tokens"],
+                "output_tokens": usage["output_tokens"],
+                "reasoning_tokens": usage["reasoning_tokens"],
                 "updated_at": str(time.time()),
             },
         )
