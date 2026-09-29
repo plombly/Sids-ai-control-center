@@ -224,6 +224,19 @@ def timestamp(value):
     return parsed if math.isfinite(parsed) else 0.0
 
 
+def format_timestamp(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if not math.isfinite(parsed):
+        return "-"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(parsed))
+    except (OverflowError, OSError, ValueError, TypeError):
+        return "-"
+
+
 def heartbeat_age(value):
     seen_at = timestamp(value)
     if not seen_at:
@@ -390,8 +403,8 @@ def draw():
                 goal["id"],
                 goal["status"],
                 goal["summary"],
-                goal["created_at"],
-                goal["updated_at"],
+                format_timestamp(goal["created_at"]),
+                format_timestamp(goal["updated_at"]),
                 format_goal_progress(progress),
                 ",".join(goal["child_job_ids"]) or "-",
             )
