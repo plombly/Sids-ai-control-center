@@ -22,8 +22,8 @@ DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.6-luna")
 
 MAX_RUNTIME = int(os.environ.get("MAX_JOB_RUNTIME", "1800"))
-ROLE_RUNTIME_DEFAULTS = {"builder": 300, "reviewer": 150, "repair": 180}
-ROLE_TOKEN_DEFAULTS = {"builder": 250000, "reviewer": 120000, "repair": 150000}
+ROLE_RUNTIME_DEFAULTS = {"builder": 600, "reviewer": 240, "repair": 360}
+ROLE_TOKEN_DEFAULTS = {"builder": 100000, "reviewer": 75000, "repair": 100000}
 ROLE_ENFORCEMENT_DEFAULTS = {"builder": 100000, "reviewer": 60000, "repair": 80000}
 POLL_SECONDS = int(os.environ.get("CODEX_POLL_SECONDS", "2"))
 
