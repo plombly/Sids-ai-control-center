@@ -1,5 +1,5 @@
 import importlib.util
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
@@ -347,3 +347,74 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
     assert "READY FOR HUMAN APPROVAL" in rendered
     assert "CHANGES REQUIRED" in rendered
     assert "Ctrl-C to exit" in rendered
+
+
+def test_main_refreshes_every_two_seconds_and_r_refreshes_immediately(monkeypatch):
+    keys = iter(("r", "q"))
+    draws = []
+    waits = []
+
+    monkeypatch.setattr(sid_tui, "draw", lambda: draws.append(len(draws)))
+    monkeypatch.setattr(
+        sid_tui,
+        "_wait_for_key",
+        lambda timeout: (waits.append(timeout) or next(keys)),
+    )
+
+    @contextmanager
+    def terminal_mode():
+        yield
+
+    monkeypatch.setattr(sid_tui, "_terminal_mode", terminal_mode)
+    with redirect_stdout(StringIO()):
+        sid_tui.main()
+
+    assert draws == [0, 1]
+    assert waits == [2, 2]
+
+
+def test_main_q_terminates_without_an_extra_refresh(monkeypatch):
+    draws = []
+    monkeypatch.setattr(sid_tui, "draw", lambda: draws.append(True))
+    monkeypatch.setattr(sid_tui, "_wait_for_key", lambda timeout: "q")
+
+    @contextmanager
+    def terminal_mode():
+        yield
+
+    monkeypatch.setattr(sid_tui, "_terminal_mode", terminal_mode)
+    with redirect_stdout(StringIO()):
+        sid_tui.main()
+
+    assert draws == [True]
+
+
+def test_terminal_mode_restores_settings_after_an_exception(monkeypatch):
+    class FakeStdin:
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 7
+
+    restored = []
+    monkeypatch.setattr(sid_tui.sys, "stdin", FakeStdin())
+    monkeypatch.setattr(sid_tui.termios, "tcgetattr", lambda stream: ["saved"])
+    monkeypatch.setattr(
+        sid_tui.tty,
+        "setcbreak",
+        lambda fd: restored.append(("cbreak", fd)),
+    )
+    monkeypatch.setattr(
+        sid_tui.termios,
+        "tcsetattr",
+        lambda stream, action, settings: restored.append((action, settings)),
+    )
+
+    try:
+        with sid_tui._terminal_mode():
+            raise RuntimeError("stop")
+    except RuntimeError:
+        pass
+
+    assert restored == [("cbreak", 7), (sid_tui.termios.TCSADRAIN, ["saved"])]
