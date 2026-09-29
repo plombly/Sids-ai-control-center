@@ -3,9 +3,14 @@
 import json
 import math
 import os
+import select
 import shutil
 import subprocess
+import sys
+import termios
 import time
+import tty
+from contextlib import contextmanager
 
 try:
     import redis
@@ -685,23 +690,55 @@ def draw():
 
     print()
     print(rule())
-    print(" Ctrl-C to exit")
+    print(" q to exit, r to refresh, Ctrl-C to exit")
+
+
+@contextmanager
+def _terminal_mode():
+    """Put an interactive terminal in cbreak mode and always restore it."""
+    if not sys.stdin.isatty():
+        yield
+        return
+
+    settings = termios.tcgetattr(sys.stdin)
+    try:
+        tty.setcbreak(sys.stdin.fileno())
+        yield
+    finally:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+
+
+def _wait_for_key(timeout):
+    """Return one pending control key, or None when the refresh interval ends."""
+    readable, _, _ = select.select([sys.stdin], [], [], timeout)
+    if not readable:
+        return None
+    key = sys.stdin.read(1)
+    return key.lower() if key else "q"
 
 
 def main():
-    while True:
-        try:
-            draw()
-            time.sleep(1)
-        except KeyboardInterrupt:
-            print()
-            break
-        except redis.RedisError as exc:
-            clear()
-            print("SID'S AI COMMAND CENTER")
-            print()
-            print(f"Redis error: {exc}")
-            time.sleep(2)
+    try:
+        with _terminal_mode():
+            while True:
+                try:
+                    draw()
+                except redis.RedisError as exc:
+                    clear()
+                    print("SID'S AI COMMAND CENTER")
+                    print()
+                    print(f"Redis error: {exc}")
+
+                try:
+                    key = _wait_for_key(2)
+                except KeyboardInterrupt:
+                    break
+                if key == "q":
+                    break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print()
 
 
 if __name__ == "__main__":
