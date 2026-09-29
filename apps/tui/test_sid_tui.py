@@ -221,8 +221,36 @@ def test_goal_progress_format_includes_completion_and_status_breakdown():
     ) == "1/3 (merged:1,queued:1,unknown:1)"
 
 
+def test_goal_summary_is_deterministic_and_uses_an_ellipsis():
+    assert sid_tui.goal_summary("failed historical goal: " + "x" * 80, 24) == (
+        "failed historical goal:…"
+    )
+
+
+def test_table_output_is_bounded_to_terminal_width(monkeypatch):
+    monkeypatch.setattr(
+        sid_tui.shutil,
+        "get_terminal_size",
+        lambda _fallback: sid_tui.os.terminal_size((48, 24)),
+    )
+    output = StringIO()
+    with redirect_stdout(output):
+        sid_tui.table(
+            "RECENT JOBS",
+            ("JOB", "STATUS", "ROLE", "DETAILS"),
+            [("job-1", "failed", "reviewer", "a" * 200)],
+            "No jobs",
+        )
+    assert max(map(len, output.getvalue().splitlines())) <= 48
+
+
 def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatch):
     monkeypatch.setattr(sid_tui, "clear", lambda: None)
+    monkeypatch.setattr(
+        sid_tui.shutil,
+        "get_terminal_size",
+        lambda _fallback: sid_tui.os.terminal_size((80, 24)),
+    )
     monkeypatch.setattr(sid_tui, "git_info", lambda: ("main", "clean"))
     monkeypatch.setattr(
         sid_tui.time,
@@ -274,7 +302,7 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
     monkeypatch.setattr(
         sid_tui,
         "recent_jobs",
-        lambda: [
+        lambda limit=8: [
             {
                 "id": "review-needed",
                 "status": "awaiting_review",
@@ -346,6 +374,8 @@ def test_draw_includes_orchestrator_goals_and_existing_review_notices(monkeypatc
     assert "AGENT REVIEW REQUIRED" in rendered
     assert "READY FOR HUMAN APPROVAL" in rendered
     assert "CHANGES REQUIRED" in rendered
+    assert "ACTION REQUIRED" in rendered
+    assert max(map(len, rendered.splitlines())) <= 80
     assert "Ctrl-C to exit" in rendered
 
 
@@ -418,3 +448,80 @@ def test_terminal_mode_restores_settings_after_an_exception(monkeypatch):
         pass
 
     assert restored == [("cbreak", 7), (sid_tui.termios.TCSADRAIN, ["saved"])]
+
+
+def test_table_output_is_bounded_on_extremely_narrow_terminal(monkeypatch):
+    monkeypatch.setattr(
+        sid_tui.shutil,
+        "get_terminal_size",
+        lambda _fallback: sid_tui.os.terminal_size((10, 24)),
+    )
+    output = StringIO()
+    with redirect_stdout(output):
+        sid_tui.table(
+            "RECENT JOBS",
+            ("JOB", "STATUS", "ROLE", "REVIEW", "WORKER", "TOKENS", "TIME"),
+            [("job-1", "awaiting_review", "builder", "PASS", "worker-1", "12345", "10s")],
+            "No jobs",
+        )
+
+    assert max(map(len, output.getvalue().splitlines())) <= 10
+
+
+def test_draw_action_required_scans_beyond_recent_eight(monkeypatch):
+    monkeypatch.setattr(sid_tui, "clear", lambda: None)
+    monkeypatch.setattr(sid_tui, "git_info", lambda: ("main", "clean"))
+    monkeypatch.setattr(sid_tui, "r", FakeRedis({}))
+    monkeypatch.setattr(sid_tui, "orchestrators", lambda: [])
+    monkeypatch.setattr(sid_tui, "workers", lambda: [])
+    monkeypatch.setattr(sid_tui, "recent_goals", lambda: [])
+
+    normal = [
+        {
+            "id": f"recent-{i}",
+            "status": "merged",
+            "role": "builder",
+            "review_verdict": "pass",
+            "review_status": "complete",
+            "review_job_id": "",
+            "worker": "worker-1",
+            "model": "model",
+            "total_tokens": 1,
+            "effective_tokens": 1,
+            "cached_input_tokens": 0,
+            "command_count": 1,
+            "duration": 1,
+            "sort_time": 100 - i,
+        }
+        for i in range(8)
+    ]
+    old_pending = {
+        "id": "old-pending",
+        "status": "awaiting_review",
+        "role": "builder",
+        "review_verdict": "pass",
+        "review_status": "complete",
+        "review_job_id": "review-old",
+        "worker": "worker-1",
+        "model": "model",
+        "total_tokens": 1,
+        "effective_tokens": 1,
+        "cached_input_tokens": 0,
+        "command_count": 1,
+        "duration": 1,
+        "sort_time": 1,
+    }
+
+    def jobs(limit=8):
+        records = normal + [old_pending]
+        return records if limit is None else records[:limit]
+
+    monkeypatch.setattr(sid_tui, "recent_jobs", jobs)
+
+    output = StringIO()
+    with redirect_stdout(output):
+        sid_tui.draw()
+
+    rendered = output.getvalue()
+    assert "READY FOR HUMAN APPROVAL" in rendered
+    assert "old-pending" in rendered

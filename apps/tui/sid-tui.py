@@ -437,12 +437,27 @@ def clip(value, width):
     return value[: width - 1] + "…"
 
 
+def goal_summary(prompt, width=36):
+    """Return one deterministic, width-bounded line for a goal prompt."""
+    return clip(_text(prompt).replace("\r", " ").replace("\n", " "), width)
+
+
 def row(values, widths):
-    return " " + "  ".join(clip(value, width).ljust(width) for value, width in zip(values, widths))
+    rendered = " " + "  ".join(
+        clip(value, width).ljust(width)
+        for value, width in zip(values, widths)
+    )
+    terminal_width = max(1, min(shutil.get_terminal_size((110, 24)).columns, 120))
+    return clip(rendered, terminal_width)
 
 
 def rule():
     return "-" * min(shutil.get_terminal_size((110, 24)).columns, 120)
+
+
+def bounded_print(value=""):
+    width = min(shutil.get_terminal_size((110, 24)).columns, 120)
+    print(clip(value, width - 1))
 
 
 def table(title, columns, rows, empty_message):
@@ -450,12 +465,18 @@ def table(title, columns, rows, empty_message):
         max([len(column)] + [len(str(values[index])) for values in rows])
         for index, column in enumerate(columns)
     ]
+    available = max(1, len(rule()) - 1 - 2 * (len(columns) - 1))
+    while sum(widths) > available:
+        widest = max(range(len(widths)), key=lambda index: widths[index])
+        if widths[widest] <= 1:
+            break
+        widths[widest] -= 1
 
-    print(f" {title}")
+    bounded_print(f" {title}")
     print(rule())
 
     if not rows:
-        print(f" {empty_message}")
+        bounded_print(f" {empty_message}")
         return
 
     print(row(columns, widths))
@@ -526,63 +547,67 @@ def draw():
 
     clear()
 
-    print("=" * 72)
-    print(" SID'S AI COMMAND CENTER")
-    print("=" * 72)
+    print(rule())
+    bounded_print(" SID'S AI COMMAND CENTER")
+    print(rule())
 
     print()
-    print(f" Repository : {branch} ({state})")
-    print(f" Queue      : {r.llen(QUEUE)} waiting")
+    bounded_print(f" Repository : {branch} ({state})")
+    bounded_print(f" Queue      : {r.llen(QUEUE)} waiting")
     print()
+
+    goals = recent_goals()
+    orch = orchestrators()
+    active_goal = next((item["active_goal"] for item in orch if item["active_goal"] != "-"), "-")
+    active_record = next((goal for goal in goals if goal["id"] == active_goal), None)
+    if active_record is None:
+        active_record = next(
+            (goal for goal in goals if goal["status"] in {"active", "running", "in_progress"}),
+            None,
+        )
+        if active_record is not None:
+            active_goal = active_record["id"]
+    active_label = active_goal
+    if active_record is not None:
+        active_label = f"{active_goal} — {goal_summary(active_record['summary'], 42)}"
+    bounded_print(f" Active goal: {active_label}")
+    table(
+        "ORCHESTRATOR",
+        ("ID", "STATUS", "MODEL", "ACTIVE GOAL", "HEARTBEAT"),
+        [
+            (item["id"], item["status"], item["model"], item["active_goal"], format_heartbeat_age(item["heartbeat_age"]))
+            for item in orch
+        ],
+        "No orchestrators online",
+    )
 
     ws = workers()
     worker_rows = [
         (
             worker["id"],
             worker["role"],
-            worker["provider"],
-            worker["model"],
+            worker["job_id"],
             worker["status"],
-            f"{worker['heartbeat_age']}s ago" if worker["heartbeat_age"] >= 0 else "unknown",
+            format_tokens(worker["effective_tokens"]),
         )
         for worker in ws
     ]
     table(
         "WORKERS",
-        ("WORKER ID", "ROLE", "PROVIDER", "MODEL", "STATUS", "HEARTBEAT"),
+        ("WORKER", "ROLE", "JOB", "STATUS", "TOKENS"),
         worker_rows,
         "No workers online",
     )
 
     print()
-    orch_rows = [
-        (
-            item["id"],
-            item["status"],
-            item["model"],
-            item["active_goal"],
-            format_heartbeat_age(item["heartbeat_age"]),
-        )
-        for item in orchestrators()
-    ]
-    table(
-        "ORCHESTRATOR",
-        ("ORCHESTRATOR ID", "STATUS", "MODEL", "ACTIVE GOAL", "HEARTBEAT"),
-        orch_rows,
-        "No orchestrators online",
-    )
-
-    print()
     goal_rows = []
-    for goal in recent_goals():
+    for goal in goals:
         progress = goal["child_job_progress"]
         goal_rows.append(
             (
                 goal["id"],
                 goal["status"],
-                goal["summary"],
-                format_timestamp(goal["created_at"]),
-                format_timestamp(goal["updated_at"]),
+                goal_summary(goal["summary"]),
                 format_goal_progress(progress),
                 ",".join(goal["child_job_ids"]) or "-",
             )
@@ -593,14 +618,18 @@ def draw():
             "GOAL ID",
             "STATUS",
             "SUMMARY",
-            "CREATED",
-            "UPDATED",
             "DONE",
             "CHILD JOBS",
         ),
         goal_rows,
         "No goals yet",
     )
+    for goal in goals:
+        bounded_print(
+            f" Goal {goal['id']} created {format_timestamp(goal['created_at'])} "
+            f"updated {format_timestamp(goal['updated_at'])}"
+        )
+        bounded_print(f" Goal {goal['id']} progress {format_goal_progress(goal['child_job_progress'])}")
 
     print()
     jobs = recent_jobs()
@@ -611,10 +640,7 @@ def draw():
             job["role"],
             review_display(job),
             job["worker"],
-            job["model"],
             format_tokens(job["effective_tokens"]),
-            format_tokens(job["cached_input_tokens"]),
-            job["command_count"],
             format_duration(job["duration"]),
         )
         for job in jobs
@@ -627,19 +653,18 @@ def draw():
             "ROLE",
             "REVIEW",
             "WORKER",
-            "MODEL",
             "EFFECTIVE",
-            "CACHED",
-            "CMDS",
             "DURATION",
         ),
         job_rows,
         "No jobs yet",
     )
 
+    # Operational actions must not disappear merely because a job falls
+    # outside the compact recent-jobs view.
     review_jobs = [
         job
-        for job in jobs
+        for job in recent_jobs(limit=None)
         if job["status"] == "awaiting_review"
     ]
 
@@ -661,36 +686,36 @@ def draw():
 
     if needs_reviewer:
         print()
-        print("AGENT REVIEW REQUIRED")
+        bounded_print(" ACTION REQUIRED: AGENT REVIEW REQUIRED")
         print(rule())
         for job in needs_reviewer:
             job_id = job["id"]
-            print(f" Job {job_id} needs independent review.")
-            print(f" Review : ./scripts/submit-review.py {job_id}")
+            bounded_print(f" Job {job_id} needs independent review.")
+            bounded_print(f" Review : ./scripts/submit-review.py {job_id}")
 
     if ready_for_human:
         print()
-        print("READY FOR HUMAN APPROVAL")
+        bounded_print(" ACTION REQUIRED: READY FOR HUMAN APPROVAL")
         print(rule())
         for job in ready_for_human:
             job_id = job["id"]
-            print(f" Job {job_id} passed independent review.")
-            print(f" Approve: python3 {REVIEW_SCRIPT} approve {job_id}")
-            print(f" Reject : python3 {REVIEW_SCRIPT} reject {job_id}")
+            bounded_print(f" Job {job_id} passed independent review.")
+            bounded_print(f" Approve: python3 {REVIEW_SCRIPT} approve {job_id}")
+            bounded_print(f" Reject : python3 {REVIEW_SCRIPT} reject {job_id}")
 
     if changes_required:
         print()
-        print("CHANGES REQUIRED")
+        bounded_print(" ACTION REQUIRED: CHANGES REQUIRED")
         print(rule())
         for job in changes_required:
             job_id = job["id"]
-            print(f" Job {job_id} did not pass independent review.")
-            print(f" Review job: {job['review_job_id'] or '-'}")
-            print(f" Reject    : python3 {REVIEW_SCRIPT} reject {job_id}")
+            bounded_print(f" Job {job_id} did not pass independent review.")
+            bounded_print(f" Review job: {job['review_job_id'] or '-'}")
+            bounded_print(f" Reject    : python3 {REVIEW_SCRIPT} reject {job_id}")
 
     print()
     print(rule())
-    print(" q to exit, r to refresh, Ctrl-C to exit")
+    bounded_print(" q to exit, r to refresh, Ctrl-C to exit")
 
 
 @contextmanager
@@ -725,9 +750,9 @@ def main():
                     draw()
                 except redis.RedisError as exc:
                     clear()
-                    print("SID'S AI COMMAND CENTER")
+                    bounded_print("SID'S AI COMMAND CENTER")
                     print()
-                    print(f"Redis error: {exc}")
+                    bounded_print(f"Redis error: {exc}")
 
                 try:
                     key = _wait_for_key(2)
