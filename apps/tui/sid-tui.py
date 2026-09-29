@@ -72,6 +72,18 @@ def _text(value, fallback="-"):
     return value or fallback
 
 
+def _key_text(value):
+    """Return a deterministic printable representation of a Redis key."""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return _text(value)
+
+
+def _key_suffix(value):
+    key = _key_text(value)
+    return key.rsplit(":", 1)[-1] or "-"
+
+
 def _json_list(value):
     if isinstance(value, (list, tuple)):
         values = value
@@ -94,7 +106,7 @@ def normalize_orchestrator(key, data):
     """Normalize one orchestrator hash without making assumptions about it."""
     data = data if isinstance(data, dict) else {}
     return {
-        "id": _text(data.get("id"), key.rsplit(":", 1)[-1]),
+        "id": _text(data.get("id"), _key_suffix(key)),
         "status": _text(data.get("status"), "unknown"),
         "model": _text(data.get("model")),
         "active_goal": _text(data.get("goal_id") or data.get("active_goal")),
@@ -105,7 +117,7 @@ def normalize_orchestrator(key, data):
 def orchestrators():
     """Read-only, deterministically ordered orchestrator records."""
     result = []
-    for key in sorted(r.scan_iter("sid:orchestrators:*")):
+    for key in sorted(r.scan_iter("sid:orchestrators:*"), key=_key_text):
         try:
             data = r.hgetall(key)
         except Exception:
@@ -147,8 +159,8 @@ def normalize_goal(goal_id, data, job_statuses=None):
 def recent_goals(limit=8):
     """Read a bounded, newest-first view of goals and their child jobs."""
     result = []
-    for key in sorted(r.scan_iter("sid:goals:*")):
-        goal_id = key.rsplit(":", 1)[-1]
+    for key in sorted(r.scan_iter("sid:goals:*"), key=_key_text):
+        goal_id = _key_suffix(key)
         try:
             data = r.hgetall(key)
         except Exception:
@@ -367,13 +379,23 @@ def draw():
                 goal["id"],
                 goal["status"],
                 goal["summary"],
+                goal["created_at"],
+                goal["updated_at"],
                 f"{progress['completed']}/{progress['total']}",
                 ",".join(goal["child_job_ids"]) or "-",
             )
         )
     table(
         "RECENT GOALS",
-        ("GOAL ID", "STATUS", "SUMMARY", "DONE", "CHILD JOBS"),
+        (
+            "GOAL ID",
+            "STATUS",
+            "SUMMARY",
+            "CREATED",
+            "UPDATED",
+            "DONE",
+            "CHILD JOBS",
+        ),
         goal_rows,
         "No goals yet",
     )
