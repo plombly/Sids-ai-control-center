@@ -24,7 +24,7 @@ DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-5.6-luna")
 MAX_RUNTIME = int(os.environ.get("MAX_JOB_RUNTIME", "1800"))
 ROLE_RUNTIME_DEFAULTS = {"builder": 300, "reviewer": 150, "repair": 180}
 ROLE_TOKEN_DEFAULTS = {"builder": 250000, "reviewer": 120000, "repair": 150000}
-ROLE_ENFORCEMENT_DEFAULTS = {"builder": 150000, "reviewer": 70000, "repair": 100000}
+ROLE_ENFORCEMENT_DEFAULTS = {"builder": 100000, "reviewer": 60000, "repair": 80000}
 POLL_SECONDS = int(os.environ.get("CODEX_POLL_SECONDS", "2"))
 
 
@@ -39,6 +39,7 @@ def efficiency_prefix(role):
 - Start with git status/diff and targeted rg/sed reads of likely files only.
 - Expand scope only when a concrete dependency requires it.
 - Do not run broad test suites; SID runs deterministic gates after builders/repairs.
+- For focused Python tests, use /tmp/sid-agent-venv/bin/python -m pytest; do not probe python/pytest executables.
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
 
@@ -96,7 +97,11 @@ def parse_codex_log(log_path):
         "cached_input_tokens": "",
         "output_tokens": "",
         "reasoning_tokens": "",
+        "uncached_input_tokens": "",
+        "effective_tokens": "",
         "total_tokens": "",
+        "command_count": "0",
+        "turn_completed": "0",
     }
 
     try:
@@ -113,6 +118,17 @@ def parse_codex_log(log_path):
                     or event.get("conversation_id")
                     or ""
                 )
+
+            if event.get("type") == "turn.completed":
+                usage["turn_completed"] = "1"
+
+            item = event.get("item")
+            if (
+                event.get("type") == "item.started"
+                and isinstance(item, dict)
+                and item.get("type") == "command_execution"
+            ):
+                usage["command_count"] = str(int(usage["command_count"]) + 1)
 
             event_usage = event.get("usage")
             if isinstance(event_usage, dict):
@@ -134,9 +150,12 @@ def parse_codex_log(log_path):
                     usage["reasoning_tokens"] = str(reasoning_tokens)
 
                 if input_tokens is not None or output_tokens is not None:
-                    usage["total_tokens"] = str(
-                        int(input_tokens or 0) + int(output_tokens or 0)
-                    )
+                    raw_input = int(input_tokens or 0)
+                    cached = min(int(cached_tokens or 0), raw_input)
+                    output = int(output_tokens or 0)
+                    usage["uncached_input_tokens"] = str(raw_input - cached)
+                    usage["effective_tokens"] = str(raw_input - cached + output)
+                    usage["total_tokens"] = str(raw_input + output)
 
     except OSError:
         pass
@@ -212,8 +231,16 @@ def run_codex(job, worktree, log_path):
                 os.killpg(process.pid, signal.SIGTERM)
 
             _, live_usage = parse_codex_log(log_path)
-            live_total = int(live_usage.get("total_tokens") or 0)
-            if live_total >= enforcement_budget:
+            live_effective = int(live_usage.get("effective_tokens") or 0)
+            # Codex currently reports authoritative usage at turn.completed. Never
+            # kill a successfully completed turn after the work is already done.
+            # If future Codex versions emit mid-turn usage, this remains a useful
+            # live guard over non-cached input + output.
+            if (
+                live_effective >= enforcement_budget
+                and live_usage.get("turn_completed") != "1"
+                and process.poll() is None
+            ):
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=10)
@@ -221,7 +248,8 @@ def run_codex(job, worktree, log_path):
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
                 raise RuntimeError(
-                    f"Codex enforcement budget exceeded: {live_total} >= {enforcement_budget} (configured ceiling {token_budget})"
+                    f"Codex effective-token budget exceeded: {live_effective} >= {enforcement_budget} "
+                    f"(configured ceiling {token_budget}; cached input excluded)"
                 )
 
             time.sleep(POLL_SECONDS)
@@ -511,6 +539,9 @@ def process_review_job(job, key, log_path):
         "cached_input_tokens": usage["cached_input_tokens"],
         "output_tokens": usage["output_tokens"],
         "reasoning_tokens": usage["reasoning_tokens"],
+        "uncached_input_tokens": usage["uncached_input_tokens"],
+        "effective_tokens": usage["effective_tokens"],
+        "command_count": usage["command_count"],
         "updated_at": str(time.time()),
     }
 
@@ -634,6 +665,9 @@ def process_repair_job(job, key, log_path, test_log):
         "cached_input_tokens": usage["cached_input_tokens"],
         "output_tokens": usage["output_tokens"],
         "reasoning_tokens": usage["reasoning_tokens"],
+        "uncached_input_tokens": usage["uncached_input_tokens"],
+        "effective_tokens": usage["effective_tokens"],
+        "command_count": usage["command_count"],
         "updated_at": str(time.time()),
     }
 
@@ -832,6 +866,9 @@ def process_job(raw_job):
                 "cached_input_tokens": usage["cached_input_tokens"],
                 "output_tokens": usage["output_tokens"],
                 "reasoning_tokens": usage["reasoning_tokens"],
+                "uncached_input_tokens": usage["uncached_input_tokens"],
+                "effective_tokens": usage["effective_tokens"],
+                "command_count": usage["command_count"],
                 "updated_at": str(time.time()),
             },
         )

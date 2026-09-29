@@ -199,6 +199,9 @@ def recent_jobs():
                     "input_tokens": data.get("input_tokens", "-"),
                     "cached_input_tokens": data.get("cached_input_tokens", "-"),
                     "output_tokens": data.get("output_tokens", "-"),
+                    "uncached_input_tokens": data.get("uncached_input_tokens", "-"),
+                    "effective_tokens": data.get("effective_tokens", "-"),
+                    "command_count": data.get("command_count", "-"),
                     # Newer records may provide total_tokens; older records
                     # store the same value under tokens.
                     "total_tokens": data.get("total_tokens") or data.get(
@@ -434,7 +437,9 @@ def draw():
             review_display(job),
             job["worker"],
             job["model"],
-            format_tokens(job["total_tokens"]),
+            format_tokens(job["effective_tokens"]),
+            format_tokens(job["cached_input_tokens"]),
+            job["command_count"],
             format_duration(job["duration"]),
         )
         for job in jobs
@@ -448,7 +453,9 @@ def draw():
             "REVIEW",
             "WORKER",
             "MODEL",
-            "TOKENS",
+            "EFFECTIVE",
+            "CACHED",
+            "CMDS",
             "DURATION",
         ),
         job_rows,
