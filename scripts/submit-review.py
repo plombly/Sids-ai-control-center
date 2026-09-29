@@ -37,6 +37,10 @@ worktree = builder.get("worktree")
 if not worktree:
     raise SystemExit("Builder job has no worktree")
 
+candidate_commit = builder.get("candidate_commit")
+if not candidate_commit:
+    raise SystemExit("Builder job has no candidate commit")
+
 existing_review = builder.get("review_job_id")
 if existing_review:
     existing = r.hgetall(f"sid:jobs:{existing_review}")
@@ -57,6 +61,7 @@ if not r.hsetnx(builder_key, "review_job_id", job_id):
 prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {args.builder_job_id}.
+Review immutable candidate commit {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}
@@ -93,6 +98,7 @@ job = {
     "role": "reviewer",
     "builder_job_id": args.builder_job_id,
     "worktree": worktree,
+    "candidate_commit": candidate_commit,
     "created_at": time.time(),
 }
 
@@ -106,6 +112,7 @@ try:
             "role": "reviewer",
             "builder_job_id": args.builder_job_id,
             "worktree": worktree,
+            "candidate_commit": candidate_commit,
             "prompt": prompt,
             "created_at": str(job["created_at"]),
         },

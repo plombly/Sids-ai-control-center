@@ -255,6 +255,10 @@ def queue_review_job(builder_job_id):
     if not worktree:
         raise RuntimeError("Builder job has no worktree")
 
+    candidate_commit = builder.get("candidate_commit")
+    if not candidate_commit:
+        raise RuntimeError("Builder job has no candidate commit")
+
     review_job_id = uuid.uuid4().hex[:8]
 
     # Atomic duplicate guard. Only the process that successfully creates
@@ -265,6 +269,7 @@ def queue_review_job(builder_job_id):
     prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {builder_job_id}.
+Review immutable candidate commit {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}
@@ -303,6 +308,7 @@ material findings, explicitly say so.
         "role": "reviewer",
         "builder_job_id": builder_job_id,
         "worktree": worktree,
+        "candidate_commit": candidate_commit,
         "created_at": created_at,
     }
 
@@ -316,6 +322,7 @@ material findings, explicitly say so.
                 "role": "reviewer",
                 "builder_job_id": builder_job_id,
                 "worktree": worktree,
+                "candidate_commit": candidate_commit,
                 "prompt": prompt,
                 "created_at": str(created_at),
             },
@@ -372,6 +379,18 @@ def process_review_job(job, key, log_path):
             "expected 'awaiting_review'"
         )
 
+    candidate_commit = str(job.get("candidate_commit", ""))
+    if not candidate_commit:
+        raise RuntimeError("Reviewer job missing candidate_commit")
+    if builder.get("candidate_commit") != candidate_commit:
+        raise RuntimeError("Reviewer candidate does not match builder candidate")
+
+    head = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+    if head != candidate_commit:
+        raise RuntimeError("Builder worktree HEAD does not match candidate commit")
+    if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
+        raise RuntimeError("Builder worktree changed after candidate commit")
+
     redis.hset(
         key,
         mapping={
@@ -383,6 +402,7 @@ def process_review_job(job, key, log_path):
             "model": job.get("model", DEFAULT_MODEL),
             "builder_job_id": builder_job_id,
             "worktree": str(worktree),
+            "candidate_commit": candidate_commit,
             "log": str(log_path),
             "updated_at": str(time.time()),
         },
@@ -390,6 +410,11 @@ def process_review_job(job, key, log_path):
 
     returncode, duration = run_codex(job, worktree, log_path)
     session_id, usage = parse_codex_log(log_path)
+
+    head_after = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+    dirty_after = run_git("status", "--porcelain", cwd=worktree).stdout.strip()
+    if head_after != candidate_commit or dirty_after:
+        raise RuntimeError("Candidate changed during read-only review")
 
     verdict = "unknown"
 
@@ -416,6 +441,7 @@ def process_review_job(job, key, log_path):
 
     common = {
         "review_verdict": verdict,
+        "reviewed_commit": candidate_commit,
         "codex_exit_code": str(returncode),
         "duration_seconds": f"{duration:.2f}",
         "session_id": session_id,
@@ -435,6 +461,7 @@ def process_review_job(job, key, log_path):
                 "review_job_id": job_id,
                 "review_status": "failed",
                 "review_verdict": verdict,
+                "reviewed_commit": candidate_commit,
                 "review_log": str(log_path),
                 "updated_at": str(time.time()),
             },
@@ -448,6 +475,7 @@ def process_review_job(job, key, log_path):
             "review_job_id": job_id,
             "review_status": "complete",
             "review_verdict": verdict,
+            "reviewed_commit": candidate_commit,
             "review_log": str(log_path),
             "updated_at": str(time.time()),
         },
@@ -555,12 +583,27 @@ def process_job(raw_job):
             )
             return
 
+        run_git("add", "-A", cwd=worktree)
+        run_git(
+            "commit",
+            "-m",
+            f"Apply SID job {job_id}",
+            cwd=worktree,
+        )
+        candidate_commit = run_git(
+            "rev-parse", "HEAD", cwd=worktree
+        ).stdout.strip()
+
+        if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
+            raise RuntimeError("Candidate worktree is dirty after commit")
+
         redis.hset(
             key,
             mapping={
                 "status": "awaiting_review",
                 "test_log": str(test_log),
                 "changes": diff,
+                "candidate_commit": candidate_commit,
                 "updated_at": str(time.time()),
             },
         )
@@ -597,6 +640,19 @@ def process_job(raw_job):
                 "updated_at": str(time.time()),
             },
         )
+
+        if job.get("role", "builder") == "reviewer":
+            builder_job_id = str(job.get("builder_job_id", ""))
+            if builder_job_id:
+                redis.hset(
+                    f"sid:jobs:{builder_job_id}",
+                    mapping={
+                        "review_status": "failed",
+                        "review_error": str(exc),
+                        "updated_at": str(time.time()),
+                    },
+                )
+
         print(f"[{WORKER_ID}] job={job_id} FAILED: {exc}", flush=True)
 
     finally:

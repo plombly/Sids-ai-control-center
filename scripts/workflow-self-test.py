@@ -45,12 +45,16 @@ def test_approval_review_gate():
         "review_status": "complete",
         "review_verdict": "pass",
         "review_job_id": "review123",
+        "candidate_commit": "abc123",
+        "reviewed_commit": "abc123",
     }
     reviewer = {
         "role": "reviewer",
         "builder_job_id": "builder123",
         "status": "review_complete",
         "review_verdict": "pass",
+        "candidate_commit": "abc123",
+        "reviewed_commit": "abc123",
     }
 
     records = {"builder123": builder, "review123": reviewer}
@@ -94,11 +98,33 @@ def test_manual_review_duplicate_guard():
     assert 'hsetnx(builder_key, "review_job_id", job_id)' in source
 
 
+
+def test_immutable_candidate_contract():
+    worker = (ROOT / "services/worker/worker.py").read_text()
+    approval = (ROOT / "scripts/job-review.py").read_text()
+    manual = (ROOT / "scripts/submit-review.py").read_text()
+
+    assert '"candidate_commit": candidate_commit' in worker
+    assert '"reviewed_commit": candidate_commit' in worker
+    assert 'f"Apply SID job {job_id}"' in worker
+    assert 'Builder worktree changed after candidate commit' in worker
+    assert 'Candidate changed during read-only review' in worker
+
+    assert 'data.get("reviewed_commit") != candidate_commit' in approval
+    assert 'review.get("reviewed_commit") != candidate_commit' in approval
+    assert 'candidate worktree HEAD changed after review' in approval
+    assert 'candidate branch changed after review' in approval
+
+    assert 'candidate_commit = builder.get("candidate_commit")' in manual
+    assert '"candidate_commit": candidate_commit' in manual
+
+
 def main():
     tests = [
         test_approval_review_gate,
         test_worker_noop_precedes_review_dispatch,
         test_manual_review_duplicate_guard,
+        test_immutable_candidate_contract,
     ]
     for test in tests:
         test()

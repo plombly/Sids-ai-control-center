@@ -117,29 +117,32 @@ def approve(job_id):
     if review.get("review_verdict") != "pass":
         fail(f"reviewer {review_job_id} verdict is not pass")
 
+    candidate_commit = data.get("candidate_commit")
+    if not candidate_commit:
+        fail(f"Job {job_id} has no immutable candidate commit")
+    if data.get("reviewed_commit") != candidate_commit:
+        fail(f"Job {job_id} review does not match candidate commit")
+    if review.get("candidate_commit") != candidate_commit:
+        fail(f"reviewer {review_job_id} candidate does not match builder")
+    if review.get("reviewed_commit") != candidate_commit:
+        fail(f"reviewer {review_job_id} did not review current candidate")
+
     ensure_main_clean()
 
     worktree = safe_worktree(job_id, data)
     branch = safe_branch(job_id, data)
 
-    changes = git("status", "--porcelain", cwd=worktree).stdout.strip()
-    if not changes:
-        fail("job worktree contains no changes")
+    head = git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+    if head != candidate_commit:
+        fail("candidate worktree HEAD changed after review")
+    if git("status", "--porcelain", cwd=worktree).stdout.strip():
+        fail("candidate worktree changed after review")
 
-    print("Changes being approved:")
-    print(changes)
-    print()
+    branch_head = git("rev-parse", branch).stdout.strip()
+    if branch_head != candidate_commit:
+        fail("candidate branch changed after review")
 
-    git("add", "-A", cwd=worktree)
-
-    commit = git(
-        "commit",
-        "-m",
-        f"Apply SID job {job_id}",
-        cwd=worktree,
-    )
-
-    print(commit.stdout.strip())
+    print(f"Approved candidate: {candidate_commit}")
 
     git(
         "merge",
