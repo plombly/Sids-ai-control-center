@@ -99,6 +99,34 @@ def cleanup_integration(job_id, data=None):
 def prepare_integration(job_id):
     """Integrate source candidates without touching main, then run the gate."""
     key = f"sid:jobs:{job_id}"
+    lock_key = f"sid:integration-lock:{job_id}"
+    lock_owner = f"{WORKER_ID}:{uuid.uuid4().hex}"
+    lock_ttl = max(MAX_RUNTIME, 600) + 300
+
+    # Exactly one worker may create/replace a job's integration candidate.
+    # The TTL provides crash recovery; ownership-safe release prevents an
+    # expired/reacquired lock from being deleted by the previous owner.
+    acquired = redis.set(lock_key, lock_owner, nx=True, ex=lock_ttl)
+    if not acquired:
+        return False
+
+    try:
+        return _prepare_integration_locked(job_id, key)
+    finally:
+        redis.eval(
+            """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            lock_key,
+            lock_owner,
+        )
+
+
+def _prepare_integration_locked(job_id, key):
     data = redis.hgetall(key)
     integration_metadata = {}
     if data.get("integration_status") == "passed" and data.get("integrated_candidate_commit"):

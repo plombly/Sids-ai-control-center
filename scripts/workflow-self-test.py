@@ -147,7 +147,18 @@ def test_parallel_integration_contract():
 def test_integration_and_review_duplicate_guards():
     worker = (ROOT / "services/worker/worker.py").read_text()
     submitter = (ROOT / "scripts/submit-review.py").read_text()
-    assert 'data.get("integration_status") == "passed"' in worker
+
+    # Integration must have an atomic per-job ownership reservation, not
+    # merely an optimistic integration_status check.
+    assert 'lock_key = f"sid:integration-lock:{job_id}"' in worker
+    assert 'redis.set(lock_key, lock_owner, nx=True, ex=lock_ttl)' in worker
+    assert 'if not acquired:' in worker
+    assert 'return _prepare_integration_locked(job_id, key)' in worker
+    assert "redis.eval(" in worker
+    assert "redis.call('get', KEYS[1]) == ARGV[1]" in worker
+    assert "redis.call('del', KEYS[1])" in worker
+
+    # Review reservation remains atomic as well.
     assert 'hsetnx(builder_key, "review_job_id", job_id)' in submitter
 
 
