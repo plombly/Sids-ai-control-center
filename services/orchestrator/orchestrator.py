@@ -492,6 +492,21 @@ def queue_repairs():
 
         attempts = int(builder.get("repair_attempts", "0") or "0")
 
+        # A dispatched repair must be allowed to finish before deciding that
+        # the builder has exhausted its repair allowance. In particular, the
+        # final allowed attempt sets repair_attempts == MAX_REPAIR_ATTEMPTS
+        # while that repair is still in flight.
+        existing = builder.get("repair_job_id")
+        if existing:
+            repair = r.hgetall(f"sid:jobs:{existing}")
+            if repair.get("status") in {
+                "queued",
+                "claimed",
+                "repairing",
+                "testing",
+            }:
+                continue
+
         if attempts >= MAX_REPAIR_ATTEMPTS:
             if builder.get("repair_status") != "exhausted":
                 r.hset(
@@ -504,17 +519,7 @@ def queue_repairs():
                 )
             continue
 
-        existing = builder.get("repair_job_id")
         if existing:
-            repair = r.hgetall(f"sid:jobs:{existing}")
-            if repair.get("status") in {
-                "queued",
-                "claimed",
-                "repairing",
-                "testing",
-            }:
-                continue
-
             # The active-repair reservation must not survive a completed
             # repair. Preserve the historical repair ID separately so a
             # later CHANGES_REQUIRED verdict can reserve the next attempt.
