@@ -4,7 +4,7 @@ const initial = () => Object.fromEntries(ENDPOINTS.map(key => [key, {data:null,e
 export const state = { ...initial(), lastUpdated:null, polling:false };
 
 const asObject = value => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-const asArray = value => Array.isArray(value) ? value : [];
+const asArray = value => Array.isArray(value) ? value.filter(item => asObject(item)) : [];
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const text = (value, fallback='—') => value === null || value === undefined || value === '' ? fallback : String(value);
 export const normalize = (key, value) => {
@@ -45,7 +45,9 @@ export function render() {
   const get = key => state[key].data;
   const status = asObject(get('status')) || {}; const repo=asObject(get('repository')) || {}; const queue=asObject(get('queue')) || {};
   const workers=asArray(get('workers')); const orchestrators=asArray(get('orchestrators')); const goals=asArray(get('goals')); const jobs=asArray(get('jobs')); const approvals=asArray(get('approvals')); const failures=asArray(get('failures'));
-  document.getElementById('metric-status').textContent=text(status.status); document.getElementById('metric-services').textContent=Object.keys(status.services||{}).length ? `${Object.values(status.services).filter(x=>x==='healthy').length}/${Object.keys(status.services).length} services healthy` : 'Awaiting telemetry';
+  const statusSignals=['repository','queue','orchestrators','workers','heartbeat','goals','jobs','approvals','failures'].filter(key => status[key] !== undefined);
+  const statusText=status.health||status.state||status.overall||(statusSignals.length ? (statusSignals.some(key => /fail|error|offline/i.test(text(status[key]))) ? 'Degraded' : 'Operational') : 'Awaiting telemetry');
+  document.getElementById('metric-status').textContent=text(statusText); document.getElementById('metric-services').textContent=statusSignals.length ? `${statusSignals.length} status signals reporting` : 'Awaiting telemetry';
   document.getElementById('metric-branch').textContent=text(repo.branch); document.getElementById('metric-repo').innerHTML=pill(repo.status);
   document.getElementById('metric-queue').textContent=number(queue.depth); document.getElementById('metric-queue-name').textContent=text(queue.name,'Queue unavailable');
   document.getElementById('metric-workers').textContent=number(workers.filter(w=>/active|running|busy/i.test(w.status||'')).length || workers.length); document.getElementById('metric-orchestrators').textContent=`Orchestrators ${orchestrators.length}`;

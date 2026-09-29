@@ -3,6 +3,7 @@ import {ENDPOINTS, fetchEndpoint, normalize} from './app.js';
 
 async function main() {
   assert.deepEqual(normalize('workers', {unexpected:true}), []);
+  assert.deepEqual(normalize('workers', [null, {id:'w-1'}, {progress:null}, 'bad']), [{id:'w-1'}, {progress:null}]);
   assert.deepEqual(normalize('queue', null), {});
   assert.equal(ENDPOINTS.length, 10);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:false,status:503})), /HTTP 503/);
