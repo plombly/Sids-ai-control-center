@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import redis
@@ -23,6 +24,7 @@ PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "180"))
 MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
+MAX_CONCURRENT_GOALS = max(1, int(os.getenv("MAX_CONCURRENT_GOALS", "4")))
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -31,7 +33,7 @@ def now():
     return str(time.time())
 
 
-def heartbeat(status="idle", goal_id=""):
+def heartbeat(status="idle", goal_id="", goal_ids=None):
     if goal_id and status == "idle":
         status = "active"
     r.hset(
@@ -40,6 +42,7 @@ def heartbeat(status="idle", goal_id=""):
             "id": ORCHESTRATOR_ID,
             "status": status,
             "goal_id": goal_id,
+            "goal_ids": json.dumps(goal_ids or ([goal_id] if goal_id else [])),
             "model": DEFAULT_MODEL,
             "last_seen": now(),
         },
@@ -271,7 +274,7 @@ def create_job(goal_id, planned_job, number_to_id):
     r.hset(f"sid:jobs:{job_id}", mapping=record)
 
     if not dependencies:
-        r.rpush(JOB_QUEUE, json.dumps({
+        dispatch_job_once(record, {
             "id": job_id,
             "goal_id": goal_id,
             "prompt": planned_job["task"],
@@ -280,9 +283,22 @@ def create_job(goal_id, planned_job, number_to_id):
             "role": "builder",
             "priority": 0,
             "created_at": record["created_at"],
-        }))
+        })
 
     return job_id
+
+
+def dispatch_job_once(job, payload):
+    """Queue a job only once, including when scheduling is retried."""
+    key = f"sid:jobs:{job['id']}"
+    if not r.hsetnx(key, "dispatch_reserved_at", now()):
+        return False
+    try:
+        r.rpush(JOB_QUEUE, json.dumps(payload))
+    except Exception:
+        r.hdel(key, "dispatch_reserved_at")
+        raise
+    return True
 
 
 
@@ -350,6 +366,19 @@ def process_goal(raw):
     goal = data["goal"]
     key = f"sid:goals:{goal_id}"
 
+    # Queue delivery is at-least-once. A short-lived claim prevents a retry or
+    # a second orchestrator from creating a second plan for the same goal.
+    claim_key = f"{key}:planning"
+    if not r.set(claim_key, ORCHESTRATOR_ID, nx=True, ex=PLAN_TIMEOUT + 30):
+        return
+
+    existing_status = r.hget(key, "status")
+    if existing_status in {
+        "planning", "running", "completed", "failed", "planning_failed",
+    }:
+        r.delete(claim_key)
+        return
+
     heartbeat("planning", goal_id)
 
     r.hset(
@@ -400,9 +429,7 @@ def process_goal(raw):
         r.hset(f"sid:jobs:{job_id}", mapping=record)
 
         if not dependencies:
-            r.rpush(
-                JOB_QUEUE,
-                json.dumps({
+            dispatch_job_once(record, {
                     "id": job_id,
                     "goal_id": goal_id,
                     "prompt": scoped_builder_prompt(item),
@@ -411,8 +438,7 @@ def process_goal(raw):
                     "role": "builder",
                     "priority": 0,
                     "created_at": record["created_at"],
-                }),
-            )
+                })
 
         job_ids.append(job_id)
 
@@ -431,6 +457,7 @@ def process_goal(raw):
         f"{len(job_ids)} jobs",
         flush=True,
     )
+    r.delete(claim_key)
 
 
 
@@ -692,8 +719,8 @@ def release_dependencies():
             "created_at": job.get("created_at", now()),
         }
 
-        # Atomic state claim prevents duplicate release.
-        if r.hsetnx(key, "released_at", now()):
+        # Reserve before enqueueing so repeated scans cannot dispatch twice.
+        if dispatch_job_once(job, payload):
             r.hset(
                 key,
                 mapping={
@@ -701,7 +728,6 @@ def release_dependencies():
                     "updated_at": now(),
                 },
             )
-            r.rpush(JOB_QUEUE, json.dumps(payload))
 
             print(
                 f"[{ORCHESTRATOR_ID}] released job={job_id}",
@@ -754,10 +780,53 @@ def update_goals():
 
 
 def active_goal_id():
-    for key in sorted(r.scan_iter("sid:goals:*")):
-        if r.hget(key, "status") in {"planning", "running"}:
-            return key.rsplit(":", 1)[-1]
-    return ""
+    ids = active_goal_ids()
+    return ids[0] if ids else ""
+
+
+def active_goal_ids():
+    return [
+        key.rsplit(":", 1)[-1]
+        for key in sorted(r.scan_iter("sid:goals:*"))
+        if ":planning" not in key
+        and r.hget(key, "status") in {"planning", "running"}
+    ]
+
+
+def finish_goal_future(future):
+    try:
+        future.result()
+    except Exception as exc:
+        print(f"[{ORCHESTRATOR_ID}] goal failed: {exc}", flush=True)
+
+
+def process_goal_safe(raw):
+    try:
+        process_goal(raw)
+    except Exception as exc:
+        try:
+            goal = json.loads(raw)
+            goal_id = goal.get("id", "unknown")
+            r.hset(
+                f"sid:goals:{goal_id}",
+                mapping={
+                    "status": "planning_failed",
+                    "error": str(exc),
+                    "updated_at": now(),
+                },
+            )
+            r.delete(f"sid:goals:{goal_id}:planning")
+        except Exception:
+            pass
+        raise
+
+
+def submit_queued_goals(executor, futures):
+    while len(futures) < MAX_CONCURRENT_GOALS:
+        raw = r.lpop(GOAL_QUEUE)
+        if not raw:
+            break
+        futures.add(executor.submit(process_goal_safe, raw))
 
 
 def main():
@@ -766,49 +835,26 @@ def main():
         flush=True,
     )
 
-    while True:
-        try:
-            queue_repairs()
-            release_dependencies()
-            update_goals()
+    futures = set()
+    with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_GOALS) as executor:
+        while True:
+            try:
+                for future in list(futures):
+                    if future.done():
+                        futures.remove(future)
+                        finish_goal_future(future)
 
-            goal_id = active_goal_id()
-            heartbeat("active", goal_id) if goal_id else heartbeat()
+                queue_repairs()
+                release_dependencies()
+                update_goals()
+                submit_queued_goals(executor, futures)
 
-            item = r.blpop(GOAL_QUEUE, timeout=5)
-
-            if item:
-                _, raw = item
-
-                try:
-                    process_goal(raw)
-                except Exception as exc:
-                    try:
-                        goal = json.loads(raw)
-                        goal_id = goal.get("id", "unknown")
-
-                        r.hset(
-                            f"sid:goals:{goal_id}",
-                            mapping={
-                                "status": "planning_failed",
-                                "error": str(exc),
-                                "updated_at": now(),
-                            },
-                        )
-                    except Exception:
-                        pass
-
-                    print(
-                        f"[{ORCHESTRATOR_ID}] goal failed: {exc}",
-                        flush=True,
-                    )
-
-        except Exception as exc:
-            print(
-                f"[{ORCHESTRATOR_ID}] loop error: {exc}",
-                flush=True,
-            )
-            time.sleep(5)
+                ids = active_goal_ids()
+                heartbeat("active", ids[0] if ids else "", ids) if ids else heartbeat()
+                time.sleep(0.25 if futures else 1)
+            except Exception as exc:
+                print(f"[{ORCHESTRATOR_ID}] loop error: {exc}", flush=True)
+                time.sleep(5)
 
 
 if __name__ == "__main__":
