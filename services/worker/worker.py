@@ -286,13 +286,28 @@ def process_review_job(job, key, log_path):
     returncode, duration = run_codex(job, worktree, log_path)
     session_id, usage = parse_codex_log(log_path)
 
-    log_text = log_path.read_text(errors="replace")
-    if "VERDICT: CHANGES_REQUIRED" in log_text:
-        verdict = "changes_required"
-    elif "VERDICT: PASS" in log_text:
-        verdict = "pass"
-    else:
-        verdict = "unknown"
+    verdict = "unknown"
+
+    for line in log_path.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if event.get("type") != "item.completed":
+            continue
+
+        item = event.get("item", {})
+        if item.get("type") != "agent_message":
+            continue
+
+        for message_line in item.get("text", "").splitlines():
+            normalized = message_line.strip()
+
+            if normalized == "VERDICT: PASS":
+                verdict = "pass"
+            elif normalized == "VERDICT: CHANGES_REQUIRED":
+                verdict = "changes_required"
 
     redis.hset(
         key,
