@@ -1,0 +1,1 @@
+SID reviews each candidate against the requested scope and deterministic checks before presenting it for human approval. It flags failures or missing evidence so a human can make the final approval decision.
