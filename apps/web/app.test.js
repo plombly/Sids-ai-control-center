@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {ENDPOINTS, fetchEndpoint, normalize, workerMarkup} from './app.js';
+import {ENDPOINTS, fetchEndpoint, normalize, workerMarkup, submitGoal, workerAction, approvalMarkup} from './app.js';
 
 async function main() {
   assert.deepEqual(normalize('workers', {unexpected:true}), []);
@@ -21,6 +21,13 @@ async function main() {
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /heartbeat <b>—<\/b>/);
   assert.match(workerMarkup({id:'<worker>', status:'active', role:'<role>'}), /&lt;worker&gt;/);
   assert.doesNotMatch(workerMarkup({id:'<worker>', status:'active', role:'<role>'}), /<worker>/);
+  const calls = [];
+  const write = async (path, options) => { calls.push([path, options]); return {ok:true, json:async()=>({id:'g-1'})}; };
+  assert.deepEqual(await submitGoal('ship it', true, 'req-1', write), {id:'g-1'});
+  await workerAction('busy/worker', 'stop', write);
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(calls[1][0], '/api/workers/busy%2Fworker/stop');
+  assert.match(approvalMarkup({id:'job-1', status:'awaiting_review', review_status:'complete', review_verdict:'pass'}), /job-review.py approve job-1/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:false,status:503})), /HTTP 503/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>{throw new Error('bad')}})), /Malformed JSON/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>({})})), /Malformed payload/);

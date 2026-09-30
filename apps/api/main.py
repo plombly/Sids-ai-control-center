@@ -128,6 +128,7 @@ def _job(key, data):
     data = data if isinstance(data, dict) else {}
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
+        "goal_id": _text(data.get("goal_id")),
         "status": _text(data.get("status"), "unknown"),
         "role": _text(data.get("job_role", data.get("role"))),
         "worker": _text(data.get("worker_id", data.get("worker"))),
@@ -145,6 +146,10 @@ def _job(key, data):
         "total_tokens": _number(data.get("total_tokens", data.get("tokens"))),
         "duration": _duration(data),
         "branch": _text(data.get("branch")),
+        "base": _text(data.get("base", data.get("base_commit"))),
+        "candidate": _text(data.get("candidate", data.get("candidate_commit"))),
+        "files": _number(data.get("files_changed", data.get("file_count"))),
+        "tests": _text(data.get("test_status", data.get("tests"))),
         "error": _text(data.get("error", data.get("failure", data.get("failure_reason")))),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
@@ -613,6 +618,16 @@ def download_handoff(goal_id: str):
         output.writestr("PRE-MERGE REVIEW.json", content)
     archive.seek(0)
     return StreamingResponse(archive, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="handoff-{_valid_identifier(goal_id, "goal id")}.zip"'})
+
+
+@app.get("/api/goals/{goal_id}/handoff-data")
+def handoff_data(goal_id: str):
+    detail = get_goal_detail(goal_id)
+    return _redact({
+        "bundle_type": "PRE-MERGE REVIEW",
+        "goal": detail,
+        "repository": _repository(),
+    })
 
 
 @app.on_event("startup")

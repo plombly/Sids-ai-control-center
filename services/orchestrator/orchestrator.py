@@ -764,6 +764,8 @@ def update_goals():
         ]
 
         if any(state in {"failed", "test_failed", "integration_failed", "rejected", "repair_exhausted", "blocked_failed_dependency"} for state in states):
+            if goal.get("status") == "failed" and goal.get("error") == "child job reached a terminal failure state":
+                continue
             r.hset(
                 key,
                 mapping={
@@ -778,6 +780,8 @@ def update_goals():
             state in {"merged", "completed_no_changes"}
             for state in states
         ):
+            if goal.get("status") == "completed" and not goal.get("error"):
+                continue
             r.hset(
                 key,
                 mapping={
