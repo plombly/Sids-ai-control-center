@@ -315,7 +315,7 @@ def orch(tmp_path, fake_claude):
     module.agent_cli.POLL_SECONDS = 0.05
     module.PLANNER_LOG_ROOT = tmp_path / "planner"
     module.REPO_ROOT = tmp_path
-    module.repository_manifest = lambda: "apps/api/main.py"
+    module.repository_manifest = lambda repo=None: "apps/api/main.py"
     return module
 
 
@@ -329,7 +329,7 @@ def test_planner_uses_claude_opus_read_only(orch, fake_claude, monkeypatch):
 
 def test_planner_falls_back_to_codex_when_claude_is_limited(orch, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "limit")
-    orch.run_codex_planner = lambda goal, atomic=False: {"jobs": ["from codex"]}
+    orch.run_codex_planner = lambda goal, atomic=False, project=None: {"jobs": ["from codex"]}
     assert orch.run_planner("add a thing") == {"jobs": ["from codex"]}
     assert orch.agent_cli.claude_cooling_down(orch.r)
 
@@ -384,7 +384,7 @@ def test_orchestrator_heartbeat_and_goal_record_the_planner(orch, fake_claude, m
     orch.run_planner("goal", info=info)
     assert info == {"provider": "claude", "model": "opus", "cost_usd": "0.0421"}
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "limit")
-    orch.run_codex_planner = lambda goal, atomic=False: {"jobs": []}
+    orch.run_codex_planner = lambda goal, atomic=False, project=None: {"jobs": []}
     info = {}
     orch.run_planner("goal", info=info)
     assert info["provider"] == "codex" and "session limit" in info["fallback"]
@@ -455,7 +455,7 @@ def test_planner_shares_the_cap(orch, monkeypatch, fake_claude):
     monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
     monkeypatch.setenv("PLANNER_SLOT_WAIT_SECONDS", "0")
     orch.agent_cli.acquire_claude_slot(orch.r, "job:busy", 1000)
-    orch.run_codex_planner = lambda goal, atomic=False: {"jobs": ["codex"]}
+    orch.run_codex_planner = lambda goal, atomic=False, project=None: {"jobs": ["codex"]}
     info = {}
     assert orch.run_planner("g", info=info) == {"jobs": ["codex"]}
     assert "at capacity" in info["fallback"] and fake_claude() == []

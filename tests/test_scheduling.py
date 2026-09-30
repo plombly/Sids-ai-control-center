@@ -115,11 +115,11 @@ def test_dependencies_still_come_first(orch):
 def test_planned_jobs_wait_for_busy_files_and_are_retry_eligible(orch, monkeypatch):
     put(orch, "busy", "awaiting_review", ["apps/web/app.js"])
     orch.r.records["sid:goals:g1"] = {"id": "g1", "goal": "ui work", "status": "queued"}
-    monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None: {"jobs": [
+    monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None, project=None: {"jobs": [
         {"number": 1, "title": "ui", "task": "t1", "scope": ["apps/web/app.js"], "depends_on": []},
         {"number": 2, "title": "api", "task": "t2", "scope": ["apps/api/main.py"], "depends_on": []},
     ]})
-    monkeypatch.setattr(orch, "repository_manifest", lambda: "")
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
     orch.process_goal(json.dumps({"id": "g1", "goal": "ui work"}))
     jobs = {j["title"]: j for k, j in orch.r.records.items() if k.startswith("sid:jobs:") and j.get("title")}
     assert jobs["ui"]["status"] == "blocked"
@@ -130,7 +130,7 @@ def test_planned_jobs_wait_for_busy_files_and_are_retry_eligible(orch, monkeypat
 
 
 def test_planner_is_told_which_files_are_busy(orch, monkeypatch):
-    monkeypatch.setattr(orch, "repository_manifest", lambda: "")
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
     put(orch, "busy", "running", ["apps/api/main.py"])
     put(orch, "done", "merged", ["apps/web/app.js"])
     prompt = orch.planner_prompt("goal")

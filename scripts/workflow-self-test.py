@@ -535,12 +535,19 @@ def test_global_approval_lock_contract():
     """Different jobs must serialize advancement of the shared main branch."""
     review_script = (Path(__file__).resolve().parent / "job-review.py").read_text()
 
-    assert 'lock_key = "sid:approval-lock:main"' in review_script, (
-        "approval must use one repository-wide main lock"
+    # One lock per repository (project), never per job: different jobs of
+    # the same project must serialize advancement of that project's main.
+    assert "lock_key = current_project().approval_lock_key" in review_script, (
+        "approval must use the project's repository-wide main lock"
     )
     assert 'f"sid:approval-lock:{job_id}"' not in review_script, (
         "per-job approval lock does not serialize different jobs"
     )
+    projects = load("sid_projects_lock_test", ROOT / "services/sid_projects.py")
+    sid = projects.Project({"id": "sid", "repo": "/r", "worktrees": "/w", "logs": "/l"})
+    other = projects.Project({"id": "web-shop", "repo": "/r2", "worktrees": "/w2", "logs": "/l2"})
+    assert sid.approval_lock_key == "sid:approval-lock:main"
+    assert other.approval_lock_key == "sid:approval-lock:web-shop"
 
     approve_start = review_script.index("def approve(job_id, expected_candidate=None):")
     unlocked_start = review_script.index(

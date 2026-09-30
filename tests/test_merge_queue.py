@@ -122,7 +122,7 @@ def queue_env(job_review, fake_git):
 
 def test_ready_job_merges_through_approve_with_its_current_candidate(job_review, queue_env):
     intent(job_review)
-    assert job_review.process_merge_queue() == JOB
+    assert job_review.process_merge_queue() == [JOB]
     assert queue_env == [JOB]
     assert job_review.r.values[QUEUE] == []
     b = job_review.r.records[f"sid:jobs:{JOB}"]
@@ -135,10 +135,10 @@ def test_at_most_one_merge_per_pass(job_review, queue_env):
     job_review.queue_approval("a", INTEGRATED)
     ready_builder(job_review, "b")
     job_review.queue_approval("b", INTEGRATED)
-    assert job_review.process_merge_queue() == "a"
+    assert job_review.process_merge_queue() == ["a"]
     assert job_review.r.values[QUEUE] == ["b"]
     # main moved: b is now stale and waits for re-integration
-    assert job_review.process_merge_queue() is None
+    assert job_review.process_merge_queue() == []
     assert job_review.r.records["sid:jobs:b"]["merge_queue_state"] == "waiting"
     assert "stale" in job_review.r.records["sid:jobs:b"]["merge_queue_reason"]
 
@@ -148,13 +148,13 @@ def test_ready_job_behind_a_waiting_one_still_merges(job_review, queue_env):
     job_review.queue_approval("a", INTEGRATED)
     ready_builder(job_review, "b")
     job_review.queue_approval("b", INTEGRATED)
-    assert job_review.process_merge_queue() == "b"
+    assert job_review.process_merge_queue() == ["b"]
 
 
 def test_invalid_intent_is_dropped_with_reason(job_review, queue_env):
     b = intent(job_review)
     b["source_candidate_commits"] = '["s1","s2","repair"]'
-    assert job_review.process_merge_queue() is None
+    assert job_review.process_merge_queue() == []
     assert queue_env == []
     assert job_review.r.values[QUEUE] == []
     assert b["merge_queue_state"] == "invalid"
@@ -168,7 +168,7 @@ def test_transient_refusal_keeps_the_job_queued(job_review, queue_env):
         job_review.fail("another approval is already advancing main")
 
     job_review.approve = busy
-    assert job_review.process_merge_queue() is None
+    assert job_review.process_merge_queue() == []
     assert job_review.r.values[QUEUE] == [JOB]
 
 
@@ -250,15 +250,15 @@ def test_two_queued_approvals_both_merge_across_a_main_move(job_review, queue_en
     ready_builder(job_review, "b", candidate="c" * 39 + "b")
     job_review.queue_approval("b", "c" * 39 + "b")
 
-    assert job_review.process_merge_queue() == "a"          # main -> H1, b stale
+    assert job_review.process_merge_queue() == ["a"]          # main -> H1, b stale
     orch.refresh_queued_candidates(head=H1)                   # b re-integrated
-    assert job_review.process_merge_queue() is None           # b waits for review
+    assert job_review.process_merge_queue() == []           # b waits for review
     b = job_review.r.records["sid:jobs:b"]
     # the worker re-integrates the same sources on H1 and a fresh review passes:
     b.update(integration_status="passed", integration_base_commit=H1,
              integrated_candidate_commit="f" * 40, reviewed_commit="f" * 40,
              review_status="complete", review_verdict="pass")
-    assert job_review.process_merge_queue() == "b"
+    assert job_review.process_merge_queue() == ["b"]
     assert queue_env == ["a", "b"]
     assert job_review.r.values[QUEUE] == []
 

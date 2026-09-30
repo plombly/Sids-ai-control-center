@@ -11,7 +11,7 @@ def orchestrator(tmp_path, monkeypatch):
     module = load_module(ROOT / "services/orchestrator/orchestrator.py")
     module.r = MemoryRedis()
     module.REPO_ROOT = tmp_path
-    module.planner_prompt = lambda goal, atomic=False: "planner prompt"
+    module.planner_prompt = lambda goal, atomic=False, project=None: "planner prompt"
     captured = {}
 
     def fake_run(*args, **kwargs):

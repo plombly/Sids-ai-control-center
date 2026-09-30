@@ -15,6 +15,7 @@ from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
+import sid_projects  # noqa: E402  (services/sid_projects.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = os.environ.get("WORKER_QUEUE", "sid:jobs")
@@ -147,14 +148,44 @@ def keep_alive(status="working"):
         thread.join(timeout=HEARTBEAT_SECONDS + 1)
 
 
-def run_git(*args, cwd=REPO_ROOT, check=True):
+def run_git(*args, cwd=None, check=True):
     return subprocess.run(
         ["git", *args],
-        cwd=cwd,
+        cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
         text=True,
         capture_output=True,
         check=check,
     )
+
+
+# The project the current job belongs to. A worker runs one job at a time,
+# so the repository, worktree and log roots are switched per job.
+PROJECT = None
+
+
+def use_project(project):
+    """Point every path at this project (None: back to SID's defaults)."""
+    global PROJECT, REPO_ROOT, WORKTREE_ROOT, LOG_ROOT
+    PROJECT = project
+    if project is None:
+        defaults = sid_projects.sid_defaults()
+        REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = (
+            Path(defaults["repo"]), Path(defaults["worktrees"]), Path(defaults["logs"]))
+    else:
+        REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = project.repo, project.worktrees, project.logs
+
+
+def project_gate(worktree, timeout=900):
+    """(ok, output) of a non-SID project's own gate command, run in worktree."""
+    command = PROJECT.gate_command if PROJECT else ""
+    if not command:
+        return True, f"no gate command configured for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
+    try:
+        result = subprocess.run(["/bin/sh", "-c", command], cwd=worktree, text=True,
+                                capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"$ {command}\ntimed out after {timeout}s\n"
+    return result.returncode == 0, f"$ {command}\n{result.stdout}{result.stderr}"
 
 
 def integration_worktree(job_id):
@@ -248,12 +279,16 @@ def _prepare_integration_locked(job_id, key):
                 run_git("cherry-pick", "--abort", cwd=path, check=False)
                 raise RuntimeError(f"cannot apply source candidate {source}: {result.stderr.strip()}")
 
-        env = os.environ.copy()
-        env["REPO_ROOT"] = str(path)
-        gate = subprocess.run(
-            [str(path / "scripts/integration-check.py")],
-            cwd=path, env=env, text=True, capture_output=True,
-        )
+        if PROJECT is not None and not PROJECT.is_sid:
+            gate_ok, gate_output = project_gate(path)
+            gate = subprocess.CompletedProcess([], 0 if gate_ok else 1, gate_output, "")
+        else:
+            env = os.environ.copy()
+            env["REPO_ROOT"] = str(path)
+            gate = subprocess.run(
+                [str(path / "scripts/integration-check.py")],
+                cwd=path, env=env, text=True, capture_output=True,
+            )
         integrated = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
         integration_metadata = {
             "returncode": gate.returncode,
@@ -307,7 +342,7 @@ def create_worktree(job_id, suffix=""):
     if run_git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
         run_git("branch", "-D", branch)
 
-    run_git("worktree", "add", "-b", branch, str(path), "main")
+    run_git("worktree", "add", "-b", branch, str(path), PROJECT.default_branch if PROJECT else "main")
     return branch, path
 
 
@@ -490,13 +525,15 @@ def run_codex(job, worktree, log_path):
 def repair_allowed_bash():
     """Shell commands a Claude builder/repair may run: focused validation and
     read-only git. Anything else is refused (print mode never prompts)."""
-    return (
-        f"Bash({SID_PYTHON} -m pytest *)",
-        "Bash(node apps/web/app.test.js)",
+    allowed = (
         "Bash(git status)", "Bash(git status *)",
         "Bash(git diff)", "Bash(git diff *)",
         "Bash(git log *)", "Bash(git show *)",
     )
+    if PROJECT is not None and not PROJECT.is_sid:
+        # The project's own gate is its focused validation.
+        return allowed + ((f"Bash({PROJECT.gate_command})",) if PROJECT.gate_command else ())
+    return (f"Bash({SID_PYTHON} -m pytest *)", "Bash(node apps/web/app.test.js)") + allowed
 
 
 def run_review_aspects(job, worktree, log_path, timeout):
@@ -751,6 +788,8 @@ def run_agent(job, worktree, log_path):
 
 
 def run_tests(worktree):
+    if PROJECT is not None and not PROJECT.is_sid:
+        return project_gate(worktree)
     commands = [
         [
             SID_PYTHON,
@@ -1574,12 +1613,24 @@ def process_job(raw_job):
     finally:
         CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
         CURRENT_AGENT.clear()
+        use_project(None)
 
 
 def _process_job(raw_job):
     job = json.loads(raw_job)
     job_id = str(job["id"])
     key = f"sid:jobs:{job_id}"
+
+    # Every path below belongs to the job's project (unknown project: fail
+    # the job rather than run it in the wrong repository).
+    try:
+        project = sid_projects.load(redis, sid_projects.job_project_id(redis, job))
+    except Exception as exc:
+        redis.hset(key, mapping={"status": "failed", "error": f"project unavailable: {exc}",
+                                 "updated_at": str(time.time())})
+        return
+    use_project(project)
+    redis.hsetnx(key, "project_id", project.id)
 
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
     log_path = LOG_ROOT / f"{job_id}.jsonl"

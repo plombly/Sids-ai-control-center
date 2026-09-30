@@ -13,6 +13,7 @@ import redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
+import sid_projects  # noqa: E402  (services/sid_projects.py)
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -85,10 +86,10 @@ def extract_json(text):
 
 
 
-def repository_manifest():
+def repository_manifest(repo=None):
     try:
         out = subprocess.check_output(
-            ["git", "ls-files"], cwd=REPO_ROOT, text=True, timeout=10
+            ["git", "ls-files"], cwd=repo or REPO_ROOT, text=True, timeout=10
         )
         files = [line for line in out.splitlines() if line.strip()]
         shown = files[:160]
@@ -97,12 +98,19 @@ def repository_manifest():
     except Exception:
         return "manifest unavailable"
 
-def planner_prompt(goal, atomic=False):
+def planner_prompt(goal, atomic=False, project=None):
+    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
+    sid_rules = """- Web UI features: put new dashboard behavior in its own module under
+  apps/web/lib/ that registers itself via apps/web/lib/registry.js
+  (registerPanel / registerClick) plus one import line in
+  apps/web/lib/features.js, instead of editing apps/web/app.js.
+""" if project.is_sid else ""
     return f"""
-You are the planning agent for SID's AI Command Center.
+You are the planning agent for SID's AI software pipeline, planning work for
+project "{project.name}" ({project.id}).
 
 Repository:
-{REPO_ROOT}
+{project.repo}
 
 High-level goal:
 {goal}
@@ -112,7 +120,7 @@ ATOMIC MODE: {"ENABLED" if atomic else "disabled"}
 Plan from the goal and the compact repository manifest below. Do not broadly inspect the repository unless a specific ambiguity prevents a safe plan.
 
 Repository manifest:
-{repository_manifest()}
+{repository_manifest(project.repo)}
 
 Break the goal into a SMALL set of implementation jobs that can be executed
 by independent coding agents.
@@ -129,13 +137,9 @@ Rules:
   scope: jobs whose scopes overlap never run at the same time, so an
   incomplete scope causes merge conflicts and an over-broad one serializes
   work needlessly.
-- Web UI features: put new dashboard behavior in its own module under
-  apps/web/lib/ that registers itself via apps/web/lib/registry.js
-  (registerPanel / registerClick) plus one import line in
-  apps/web/lib/features.js, instead of editing apps/web/app.js.
-- Files currently being changed by other in-flight jobs (work touching them
+{sid_rules}- Files currently being changed by other in-flight jobs (work touching them
   will wait until they finish):
-{busy_files_summary()}
+{busy_files_summary(project.id)}
 - Dependencies must reference job numbers from this plan.
 - Every job must be independently testable.
 - Existing SID review and human approval gates will handle merging.
@@ -169,12 +173,12 @@ def planner_model(atomic):
     return agent_cli.claude_model("planner")
 
 
-def busy_files_summary(limit=40):
+def busy_files_summary(project_id=sid_projects.SID_PROJECT, limit=40):
     held = sorted({
         path
         for key in r.scan_iter("sid:jobs:*")
         for job in [r.hgetall(key)]
-        if holds_scope(job)
+        if holds_scope(job) and (job.get("project_id") or sid_projects.SID_PROJECT) == project_id
         for path in job_scope(job)
     })
     if not held:
@@ -185,11 +189,12 @@ def busy_files_summary(limit=40):
     return "\n".join(lines)
 
 
-def run_planner(goal, atomic=False, info=None):
+def run_planner(goal, atomic=False, info=None, project=None):
     """Plan a goal with the provider configured for the planner role; Claude
     falls back to Codex when it cannot serve the call. `info`, if given, is
     filled with the provider/model that produced the plan."""
     info = {} if info is None else info
+    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
     if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
         slot = f"planner:{log_path.stem}"
@@ -197,10 +202,10 @@ def run_planner(goal, atomic=False, info=None):
                 r, slot, PLAN_TIMEOUT + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300"))):
             info["fallback"] = "claude at capacity (CLAUDE_MAX_CONCURRENT)"
             info.update(provider="codex", model=DEFAULT_MODEL)
-            return run_codex_planner(goal, atomic)
+            return run_codex_planner(goal, atomic, project)
         try:
-            run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
-                                       REPO_ROOT, log_path, PLAN_TIMEOUT, model=planner_model(atomic))
+            run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic, project=project),
+                                       project.repo, log_path, PLAN_TIMEOUT, model=planner_model(atomic))
         finally:
             agent_cli.release_claude_slot(r, slot)
         if run.ok:
@@ -213,10 +218,11 @@ def run_planner(goal, atomic=False, info=None):
         print(f"[{ORCHESTRATOR_ID}] claude planner unavailable; falling back to codex", flush=True)
         info["fallback"] = run.describe_error()
     info.update(provider="codex", model=DEFAULT_MODEL)
-    return run_codex_planner(goal, atomic)
+    return run_codex_planner(goal, atomic, project)
 
 
-def run_codex_planner(goal, atomic=False):
+def run_codex_planner(goal, atomic=False, project=None):
+    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
     cmd = [
         "codex",
         "exec",
@@ -229,13 +235,13 @@ def run_codex_planner(goal, atomic=False):
         "never",
         "--json",
         "--cd",
-        str(REPO_ROOT),
+        str(project.repo),
         "-",
     ]
 
     proc = subprocess.run(
         cmd,
-        input=planner_prompt(goal, atomic=atomic),
+        input=planner_prompt(goal, atomic=atomic, project=project),
         text=True,
         capture_output=True,
         timeout=PLAN_TIMEOUT,
@@ -392,15 +398,16 @@ CONTEXT_FILE_CHARS = int(os.getenv("CONTEXT_FILE_CHARS", "3000"))
 CONTEXT_TOTAL_CHARS = int(os.getenv("CONTEXT_TOTAL_CHARS", "6000"))
 
 
-def scoped_context_packet(item):
+def scoped_context_packet(item, repo=None):
     """Build a deterministic, bounded starting context from planner scope."""
+    repo = Path(repo or REPO_ROOT)
     scope = [p.strip() for p in item.get("scope", []) if p.strip()][:12]
     chunks = []
     used = 0
     for raw in scope:
-        path = (REPO_ROOT / raw).resolve()
+        path = (repo / raw).resolve()
         try:
-            path.relative_to(REPO_ROOT)
+            path.relative_to(repo.resolve())
         except ValueError:
             continue
         # V3 deliberately embeds only exact files. A directory scope is a hint,
@@ -415,7 +422,7 @@ def scoped_context_packet(item):
                 continue
             remaining = CONTEXT_TOTAL_CHARS - used
             body = text[:min(CONTEXT_FILE_CHARS, remaining)]
-            rel = candidate.relative_to(REPO_ROOT)
+            rel = candidate.relative_to(repo.resolve())
             chunks.append(f"--- {rel} ---\n{body}")
             used += len(body)
         if len(chunks) >= CONTEXT_FILE_LIMIT or used >= CONTEXT_TOTAL_CHARS:
@@ -423,10 +430,10 @@ def scoped_context_packet(item):
     return "\n\n".join(chunks) or "(No scoped file content available; inspect only the likely scope below.)"
 
 
-def scoped_builder_prompt(item):
+def scoped_builder_prompt(item, repo=None):
     scope = [p.strip() for p in item.get("scope", []) if p.strip()]
     scope_text = "\n".join(f"- {p}" for p in scope) or "- infer the smallest relevant scope"
-    context = scoped_context_packet(item)
+    context = scoped_context_packet(item, repo)
     return f"""Task:
 {item['task']}
 
@@ -476,8 +483,9 @@ def process_goal(raw):
     )
 
     atomic = str(data.get("atomic", "")).lower() in {"1", "true", "yes"}
+    project = sid_projects.load(r, data.get("project_id") or r.hget(key, "project_id"))
     planner = {}
-    plan = run_planner(goal, atomic=atomic, info=planner)
+    plan = run_planner(goal, atomic=atomic, info=planner, project=project)
     jobs = validate_plan(plan, atomic=atomic)
 
     number_to_id = {}
@@ -499,7 +507,7 @@ def process_goal(raw):
             "id": job_id,
             "goal_id": goal_id,
             "title": item["title"],
-            "prompt": scoped_builder_prompt(item),
+            "prompt": scoped_builder_prompt(item, project.repo),
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "role": "builder",
@@ -509,7 +517,8 @@ def process_goal(raw):
             "build_attempt": "1",
             "created_at": now(),
             "updated_at": now(),
-            "prompt_chars": str(len(scoped_builder_prompt(item))),
+            "prompt_chars": str(len(scoped_builder_prompt(item, project.repo))),
+            "project_id": project.id,
             "scope": json.dumps(item.get("scope", [])),
         }
 
@@ -527,7 +536,8 @@ def process_goal(raw):
             dispatch_job_once(record, {
                     "id": job_id,
                     "goal_id": goal_id,
-                    "prompt": scoped_builder_prompt(item),
+                    "prompt": scoped_builder_prompt(item, project.repo),
+                    "project_id": project.id,
                     "provider": DEFAULT_PROVIDER,
                     "model": DEFAULT_MODEL,
                     "role": "builder",
@@ -1108,20 +1118,25 @@ def queue_reintegration(key, builder, fields):
 MERGE_QUEUE = "sid:merge-queue"
 
 
-def main_head():
-    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+def main_head(repo=None):
+    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo or REPO_ROOT,
                             text=True, capture_output=True)
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def refresh_queued_candidates(head=None):
-    """Re-integrate queued approvals whose candidate went stale because main
-    moved. Once per main commit per job; only queued jobs, so candidates no
-    one approved do not burn reviews on every merge."""
-    ids = r.lrange(MERGE_QUEUE, 0, -1)
+    """Re-integrate queued approvals whose candidate went stale because their
+    project's main moved. Once per main commit per job; only queued jobs, so
+    candidates no one approved do not burn reviews on every merge."""
+    for project in sid_projects.all_projects(r):
+        refresh_project_queue(project, head if project.is_sid else None)
+
+
+def refresh_project_queue(project, head=None):
+    ids = r.lrange(project.merge_queue_key, 0, -1)
     if not ids:
         return
-    head = head or main_head()
+    head = head or main_head(project.repo)
     work = live_work()
     if not head or work is None:
         return
@@ -1241,6 +1256,8 @@ def scope_conflict(job):
         other = r.hgetall(key)
         other_id = other.get("id") or key.rsplit(":", 1)[-1]
         if other_id == job.get("id") or not holds_scope(other):
+            continue
+        if (other.get("project_id") or sid_projects.SID_PROJECT) != (job.get("project_id") or sid_projects.SID_PROJECT):
             continue
         shared = sorted({a for a in mine for b in job_scope(other) if paths_overlap(a, b)})
         if shared:

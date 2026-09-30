@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import functools
 import json
 import os
 import subprocess
@@ -23,6 +24,55 @@ JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_projects  # noqa: E402  (services/sid_projects.py)
+
+# The project the current action works on. SID's paths are the module
+# settings above; any other project's repository and worktrees are swapped
+# in for the duration of one action (see in_job_project).
+PROJECT = None
+
+
+def current_project():
+    return PROJECT or sid_projects.load(r, sid_projects.SID_PROJECT)
+
+
+class project_context:
+    """Point REPO_ROOT/WORKTREE_ROOT at a project for one action, then restore."""
+
+    def __init__(self, project_id):
+        self.project_id = project_id or sid_projects.SID_PROJECT
+
+    def __enter__(self):
+        global PROJECT, REPO_ROOT, WORKTREE_ROOT
+        self.saved = (PROJECT, REPO_ROOT, WORKTREE_ROOT)
+        try:
+            project = sid_projects.load(r, self.project_id)
+        except LookupError as exc:
+            fail(str(exc))
+        PROJECT = project
+        if not project.is_sid:
+            REPO_ROOT, WORKTREE_ROOT = project.repo.resolve(), project.worktrees.resolve()
+        return project
+
+    def __exit__(self, *exc):
+        global PROJECT, REPO_ROOT, WORKTREE_ROOT
+        PROJECT, REPO_ROOT, WORKTREE_ROOT = self.saved
+        return False
+
+
+def in_job_project(action):
+    """Run an operator action inside the job's project."""
+    @functools.wraps(action)
+    def wrapper(job_id, *args, **kwargs):
+        try:
+            project_id = r.hget(f"sid:jobs:{job_id}", "project_id")
+        except Exception:
+            project_id = None
+        with project_context(project_id):
+            return action(job_id, *args, **kwargs)
+    return wrapper
+
 
 class Refused(SystemExit):
     """An action was refused. Exits 1 like a plain SystemExit(1), so the CLI
@@ -39,7 +89,8 @@ def fail(message):
     raise Refused(message)
 
 
-def git(*args, cwd=REPO_ROOT, check=True):
+def git(*args, cwd=None, check=True):
+    cwd = cwd or REPO_ROOT  # resolved per call: the current action's project
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -117,12 +168,13 @@ def release_approval_lock(lock_key, token):
     )
 
 
+@in_job_project
 def approve(job_id, expected_candidate=None):
-    # Approval advances the shared main branch, so this lock must be
+    # Approval advances the project's main branch, so this lock must be
     # repository-wide rather than per job. Holding it across validation
     # and merge makes the integration-base check and main advancement
-    # one serialized operation.
-    lock_key = "sid:approval-lock:main"
+    # one serialized operation. (SID's key: sid:approval-lock:main.)
+    lock_key = current_project().approval_lock_key
     token = uuid.uuid4().hex
     if not r.set(lock_key, token, nx=True, ex=300):
         fail("another approval is already advancing main")
@@ -306,6 +358,7 @@ def _sources(value):
     return parsed if isinstance(parsed, list) else None
 
 
+@in_job_project
 def queue_approval(job_id, expected_candidate):
     """Approve the change the human saw, to merge as soon as it is fresh."""
     key = f"sid:jobs:{job_id}"
@@ -335,15 +388,17 @@ def queue_approval(job_id, expected_candidate):
         "merge_queue_reason": "",
         "updated_at": str(time.time()),
     })
-    if job_id not in r.lrange(MERGE_QUEUE, 0, -1):
-        r.rpush(MERGE_QUEUE, job_id)
+    queue = current_project().merge_queue_key
+    if job_id not in r.lrange(queue, 0, -1):
+        r.rpush(queue, job_id)
     print(f"QUEUED FOR MERGE: {job_id} ({len(sources)} source commit(s)); "
           "merges once fresh on main with a passing gate and review")
 
 
+@in_job_project
 def dequeue_approval(job_id, reason="removed by operator"):
     key = f"sid:jobs:{job_id}"
-    removed = r.lrem(MERGE_QUEUE, 0, job_id)
+    removed = r.lrem(current_project().merge_queue_key, 0, job_id)
     if r.hgetall(key):
         r.hdel(key, "approval_intent_candidate", "approval_intent_sources", "approval_intent_at")
         r.hset(key, mapping={"merge_queue_state": "removed", "merge_queue_reason": reason,
@@ -371,11 +426,23 @@ def merge_readiness(data, main_head):
 
 
 def process_merge_queue():
-    """Merge the first ready queued job (at most one per call: each merge
-    moves main and makes the rest stale). Returns the merged job id or None."""
-    ids = r.lrange(MERGE_QUEUE, 0, -1)
+    """For every project, merge its first ready queued job (at most one per
+    project per call: each merge moves that project's main and makes the rest
+    of its queue stale). Returns the merged job ids."""
+    merged = []
+    for project in sid_projects.all_projects(r):
+        with project_context(project.id):
+            job_id = _process_project_queue(project)
+        if job_id:
+            merged.append(job_id)
+    return merged
+
+
+def _process_project_queue(project):
+    queue = project.merge_queue_key
+    ids = r.lrange(queue, 0, -1)
     main_head = git("rev-parse", "HEAD").stdout.strip()
-    r.set(MAIN_HEAD_KEY, main_head)
+    r.set(project.main_head_key, main_head)
     for job_id in ids:
         key = f"sid:jobs:{job_id}"
         data = r.hgetall(key)
@@ -385,7 +452,7 @@ def process_merge_queue():
                 dequeue_approval(job_id, reason)
                 r.hset(key, "merge_queue_state", "invalid")
             else:
-                r.lrem(MERGE_QUEUE, 0, job_id)
+                r.lrem(queue, 0, job_id)
             continue
         if state == "wait":
             if (data.get("merge_queue_state"), data.get("merge_queue_reason")) != ("waiting", reason):
@@ -400,7 +467,7 @@ def process_merge_queue():
             dequeue_approval(job_id, f"approval refused: {exc.message}")
             r.hset(key, "merge_queue_state", "invalid")
             continue
-        r.lrem(MERGE_QUEUE, 0, job_id)
+        r.lrem(queue, 0, job_id)
         r.hset(key, mapping={"merge_queue_state": "merged", "merge_queue_reason": "",
                              "merged_via": "merge-queue"})
         return job_id
@@ -410,6 +477,7 @@ def process_merge_queue():
 REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted", "integration_failed"}
 
 
+@in_job_project
 def reject(job_id):
     key = f"sid:jobs:{job_id}"
     data = job_record(job_id)
@@ -449,7 +517,7 @@ def reject(job_id):
     if git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
         git("branch", "-D", branch)
 
-    r.lrem(MERGE_QUEUE, 0, job_id)
+    r.lrem(current_project().merge_queue_key, 0, job_id)
     r.hset(
         key,
         mapping={
@@ -474,6 +542,7 @@ DERIVED_REVIEW_FIELDS = (
 )
 
 
+@in_job_project
 def extend(job_id, extra=1):
     """Grant more repair attempts to a job that exhausted them."""
     key = f"sid:jobs:{job_id}"
@@ -525,6 +594,7 @@ def legacy_sources(data):
     return commits
 
 
+@in_job_project
 def reintegrate(job_id):
     """Queue a fresh isolated integration against current main + fresh review.
 
@@ -575,6 +645,7 @@ def reintegrate(job_id):
         "status": "queued",
         "role": "integrate",
         "target_builder_id": job_id,
+        "project_id": current_project().id,
         "goal_id": data.get("goal_id", ""),
         "created_at": now,
         "updated_at": now,
@@ -595,6 +666,7 @@ FAILED_DEPENDENCY_STATES = {
 }
 
 
+@in_job_project
 def reopen(job_id):
     """Re-open a job blocked by a dependency that has since recovered."""
     key = f"sid:jobs:{job_id}"
