@@ -42,6 +42,14 @@ EDIT_TOOLS = "Read,Edit,Write,Grep,Glob,Bash"
 
 COOLDOWN_KEY = "sid:provider-cooldown:claude"
 COOLDOWN_SECONDS = int(os.getenv("CLAUDE_COOLDOWN_SECONDS", "1800"))
+# The claude CLI is a global install that updates itself (it is shared with
+# interactive sessions); during an update the executable is briefly missing
+# or half-installed. That is a short outage, not a failure.
+INSTALL_COOLDOWN_SECONDS = int(os.getenv("CLAUDE_INSTALL_COOLDOWN_SECONDS", "120"))
+_INSTALL_BROKEN = re.compile(
+    r"postinstall|optional dependency|No such file or directory|command not found|ENOENT|cannot execute",
+    re.IGNORECASE,
+)
 POLL_SECONDS = 2
 
 # Worktrees contain the operator's CLAUDE.md, which Claude Code loads. It is
@@ -120,11 +128,17 @@ def claude_command(role, model, budget_usd, allowed_bash=(), tools=None):
 
 
 class ClaudeRun:
-    def __init__(self, returncode, duration, result, timed_out=False):
+    def __init__(self, returncode, duration, result, timed_out=False, raw_tail=""):
         self.returncode = returncode
         self.duration = duration
         self.result = result  # parsed JSON result, or None
         self.timed_out = timed_out
+        self.raw_tail = raw_tail  # end of the CLI output when there is no JSON result
+
+    @property
+    def install_broken(self):
+        """The CLI itself is missing or mid-update (no JSON result at all)."""
+        return self.result is None and not self.timed_out and bool(_INSTALL_BROKEN.search(self.raw_tail))
 
     @property
     def text(self):
@@ -144,6 +158,8 @@ class ClaudeRun:
         """Claude could not serve this call (plan limit, auth, overload):
         another provider should take it. Budget exhaustion or a bad answer
         is not unavailability."""
+        if self.install_broken:
+            return True
         if self.result is None or not self.result.get("is_error"):
             return False
         status = self.result.get("api_error_status")
@@ -153,7 +169,8 @@ class ClaudeRun:
         if self.timed_out:
             return "timed out"
         if self.result is None:
-            return f"exited with status {self.returncode} without a JSON result"
+            tail = f": {self.raw_tail.strip()[-200:]}" if self.raw_tail.strip() else ""
+            return f"exited with status {self.returncode} without a JSON result{tail}"
         return (
             f"{self.result.get('subtype') or 'error'}: "
             f"{self.text[:500] or 'no message'}"
@@ -175,10 +192,13 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
     log_path.parent.mkdir(parents=True, exist_ok=True)
     timed_out = False
     with log_path.open("w") as log:
-        process = subprocess.Popen(
-            command, cwd=str(cwd), stdin=subprocess.PIPE, stdout=log,
-            stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True,
-        )
+        try:
+            process = subprocess.Popen(
+                command, cwd=str(cwd), stdin=subprocess.PIPE, stdout=log,
+                stderr=subprocess.STDOUT, text=True, env=env, start_new_session=True,
+            )
+        except OSError as exc:  # executable missing mid-update
+            return ClaudeRun(127, time.time() - started, None, raw_tail=f"{exc}")
         process.stdin.write(prompt)
         process.stdin.close()
         while process.poll() is None:
@@ -197,8 +217,14 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
                     process.wait()
                 break
             time.sleep(POLL_SECONDS)
-    return ClaudeRun(process.returncode, time.time() - started,
-                     read_claude_result(log_path), timed_out)
+    result = read_claude_result(log_path)
+    raw_tail = ""
+    if result is None:
+        try:
+            raw_tail = log_path.read_text(errors="replace")[-2000:]
+        except OSError:
+            pass
+    return ClaudeRun(process.returncode, time.time() - started, result, timed_out, raw_tail)
 
 
 def read_claude_result(log_path):
@@ -405,10 +431,13 @@ def claude_cooling_down(redis_client):
         return False
 
 
-def start_cooldown(redis_client, reason):
+def start_cooldown(redis_client, reason, seconds=None):
     """Stop sending work to Claude for a while after it reported a limit, so
-    every job does not first burn a failed call before falling back."""
+    every job does not first burn a failed call before falling back. A CLI
+    being updated only needs a short pause (INSTALL_COOLDOWN_SECONDS)."""
+    if seconds is None:
+        seconds = INSTALL_COOLDOWN_SECONDS if _INSTALL_BROKEN.search(reason or "") else COOLDOWN_SECONDS
     try:
-        redis_client.set(COOLDOWN_KEY, reason[:300] or "unavailable", ex=COOLDOWN_SECONDS)
+        redis_client.set(COOLDOWN_KEY, reason[:300] or "unavailable", ex=seconds)
     except Exception:
         pass

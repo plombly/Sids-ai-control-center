@@ -647,3 +647,54 @@ def test_rebase_check_prompt_carries_main_changes(worker, tmp_path):
 def test_passing_review_records_its_base():
     source = (ROOT / "services/worker/worker.py").read_text()
     assert '"reviewed_base_commit": str(builder.get("integration_base_commit") or "") if verdict == "pass" else ""' in source
+
+
+
+# --- the claude CLI updating itself under the pipeline ---------------------------------
+
+def test_missing_executable_is_a_short_outage_not_a_failure(agent_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))  # no claude anywhere
+    run = agent_cli.run_claude("reviewer", "x", tmp_path, tmp_path / "l.json", 30)
+    assert run.unavailable and run.install_broken and not run.ok
+    fake = MemoryRedis()
+    agent_cli.start_cooldown(fake, f"claude unavailable: {run.describe_error()}")
+    assert fake.values[agent_cli.COOLDOWN_KEY]
+    assert agent_cli.INSTALL_COOLDOWN_SECONDS == 120
+
+
+def test_half_installed_cli_is_unavailable(agent_cli, tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    broken = bin_dir / "claude"
+    broken.write_text("#!/bin/sh\necho 'Either postinstall did not run (--ignore-scripts)'\nexit 1\n")
+    broken.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    run = agent_cli.run_claude("reviewer", "x", tmp_path, tmp_path / "l.json", 30)
+    assert run.unavailable and "postinstall" in run.describe_error()
+
+
+def test_plan_limit_still_gets_the_long_cooldown(agent_cli):
+    seen = {}
+
+    class R:
+        def set(self, key, value, ex=None):
+            seen["ex"] = ex
+
+    agent_cli.start_cooldown(R(), "claude unavailable: success: You've hit your session limit")
+    assert seen["ex"] == agent_cli.COOLDOWN_SECONDS
+    agent_cli.start_cooldown(R(), "claude unavailable: [Errno 2] No such file or directory: 'claude'")
+    assert seen["ex"] == agent_cli.INSTALL_COOLDOWN_SECONDS
+
+
+def test_crash_with_unrelated_output_is_still_a_failure(agent_cli, fake_claude, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "crash")
+    run = agent_cli.run_claude("repair", "x", tmp_path, tmp_path / "l.json", 30)
+    assert not run.unavailable and "Traceback" in run.describe_error()
+
+
+def test_planner_falls_back_when_claude_is_mid_update(orch, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    orch.run_codex_planner = lambda goal, atomic=False, project=None: {"jobs": ["codex"]}
+    info = {}
+    assert orch.run_planner("g", info=info) == {"jobs": ["codex"]}
+    assert info["provider"] == "codex" and "No such file" in info["fallback"]
