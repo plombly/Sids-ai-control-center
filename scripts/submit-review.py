@@ -2,63 +2,73 @@
 
 import argparse
 import json
+import os
 import time
 import uuid
 
 import redis
 
 
-parser = argparse.ArgumentParser(
-    description="Queue a SID review of an existing builder job"
-)
-parser.add_argument("builder_job_id", help="Builder job to review")
-parser.add_argument("--model", default="gpt-5.6-luna")
-parser.add_argument("--provider", default="codex")
-args = parser.parse_args()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Queue a SID review of an existing builder job"
+    )
+    parser.add_argument("builder_job_id", help="Builder job to review")
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("DEFAULT_MODEL", "gpt-5.6-luna"),
+        help="Model to use (default: $DEFAULT_MODEL or gpt-5.6-luna)",
+    )
+    parser.add_argument("--provider", default="codex")
+    return parser
 
-r = redis.Redis.from_url(
-    "redis://127.0.0.1:6379/0",
-    decode_responses=True,
-)
 
-builder_key = f"sid:jobs:{args.builder_job_id}"
-builder = r.hgetall(builder_key)
+def main():
+    args = build_parser().parse_args()
 
-if not builder:
-    raise SystemExit(f"Builder job not found: {args.builder_job_id}")
-
-if builder.get("status") != "awaiting_review":
-    raise SystemExit(
-        f"Builder job status is {builder.get('status')!r}; "
-        "expected 'awaiting_review'"
+    r = redis.Redis.from_url(
+        "redis://127.0.0.1:6379/0",
+        decode_responses=True,
     )
 
-worktree = builder.get("integration_worktree")
-if not worktree:
-    raise SystemExit("Builder job has no integrated worktree")
+    builder_key = f"sid:jobs:{args.builder_job_id}"
+    builder = r.hgetall(builder_key)
 
-candidate_commit = builder.get("integrated_candidate_commit")
-if not candidate_commit:
-    raise SystemExit("Builder job has no integrated candidate commit")
+    if not builder:
+        raise SystemExit(f"Builder job not found: {args.builder_job_id}")
 
-existing_review = builder.get("review_job_id")
-if existing_review:
-    existing = r.hgetall(f"sid:jobs:{existing_review}")
-    status = existing.get("status", "unknown") if existing else "missing"
-    raise SystemExit(
-        f"Builder job already has reviewer {existing_review} ({status})"
-    )
+    if builder.get("status") != "awaiting_review":
+        raise SystemExit(
+            f"Builder job status is {builder.get('status')!r}; "
+            "expected 'awaiting_review'"
+        )
 
-job_id = uuid.uuid4().hex[:8]
+    worktree = builder.get("integration_worktree")
+    if not worktree:
+        raise SystemExit("Builder job has no integrated worktree")
 
-# Reserve the reviewer slot atomically so manual and automatic dispatch
-# cannot enqueue duplicate reviews for the same builder.
-if not r.hsetnx(builder_key, "review_job_id", job_id):
-    raise SystemExit(
-        f"Builder job already has reviewer {r.hget(builder_key, 'review_job_id')}"
-    )
+    candidate_commit = builder.get("integrated_candidate_commit")
+    if not candidate_commit:
+        raise SystemExit("Builder job has no integrated candidate commit")
 
-prompt = f"""You are the review agent for SID's AI Command Center.
+    existing_review = builder.get("review_job_id")
+    if existing_review:
+        existing = r.hgetall(f"sid:jobs:{existing_review}")
+        status = existing.get("status", "unknown") if existing else "missing"
+        raise SystemExit(
+            f"Builder job already has reviewer {existing_review} ({status})"
+        )
+
+    job_id = uuid.uuid4().hex[:8]
+
+    # Reserve the reviewer slot atomically so manual and automatic dispatch
+    # cannot enqueue duplicate reviews for the same builder.
+    if not r.hsetnx(builder_key, "review_job_id", job_id):
+        raise SystemExit(
+            f"Builder job already has reviewer {r.hget(builder_key, 'review_job_id')}"
+        )
+
+    prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {args.builder_job_id}.
 Review immutable integrated candidate commit {candidate_commit}.
@@ -90,45 +100,49 @@ Before the verdict, provide concise actionable findings. If there are no
 material findings, explicitly say so.
 """
 
-job = {
-    "id": job_id,
-    "prompt": prompt,
-    "provider": args.provider,
-    "model": args.model,
-    "role": "reviewer",
-    "builder_job_id": args.builder_job_id,
-    "worktree": worktree,
-    "candidate_commit": candidate_commit,
-    "created_at": time.time(),
-}
+    job = {
+        "id": job_id,
+        "prompt": prompt,
+        "provider": args.provider,
+        "model": args.model,
+        "role": "reviewer",
+        "builder_job_id": args.builder_job_id,
+        "worktree": worktree,
+        "candidate_commit": candidate_commit,
+        "created_at": time.time(),
+    }
 
-try:
-    r.hset(
-        f"sid:jobs:{job_id}",
-        mapping={
-            "status": "queued",
-            "provider": args.provider,
-            "model": args.model,
-            "role": "reviewer",
-            "builder_job_id": args.builder_job_id,
-            "worktree": worktree,
-            "candidate_commit": candidate_commit,
-            "prompt": prompt,
-            "created_at": str(job["created_at"]),
-        },
-    )
-    r.hset(
-        builder_key,
-        mapping={
-            "review_status": "queued",
-            "updated_at": str(time.time()),
-        },
-    )
-    r.rpush("sid:jobs", json.dumps(job))
-except Exception:
-    if r.hget(builder_key, "review_job_id") == job_id:
-        r.hdel(builder_key, "review_job_id", "review_status")
-    r.delete(f"sid:jobs:{job_id}")
-    raise
+    try:
+        r.hset(
+            f"sid:jobs:{job_id}",
+            mapping={
+                "status": "queued",
+                "provider": args.provider,
+                "model": args.model,
+                "role": "reviewer",
+                "builder_job_id": args.builder_job_id,
+                "worktree": worktree,
+                "candidate_commit": candidate_commit,
+                "prompt": prompt,
+                "created_at": str(job["created_at"]),
+            },
+        )
+        r.hset(
+            builder_key,
+            mapping={
+                "review_status": "queued",
+                "updated_at": str(time.time()),
+            },
+        )
+        r.rpush("sid:jobs", json.dumps(job))
+    except Exception:
+        if r.hget(builder_key, "review_job_id") == job_id:
+            r.hdel(builder_key, "review_job_id", "review_status")
+        r.delete(f"sid:jobs:{job_id}")
+        raise
 
-print(job_id)
+    print(job_id)
+
+
+if __name__ == "__main__":
+    main()
