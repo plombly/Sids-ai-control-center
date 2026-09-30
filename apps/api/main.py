@@ -134,6 +134,40 @@ def _hash(key):
     return value if isinstance(value, dict) else {}
 
 
+# The dashboard polls about a dozen endpoints every 2 seconds and each one
+# read every job/goal hash with its own Redis round trip, so requests queued
+# up and pages took seconds to fill in. Reads now fetch all matching hashes in
+# one pipelined round trip, shared through a very short snapshot cache.
+_SNAPSHOT_TTL = float(os.environ.get("API_SNAPSHOT_TTL", "1.0"))
+_snapshots = {}
+
+
+def _hashes(pattern):
+    """[(key, data)] for every non-empty hash matching pattern (non-hash keys,
+    like planner locks, are skipped). One round trip; cached _SNAPSHOT_TTL s."""
+    now = time.monotonic()
+    cache_key = (id(redis), pattern)
+    cached = _snapshots.get(cache_key)
+    if cached and now - cached[0] < _SNAPSHOT_TTL:
+        return cached[1]
+    keys = _keys(pattern)
+    try:
+        pipe = redis.pipeline(transaction=False)
+        for key in keys:
+            pipe.hgetall(key)
+        values = pipe.execute(raise_on_error=False)
+    except Exception:
+        values = [_hash(key) for key in keys]
+    result = [(key, value) for key, value in zip(keys, values) if isinstance(value, dict) and value]
+    if _SNAPSHOT_TTL > 0:
+        _snapshots[cache_key] = (now, result)
+    return result
+
+
+def _job_statuses():
+    return {_key_suffix(key): data.get("status") for key, data in _hashes("sid:jobs:*")}
+
+
 def _keys(pattern):
     try:
         return sorted(redis.scan_iter(pattern), key=str)
@@ -207,20 +241,17 @@ def _json_object(value):
 
 
 def _all_jobs():
-    result = []
-    for key in _keys("sid:jobs:*"):
-        data = _hash(key)
-        if data:
-            result.append(_job(key, data))
+    result = [_job(key, data) for key, data in _hashes("sid:jobs:*")]
     return sorted(result, key=lambda item: (-item["sort_time"], item["id"]))
 
 
 def _goal(key, data):
     data = data if isinstance(data, dict) else {}
+    statuses = _job_statuses()
     child_ids = _json_list(data.get("jobs", data.get("job_ids")))
     counts = {}
     for child_id in child_ids:
-        status = _text(_hash(f"sid:jobs:{child_id}").get("status"), "unknown")
+        status = _text(statuses.get(child_id), "unknown")
         counts[status] = counts.get(status, 0) + 1
     counts = dict(sorted(counts.items()))
     return {
@@ -244,11 +275,7 @@ def _goal(key, data):
 
 
 def _all_goals():
-    result = []
-    for key in _keys("sid:goals:*"):
-        data = _hash(key)
-        if data:
-            result.append(_goal(key, data))
+    result = [_goal(key, data) for key, data in _hashes("sid:goals:*")]
     return sorted(result, key=lambda item: (-item["sort_time"], item["id"]))
 
 

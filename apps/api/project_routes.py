@@ -100,11 +100,10 @@ def _numeric(value):
 
 
 def _scan_hashes(main, pattern, matcher):
-    for raw_key in main.redis.scan_iter(pattern):
+    for raw_key, raw_data in main._hashes(pattern):
         key = _text(_clean(raw_key), "")
-        match = matcher.fullmatch(key)
-        if match:
-            data = _data(main.redis.hgetall(key))
+        if matcher.fullmatch(key):
+            data = _data(raw_data)
             if data:
                 yield key, data
 

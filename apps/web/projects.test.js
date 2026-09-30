@@ -14,7 +14,7 @@ test('project list markup renders projects and empty state', () => {
     name: '<b>x</b>',
     importance: 'high',
     status: 'paused',
-    counts: { queued: 1, running: 2, awaiting_approval: 3, needs_human: 4, merged: 5 },
+    counts: { jobs_queued: 1, jobs_running: 2, jobs_awaiting_approval: 3, jobs_needs_human: 4, jobs_merged: 5 },
     stats: { remaining_effort: 6 }
   }]);
   assert.match(markup, /href="#\/projects\/web-shop"/);
@@ -63,4 +63,13 @@ test('project values validate id, name, and clone URL', () => {
   assert.match(validateProjectValues({ id: 'good-id', name: '' }), /Name/);
   assert.match(validateProjectValues({ id: 'good-id', name: 'x'.repeat(81) }), /Name/);
   assert.match(validateProjectValues({ id: 'good-id', name: 'Name', source: 'clone' }), /URL/);
+});
+
+
+test('list shows the counts the API actually returns (jobs_* keys)', async () => {
+  const { projectListMarkup } = await import('./lib/projects.js');
+  const html = projectListMarkup([{ id: 'sid', name: 'SID', importance: 'medium', status: 'active',
+    counts: { jobs_queued: 2, jobs_running: 1, jobs_awaiting_approval: 3, jobs_needs_human: 0, jobs_merged: 42 },
+    stats: { remaining_effort: 5 } }]);
+  assert.match(html, /queued 2 · running 1 · awaiting approval 3 · needs human 0 · merged 42/);
 });

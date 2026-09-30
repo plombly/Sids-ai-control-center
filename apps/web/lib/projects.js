@@ -10,9 +10,9 @@ export function projectListMarkup(projects) {
     const id = text(project.id, '');
     const counts = project.counts || {};
     const stats = project.stats || {};
-    const countsLine = `queued ${number(counts.queued)} · running ${number(counts.running)} · awaiting approval ${number(
-      counts.awaiting_approval
-    )} · needs human ${number(counts.needs_human)} · merged ${number(counts.merged)}`;
+    const countsLine = `queued ${number(counts.jobs_queued)} · running ${number(counts.jobs_running)} · awaiting approval ${number(
+      counts.jobs_awaiting_approval
+    )} · needs human ${number(counts.jobs_needs_human)} · merged ${number(counts.jobs_merged)}`;
     return `<div class="item"><div class="item-head"><div class="item-title"><a href="#/projects/${encodeURIComponent(
       id
     )}">${esc(project.name)}</a> <span class="subtle">${esc(id)}</span></div><div>${pill(project.importance)}${
