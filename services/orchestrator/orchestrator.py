@@ -783,7 +783,10 @@ def update_goals():
             state in {"merged", "completed_no_changes"}
             for state in states
         ):
-            if goal.get("status") == "completed" and not goal.get("error"):
+            # Preserve historical completed-goal metadata while its children
+            # remain complete. A legacy error string is not a material state
+            # change and must not churn updated_at every reconciliation loop.
+            if goal.get("status") == "completed":
                 continue
             r.hset(
                 key,

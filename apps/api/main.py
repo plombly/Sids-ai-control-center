@@ -4,7 +4,6 @@ import math
 import os
 import re
 import subprocess
-from pathlib import Path
 import time
 import uuid
 import zipfile
@@ -377,6 +376,13 @@ def api_recent_jobs(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT
 
 
 def _approval_ready(job):
+    """Return whether persisted state is ready for host-side approval validation.
+
+    This deliberately does not inspect Git or host worktrees. The API container
+    has no repository authority. scripts/job-review.py is the authoritative
+    final gate for main freshness, repository cleanliness, worktree state,
+    branch state, and the merge itself.
+    """
     if (
         job.get("status") != "awaiting_review"
         or job.get("review_status") != "complete"
@@ -389,13 +395,7 @@ def _approval_ready(job):
     integrated_commit = job.get("integrated_candidate_commit")
     base_commit = job.get("integration_base_commit")
 
-    if not all((
-        review_job_id,
-        integrated_commit,
-        base_commit,
-        job.get("integration_worktree"),
-        job.get("integration_branch"),
-    )):
+    if not all((review_job_id, integrated_commit, base_commit)):
         return False
 
     if job.get("reviewed_commit") != integrated_commit:
@@ -411,33 +411,6 @@ def _approval_ready(job):
         or review.get("candidate_commit") != integrated_commit
         or review.get("reviewed_commit") != integrated_commit
     ):
-        return False
-
-    # Mirror the immutable metadata enforced by job-review.py.
-    worktree_root = Path(
-        os.getenv("WORKTREE_ROOT", "/opt/sid-worktrees")
-    ).resolve()
-    expected_worktree = str(
-        (worktree_root / f"job-{job.get('id')}-integration").resolve()
-    )
-    expected_branch = f"sid/integration-{job.get('id')}"
-
-    if job.get("integration_worktree") != expected_worktree:
-        return False
-    if job.get("integration_branch") != expected_branch:
-        return False
-
-    # Stale-main candidates are not actionable approvals.
-    try:
-        current_main = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception:
-        return False
-
-    if current_main != base_commit:
         return False
 
     return True
