@@ -542,17 +542,27 @@ def test_global_approval_lock_contract():
         "per-job approval lock does not serialize different jobs"
     )
 
-    approve_start = review_script.index("def approve(job_id):")
-    unlocked_start = review_script.index("def _approve_unlocked(job_id):")
+    approve_start = review_script.index("def approve(job_id, expected_candidate=None):")
+    unlocked_start = review_script.index(
+        "def _approve_unlocked(job_id, expected_candidate=None):"
+    )
     approve_body = review_script[approve_start:unlocked_start]
 
-    assert "_approve_unlocked(job_id)" in approve_body
+    assert "_approve_unlocked(job_id, expected_candidate)" in approve_body
     assert "release_approval_lock(lock_key, token)" in approve_body
 
     unlocked_body = review_script[unlocked_start:]
+    candidate_check = unlocked_body.index(
+        "if expected_candidate is not None and expected_candidate != integrated_commit:"
+    )
+    clean_check = unlocked_body.index("ensure_main_clean()")
     stale_check = unlocked_body.index("if current_main != base_commit:")
     merge_call = unlocked_body.index('"merge",', stale_check)
 
+    assert candidate_check < clean_check < merge_call, (
+        "the human-confirmed candidate must be checked under the lock, "
+        "before main advancement"
+    )
     assert stale_check < merge_call, (
         "stale-main validation must occur before main advancement"
     )

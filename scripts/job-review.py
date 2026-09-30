@@ -117,7 +117,7 @@ def release_approval_lock(lock_key, token):
     )
 
 
-def approve(job_id):
+def approve(job_id, expected_candidate=None):
     # Approval advances the shared main branch, so this lock must be
     # repository-wide rather than per job. Holding it across validation
     # and merge makes the integration-base check and main advancement
@@ -127,12 +127,12 @@ def approve(job_id):
     if not r.set(lock_key, token, nx=True, ex=300):
         fail("another approval is already advancing main")
     try:
-        _approve_unlocked(job_id)
+        _approve_unlocked(job_id, expected_candidate)
     finally:
         release_approval_lock(lock_key, token)
 
 
-def _approve_unlocked(job_id):
+def _approve_unlocked(job_id, expected_candidate=None):
     key = f"sid:jobs:{job_id}"
     data = job_record(job_id)
 
@@ -185,6 +185,15 @@ def _approve_unlocked(job_id):
         fail(f"reviewer {review_job_id} candidate does not match integrated candidate")
     if review.get("reviewed_commit") != integrated_commit:
         fail("reviewer did not target the exact integrated candidate")
+    # The human confirmed a specific candidate (Web approval always sends
+    # one). Checked under the approval lock, so the candidate cannot change
+    # between this check and the merge.
+    if expected_candidate is not None and expected_candidate != integrated_commit:
+        fail(
+            f"confirmed candidate {expected_candidate} is not the integrated "
+            f"candidate {integrated_commit}; review the current candidate "
+            "and confirm again"
+        )
 
     ensure_main_clean()
 
@@ -461,34 +470,45 @@ def reopen(job_id):
 
 
 USAGE = """Usage:
-  job-review.py approve JOB_ID
+  job-review.py approve JOB_ID [--candidate SHA]  refuse unless SHA (full 40 chars) is the integrated candidate
   job-review.py reject JOB_ID
   job-review.py extend JOB_ID [EXTRA_ATTEMPTS]   grant more repairs (default 1)
   job-review.py reintegrate JOB_ID               fresh integration on current main + fresh review
   job-review.py reopen JOB_ID                    un-block a job whose failed dependency recovered"""
 
 
+def is_full_sha(value):
+    return len(value) == 40 and all(c in "0123456789abcdef" for c in value)
+
+
 def main():
     actions = {"approve", "reject", "extend", "reintegrate", "reopen"}
-    if len(sys.argv) < 3 or sys.argv[1] not in actions or (
-        len(sys.argv) > 3 and sys.argv[1] != "extend"
-    ) or len(sys.argv) > 4:
+    argv = sys.argv[1:]
+    action = argv[0] if argv else None
+    rest = argv[2:]
+    if len(argv) < 2 or action not in actions or not (
+        not rest
+        or (action == "extend" and len(rest) == 1)
+        or (action == "approve" and len(rest) == 2 and rest[0] == "--candidate")
+    ):
         print(USAGE, file=sys.stderr)
         raise SystemExit(2)
 
-    action = sys.argv[1]
-    job_id = sys.argv[2]
+    job_id = argv[1]
 
     if not job_id.isalnum():
         fail("invalid job ID")
 
     if action == "approve":
-        approve(job_id)
+        candidate = rest[1] if rest else None
+        if candidate is not None and not is_full_sha(candidate):
+            fail("--candidate must be the full 40-character lowercase commit SHA")
+        approve(job_id, expected_candidate=candidate)
     elif action == "reject":
         reject(job_id)
     elif action == "extend":
         try:
-            extra = int(sys.argv[3]) if len(sys.argv) == 4 else 1
+            extra = int(rest[0]) if rest else 1
         except ValueError:
             fail("EXTRA_ATTEMPTS must be a number")
         extend(job_id, extra)
