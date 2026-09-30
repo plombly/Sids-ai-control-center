@@ -45,6 +45,9 @@ def run(wd, r, **kw):
     kw.setdefault("runner", runner_for())
     kw.setdefault("getter", lambda url: {"status": "healthy"})
     kw.setdefault("usage", lambda path: (100, 50, 50))
+    kw.setdefault("meminfo_reader", lambda: "MemTotal: 8388608 kB\nMemAvailable: 6291456 kB\n")
+    kw.setdefault("loadavg", lambda: (1.0, 1.2, 1.4))
+    kw.setdefault("cpu_count", lambda: 4)
     return wd.run_checks(r, now=NOW, **kw)
 
 
@@ -56,7 +59,7 @@ def test_all_healthy(wd):
     report = run(wd, healthy_redis(wd))
     assert report["status"] == "ok", report
     assert set(levels(report)) == {"units", "redis", "heartbeats", "backup", "pipeline",
-                                   "api", "web", "live_tree", "disk"}
+                                   "api", "web", "live_tree", "disk", "memory", "load"}
 
 
 def test_backup_age_is_computed_in_utc(wd):
@@ -103,7 +106,7 @@ def test_unreachable_endpoint(wd):
 def test_publish_logs_only_changes(wd):
     r = healthy_redis(wd)
     first = wd.publish(r, run(wd, r))
-    assert len(first) == 9, "every check is new the first time"
+    assert len(first) == 11, "every check is new the first time"
     assert wd.publish(r, run(wd, r)) == [], "no change, no log lines"
     r.values["sid:provider-cooldown:claude"] = "limit"
     changed = wd.publish(r, run(wd, r))
@@ -115,3 +118,39 @@ def test_watchdog_never_writes_job_state():
     source = (ROOT / "scripts/sid-watchdog.py").read_text()
     for forbidden in ("hset(", "hdel(", "rpush(", "delete(", "lrem("):
         assert forbidden not in source
+
+
+@pytest.mark.parametrize("available,expected", [(6291456, "ok"), (1048576, "warn"), (524288, "fail")])
+def test_memory_levels(wd, available, expected):
+    result = wd.check_memory(lambda: f"MemTotal: 8388608 kB\nMemAvailable: {available} kB\n")
+    assert result["level"] == expected
+    if expected == "ok":
+        assert result["detail"] == "6.0 GiB available of 8.0 GiB (75%)"
+
+
+def test_memory_unreadable(wd):
+    def unreadable():
+        raise OSError("permission denied")
+    result = wd.check_memory(unreadable)
+    assert result["level"] == "warn"
+    assert "cannot read /proc/meminfo: permission denied" in result["detail"]
+
+
+@pytest.mark.parametrize("load5,expected", [(1.2, "ok"), (7.0, "warn"), (13.0, "fail")])
+def test_load_levels(wd, load5, expected):
+    result = wd.check_load(lambda: (1.0, load5, 1.4), lambda: 4)
+    assert result["level"] == expected
+    assert result["detail"] == f"load 1.00/{load5:.2f}/1.40 on 4 CPUs"
+
+
+def test_loadavg_unreadable(wd):
+    def unreadable():
+        raise OSError("not available")
+    result = wd.check_load(unreadable, lambda: 4)
+    assert result["level"] == "warn"
+    assert "cannot read load average: not available" in result["detail"]
+
+
+def test_threshold_environment_override(wd, monkeypatch):
+    monkeypatch.setenv("WATCHDOG_MEM_WARN_PERCENT", "80")
+    assert wd.check_memory(lambda: "MemTotal: 100 kB\nMemAvailable: 75 kB\n")["level"] == "warn"

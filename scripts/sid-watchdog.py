@@ -110,6 +110,58 @@ def check_disk(paths=("/", "/var/log"), usage=shutil.disk_usage):
     return check("disk", level, f"{worst[1]:.0f}% free on {worst[0]}")
 
 
+def _env_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def read_meminfo():
+    with open("/proc/meminfo") as source:
+        return source.read()
+
+
+def check_memory(meminfo_reader=read_meminfo):
+    try:
+        values = meminfo_reader()
+        if hasattr(values, "items"):
+            available = float(values["MemAvailable"])
+            total = float(values["MemTotal"])
+        else:
+            parsed = {}
+            for line in values.splitlines():
+                name, value, *_ = line.split()
+                parsed[name.rstrip(":")] = float(value)
+            available = parsed["MemAvailable"]
+            total = parsed["MemTotal"]
+        if total <= 0:
+            raise ValueError("MemTotal is zero or negative")
+        percent = 100.0 * available / total
+        warn = _env_float("WATCHDOG_MEM_WARN_PERCENT", 15)
+        fail = _env_float("WATCHDOG_MEM_FAIL_PERCENT", 7)
+        level = "fail" if percent < fail else "warn" if percent < warn else "ok"
+        detail = f"{available / 1024 / 1024:.1f} GiB available of {total / 1024 / 1024:.1f} GiB ({percent:.0f}%)"
+        return check("memory", level, detail)
+    except Exception as exc:
+        return check("memory", "warn", f"cannot read /proc/meminfo: {exc}")
+
+
+def check_load(loadavg=os.getloadavg, cpu_count=os.cpu_count):
+    try:
+        loads = loadavg()
+        cpus = cpu_count()
+        if cpus is None or cpus <= 0:
+            raise ValueError("CPU count is unavailable")
+        load5 = loads[1]
+        warn = _env_float("WATCHDOG_LOAD_WARN_PER_CPU", 1.5) * cpus
+        fail = _env_float("WATCHDOG_LOAD_FAIL_PER_CPU", 3) * cpus
+        level = "fail" if load5 > fail else "warn" if load5 > warn else "ok"
+        return check("load", level, f"load {loads[0]:.2f}/{load5:.2f}/{loads[2]:.2f} on {cpus} CPUs")
+    except Exception as exc:
+        return check("load", "warn", f"cannot read load average: {exc}")
+
+
 def check_backup(r, now):
     raw = r.get("sid:backup:last")
     if not raw:
@@ -149,7 +201,8 @@ def check_pipeline(r):
     return check("pipeline", level, "; ".join(notes) or "no hand-offs pending")
 
 
-def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shutil.disk_usage):
+def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shutil.disk_usage,
+               meminfo_reader=read_meminfo, loadavg=os.getloadavg, cpu_count=os.cpu_count):
     now = time.time() if now is None else now
     checks = [check_units(unit_states(runner))]
     try:
@@ -163,6 +216,8 @@ def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shuti
         check_endpoint("web", "http://127.0.0.1:8080/health", getter),
         check_live_tree(runner),
         check_disk(usage=usage),
+        check_memory(meminfo_reader),
+        check_load(loadavg, cpu_count),
     ]
     order = {"ok": 0, "warn": 1, "fail": 2}
     overall = max((c["level"] for c in checks), key=order.__getitem__)
