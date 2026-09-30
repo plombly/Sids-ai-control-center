@@ -18,9 +18,11 @@ apps/web/            Dependency-free UI served by nginx (Docker: sid-ai-web, :80
 apps/tui/sid-tui.py  Terminal dashboard
 services/orchestrator/orchestrator.py   planning, repair dispatch, dependency release, goal state
 services/worker/worker.py               builder / reviewer / repair / integrate jobs
+services/operator/sid_operator.py       executes Web operator actions via job-review.py (host, not Docker)
 scripts/job-review.py        HOST-SIDE authority: approve / reject / extend / reintegrate / reopen
 scripts/integration-check.py deterministic gate (tests, self-tests, diagnostics)
 scripts/workflow-self-test.py, efficiency-self-test.py   fast no-network contract tests
+tests/                       pytest for host-side code (job-review, operator service); gate check `host-tests`
 ```
 
 Runtime (all live, all as root):
@@ -33,6 +35,7 @@ Runtime (all live, all as root):
 | Test Python | `/opt/sid-venv/bin/python` (via `SID_PYTHON`; `/tmp` venv is legacy — /tmp is wiped on reboot) |
 | Orchestrator unit | `sid-ai-orchestrator.service` (`sid-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
 | Worker units | `sid-ai-worker@01..06.service` (+ drop-in `sid-python.conf` setting SID_PYTHON) |
+| Operator unit | `sid-ai-operator.service`; template in `services/operator/`, installing it is SID's call |
 | Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `docker exec sid-ai-redis redis-cli ...` |
 | Postgres | Docker `sid-ai-postgres` (only used by projects/tasks/agents API) |
 | Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
@@ -41,7 +44,13 @@ Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
 — never hash-command it), `sid:jobs:<id>` (hash), queues `sid:goals` / `sid:jobs`
 (lists), `sid:workers:<id>` (heartbeat hash, 30s TTL),
 `sid:worker-control:<id>` (`disabled` = stop claiming jobs),
-`sid:integration-lock:<id>`, `sid:approval-lock:main`.
+`sid:integration-lock:<id>`, `sid:approval-lock:main`,
+`sid:orchestrators:<id>` (orchestrator heartbeat), `sid:goal-requests:<request_id>`
+(goal submit idempotency, 24h).
+Operator actions: `sid:operator-requests` (STREAM, consumer group `sid-operator`),
+`sid:operator-results:<request_id>` (hash, kept as audit; status `pending` ->
+`running` -> `succeeded|refused|error|expired|interrupted`, or `queue_failed`),
+`sid:operator-service:<id>` (heartbeat hash, 30s TTL, lists `allowed_actions`).
 
 ## Working rules (non-negotiable)
 
@@ -62,7 +71,9 @@ Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
    is not `working`). Restarting a worker mid-job kills that job.
    Workers/orchestrator need a restart for `services/` changes; api/web need
    `docker compose up -d --build api web` for `apps/` changes;
-   `scripts/job-review.py` takes effect immediately.
+   `scripts/job-review.py` takes effect immediately for the CLI, but the
+   operator service loads it at start and needs a restart
+   (`sid-ai-operator.service`) for job-review or operator changes.
 5. **Do not read or print secrets**: `.env`, `/root/.codex/auth.json`,
    `/root/.claude*`, container env. Nothing here requires them.
 6. **Do not mutate Redis job/goal state by hand** except through
@@ -104,6 +115,11 @@ review/integration fields -> re-integrate -> re-review ... -> human
 
 Terminal/failure: `failed`, `test_failed`, `integration_failed`, `rejected`,
 `blocked_failed_dependency` (cascades), legacy `repair_exhausted`.
+Terminal/success: `merged`, `completed_no_changes` (builder produced no diff).
+Goal statuses also include `planning_failed`. Legacy records (pre-integration)
+may have no `role`, `integration_status=legacy_not_run`, or a hand-set
+`archived` status, and one id (`salvage-api-22178db`) is not alphanumeric, so
+neither the CLI nor the operator service can act on it. Leave them.
 Non-terminal hand-off: `needs_human` (repairs exhausted; dependents wait).
 Other roles: reviewer (`review_complete`), repair (`repair_complete`),
 integrate (`integrate_complete` / `integration_failed`).
@@ -111,13 +127,25 @@ integrate (`integrate_complete` / `integration_failed`).
 Operator commands (host):
 
 ```
-python3 scripts/job-review.py approve JOB
+python3 scripts/job-review.py approve JOB [--candidate SHA]   # refuses unless SHA is the integrated candidate
 python3 scripts/job-review.py reject JOB        # awaiting_review, needs_human, repair_exhausted, integration_failed
 python3 scripts/job-review.py extend JOB [N]    # grant N more repairs to a needs_human job
 python3 scripts/job-review.py reintegrate JOB   # fresh integration on current main + fresh review (stale recovery)
 python3 scripts/job-review.py reopen JOB        # un-block blocked_failed_dependency once deps recovered
 python3 scripts/submit-goal.py [--atomic] "GOAL"
 ```
+
+Web operator actions (Plan A): `POST /api/jobs/{id}/actions` with
+`{action, request_id, expected_status, expected_candidate (approve only, full SHA),
+extra (extend only)}` records a pending result and appends to the stream; poll
+`GET /api/operator-requests/{request_id}`; `GET /api/operator/status` shows the
+service. The API only checks shape (plus early 404/409/403/503 feedback). The
+operator service re-validates, runs each request id at most once, expires
+requests older than `OPERATOR_REQUEST_TTL` (600s, measured on the Redis clock),
+refuses if the job status changed, and marks a request that was running at a
+crash `interrupted` (never re-run; check the job and submit a new request).
+`OPERATOR_ALLOWED_ACTIONS` defaults to everything except `approve`: enable
+approve only once the API is not reachable by people who must not merge.
 
 ## History you must know
 
@@ -151,7 +179,10 @@ look if touching their code): `4b87827f`, `358966df`, `17b11696`.
 ## Current gaps (the work ahead)
 
 Web v2 was supposed to be a 4-job goal (`a9bb98ee`). Only its backend job
-merged. The UI, stale-recovery, and tests jobs never ran. The later single
+merged. The UI, stale-recovery, and tests jobs never ran: `a70c8fdc`,
+`1fa04294`, `4a616f01` sit in `blocked_failed_dependency`. `a70c8fdc` depends
+only on merged `358966df`, so `reopen` would accept it, but that revives the old
+plan that Plan B replaces; SID decides. The later single
 job `17b11696` was hand-salvaged. What exists vs missing:
 
 - Working: goal submit (normal/atomic, request_id idempotency), approval-ready
@@ -162,7 +193,8 @@ job `17b11696` was hand-salvaged. What exists vs missing:
   - Repository panel is always "unknown" (API container has no git).
   - Handoff `_redact` blanks token-usage counters: any key containing
     `token` is treated as a secret. Distinguish credentials from usage numbers.
-- Missing: Web approve/reject/extend/reintegrate/reopen buttons, add worker,
+- Missing: Web approve/reject/extend/reintegrate/reopen buttons (the backend
+  for them is Plan A), add worker,
   queue management, goal/job drill-down UI, persisted command/tool events,
   prompts in UI, reviewer findings in UI, provider controls, auth.
 - `apps/web/app.js` is minified single-line JS. Readable code is fine and
@@ -171,7 +203,8 @@ job `17b11696` was hand-salvaged. What exists vs missing:
 
 ## Plan (in order)
 
-**A. Host-side action service (do this first, carefully).** A small service
+**A. Host-side action service. IMPLEMENTED on `dev/claude`, pending SID's
+merge + unit install (see "Web operator actions" above).** A small service
 on the host (NOT in Docker) that executes operator actions requested from the
 Web by calling the same functions as `scripts/job-review.py`. Suggested shape:
 the API writes validated requests to a Redis stream/list
