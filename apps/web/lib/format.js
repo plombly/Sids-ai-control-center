@@ -10,6 +10,12 @@ export const esc = value =>
     /[&<>"']/g,
     char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]
   );
+// For input values and other places where empty must stay empty (esc shows "—").
+export const escValue = value =>
+  (value === null || value === undefined ? '' : String(value)).replace(
+    /[&<>"']/g,
+    char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]
+  );
 export const number = value => (finite(value) === null ? '—' : Number(value).toLocaleString());
 export const duration = value =>
   finite(value) === null

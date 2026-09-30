@@ -1,8 +1,8 @@
-import { requestJSON, operatorRequest } from './api.js';
+import { requestJSON, operatorRequest, newRequestId } from './api.js';
 import { esc, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
 
-const requestId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const requestId = newRequestId;
 
 export function projectListMarkup(projects) {
   if (!Array.isArray(projects) || !projects.length) return '<div class="empty">No projects yet</div>';

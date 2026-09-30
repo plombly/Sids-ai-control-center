@@ -66,6 +66,27 @@ export const operatorToken = {
   }
 };
 export const authHeaders = (token = operatorToken.get()) => (token ? { 'x-sid-token': token } : {});
+// crypto.randomUUID() only exists in secure contexts (HTTPS or localhost); the
+// dashboard is usually opened over plain http on the LAN, where it is missing.
+export const newRequestId = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+};
+
+// FastAPI validation errors carry a list of {loc, msg}; show them as text.
+export const errorMessage = (body, status) => {
+  const detail = body?.detail ?? body?.message;
+  if (Array.isArray(detail))
+    return detail
+      .map(item => [Array.isArray(item?.loc) ? item.loc.filter(part => part !== 'body').join('.') : '', item?.msg]
+        .filter(Boolean).join(': '))
+      .join('; ') || `HTTP ${status}`;
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return detail ? String(detail) : `HTTP ${status}`;
+};
+
 export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   const response = await fetchImpl(path, {
     ...options,
@@ -80,7 +101,7 @@ export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   try {
     body = await response.json();
   } catch {}
-  if (!response.ok) throw new Error(body.detail || body.message || `HTTP ${response.status}`);
+  if (!response.ok) throw new Error(errorMessage(body, response.status));
   return body;
 }
 export const fetchJobDetail = (jobId, fetchImpl = fetch) =>

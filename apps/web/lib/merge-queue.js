@@ -1,4 +1,4 @@
-import { requestJSON, jobAction } from './api.js';
+import { requestJSON, jobAction, newRequestId } from './api.js';
 import { esc, pill, text } from './format.js';
 import { registerPanel, registerClick } from './registry.js';
 
@@ -113,7 +113,7 @@ if (typeof document !== 'undefined') {
           id,
           await jobAction(id, {
             action: 'queue_approve',
-            request_id: crypto.randomUUID(),
+            request_id: newRequestId(),
             expected_status: status,
             expected_candidate: candidate
           })
@@ -147,7 +147,7 @@ if (typeof document !== 'undefined') {
             id,
             await jobAction(id, {
               action: 'queue_approve',
-              request_id: crypto.randomUUID(),
+              request_id: newRequestId(),
               expected_status: status,
               expected_candidate: candidate
             })
@@ -169,7 +169,7 @@ if (typeof document !== 'undefined') {
           id,
           await jobAction(id, {
             action: 'dequeue_approve',
-            request_id: crypto.randomUUID(),
+            request_id: newRequestId(),
             expected_status: status
           })
         )

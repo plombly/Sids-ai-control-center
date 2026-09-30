@@ -8,6 +8,7 @@ import {
   handoffText,
   jobAction,
   loadDismissals,
+  newRequestId,
   operatorRequest,
   operatorToken,
   removeWorker,
@@ -243,7 +244,7 @@ async function runJobAction(button) {
     candidate = button.dataset.candidate;
   if (operation === 'approve' && !window.confirm(`Approve candidate ${candidate} for job ${jobId}?`)) return;
   button.disabled = true;
-  const request_id = crypto.randomUUID(),
+  const request_id = newRequestId(),
     body = {
       action: operation,
       request_id,
@@ -376,7 +377,7 @@ if (typeof document !== 'undefined') {
       result = document.getElementById('goal-result'),
       button = event.target.querySelector('button[type="submit"]');
     state.goalSubmission.pending = true;
-    state.goalSubmission.requestId = state.goalSubmission.requestId || crypto.randomUUID();
+    state.goalSubmission.requestId = state.goalSubmission.requestId || newRequestId();
     button.disabled = true;
     result.textContent = 'Submitting…';
     uiAction(

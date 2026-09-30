@@ -1,5 +1,5 @@
-import { requestJSON, operatorRequest } from './api.js';
-import { esc, pill, text } from './format.js';
+import { requestJSON, operatorRequest, newRequestId } from './api.js';
+import { esc, escValue, pill, text } from './format.js';
 import { registerClick, onRoute } from './registry.js';
 
 const STEP_LABELS = ['Name', 'Starting point', 'Importance', 'Extras', 'Review'];
@@ -47,7 +47,7 @@ export function buildCreateBody(state) {
     name: String(state.name || '').trim(),
     importance: state.importance,
     source: state.source,
-    request_id: state.requestId || globalThis.crypto?.randomUUID?.()
+    request_id: state.requestId || newRequestId()
   };
   if (state.source === 'clone') body.url = String(state.url || '').trim();
   if (String(state.push_remote || '').trim()) body.push_remote = String(state.push_remote).trim();
@@ -64,10 +64,10 @@ export function wizardStepsMarkup(step) {
 }
 
 const field = (label, name, value, options = {}) =>
-  `<label class="field">${esc(label)}<input name="${esc(name)}" value="${esc(value)}"${options.placeholder ? ` placeholder="${esc(options.placeholder)}"` : ''}${options.maxlength ? ` maxlength="${esc(options.maxlength)}"` : ''}></label>${options.hint ? `<span class="field-hint">${options.hint}</span>` : ''}`;
+  `<label class="field">${esc(label)}<input name="${esc(name)}" value="${escValue(value)}"${options.placeholder ? ` placeholder="${esc(options.placeholder)}"` : ''}${options.maxlength ? ` maxlength="${esc(options.maxlength)}"` : ''}></label>${options.hint ? `<span class="field-hint">${options.hint}</span>` : ''}`;
 
 const choice = (type, value, label, hint, selected) =>
-  `<button type="button" class="choice${selected ? ' selected' : ''}" data-wizard-choice="${esc(type)}" data-value="${esc(value)}">${esc(label)}<small>${esc(hint)}</small></button>`;
+  `<button type="button" class="choice${selected ? ' selected' : ''}" data-wizard-choice="${esc(type)}" data-value="${escValue(value)}">${esc(label)}<small>${esc(hint)}</small></button>`;
 
 export function stepMarkup(step, state = {}) {
   if (step === 1) {
@@ -164,7 +164,7 @@ const retry = async () => {
   state.error = 'Setting up your project…';
   render();
   try {
-    const response = await requestJSON(`/api/projects/${encodeURIComponent(state.id)}/retry-clone`, { method: 'POST', body: JSON.stringify({ request_id: globalThis.crypto?.randomUUID?.() }) });
+    const response = await requestJSON(`/api/projects/${encodeURIComponent(state.id)}/retry-clone`, { method: 'POST', body: JSON.stringify({ request_id: newRequestId() }) });
     state.result = await poll(response.request_id);
   } catch (error) {
     state.result = { status: 'error', message: error.message };
@@ -189,7 +189,7 @@ registerClick('wizardNext', () => {
 registerClick('wizardBack', () => {
   if (state.result) {
     state.result = null;
-    state.requestId = globalThis.crypto?.randomUUID?.();
+    state.requestId = newRequestId();
     state.step = 5;
     render();
     return;
@@ -212,7 +212,7 @@ onRoute(async route => {
   if (!entering) { active = false; return; }
   if (active) return;
   active = true;
-  state = { step: 1, importance: 'medium', source: '', existingIds: [], requestId: globalThis.crypto?.randomUUID?.() };
+  state = { step: 1, importance: 'medium', source: '', existingIds: [], requestId: newRequestId() };
   if (typeof document === 'undefined') return;
   root = document.getElementById('projects-root');
   if (!root) return;
