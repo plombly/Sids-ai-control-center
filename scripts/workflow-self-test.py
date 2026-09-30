@@ -514,6 +514,33 @@ def test_exact_approval_behavior():
     finally:
         td.cleanup()
 
+def test_global_approval_lock_contract():
+    """Different jobs must serialize advancement of the shared main branch."""
+    review_script = (Path(__file__).resolve().parent / "job-review.py").read_text()
+
+    assert 'lock_key = "sid:approval-lock:main"' in review_script, (
+        "approval must use one repository-wide main lock"
+    )
+    assert 'f"sid:approval-lock:{job_id}"' not in review_script, (
+        "per-job approval lock does not serialize different jobs"
+    )
+
+    approve_start = review_script.index("def approve(job_id):")
+    unlocked_start = review_script.index("def _approve_unlocked(job_id):")
+    approve_body = review_script[approve_start:unlocked_start]
+
+    assert "_approve_unlocked(job_id)" in approve_body
+    assert "release_approval_lock(lock_key, token)" in approve_body
+
+    unlocked_body = review_script[unlocked_start:]
+    stale_check = unlocked_body.index("if current_main != base_commit:")
+    merge_call = unlocked_body.index('"merge",', stale_check)
+
+    assert stale_check < merge_call, (
+        "stale-main validation must occur before main advancement"
+    )
+
+
 def main():
     tests = [
         test_approval_review_gate,
@@ -529,6 +556,7 @@ def main():
         test_integrated_commit_binding_behavior,
         test_stale_main_refusal_behavior,
         test_exact_approval_behavior,
+        test_global_approval_lock_contract,
     ]
     for test in tests:
         test()

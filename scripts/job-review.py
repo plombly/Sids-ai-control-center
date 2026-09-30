@@ -105,10 +105,14 @@ def release_approval_lock(lock_key, token):
 
 
 def approve(job_id):
-    lock_key = f"sid:approval-lock:{job_id}"
+    # Approval advances the shared main branch, so this lock must be
+    # repository-wide rather than per job. Holding it across validation
+    # and merge makes the integration-base check and main advancement
+    # one serialized operation.
+    lock_key = "sid:approval-lock:main"
     token = uuid.uuid4().hex
     if not r.set(lock_key, token, nx=True, ex=300):
-        fail(f"Job {job_id} approval is already in progress")
+        fail("another approval is already advancing main")
     try:
         _approve_unlocked(job_id)
     finally:
