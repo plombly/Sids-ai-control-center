@@ -11,7 +11,10 @@ import termios
 import time
 import tty
 from contextlib import contextmanager, redirect_stdout
+from pathlib import Path
 from io import StringIO
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 try:
     import redis
@@ -24,7 +27,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 REVIEW_SCRIPT = "scripts/job-review.py"
 
-r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+r = redis.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
 
 _previous_frame = None
 

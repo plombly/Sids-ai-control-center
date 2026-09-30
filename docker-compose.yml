@@ -22,13 +22,18 @@ services:
     image: redis:8-alpine
     container_name: sid-ai-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # Password: REDIS_PASSWORD from the root-only /etc/sid-ai/redis.env
+    # (scripts/enable-redis-password.sh). Without the file, no password.
+    env_file:
+      - path: /etc/sid-ai/redis.env
+        required: false
+    command: ["sh", "-c", 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}']
     volumes:
       - ./data/redis:/data
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", 'if [ -n "$$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$REDIS_PASSWORD"; fi; redis-cli ping | grep -q PONG']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -47,6 +52,8 @@ services:
     # outside the repo). Absent file: writes stay open, Web approve refused.
     env_file:
       - path: /etc/sid-ai/operator.env
+        required: false
+      - path: /etc/sid-ai/redis.env
         required: false
     depends_on:
       postgres:

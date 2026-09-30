@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 
 PROJECT_SET = "sid:projects"
@@ -27,7 +29,7 @@ def get_redis():
     import redis
     return redis.Redis.from_url(
         os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
-        decode_responses=True,
+        password=sid_redis.password(), decode_responses=True,
     )
 
 

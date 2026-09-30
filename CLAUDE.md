@@ -36,7 +36,7 @@ Runtime (all live, all as root):
 | Orchestrator unit | `sid-ai-orchestrator.service` (`sid-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
 | Worker units | `sid-ai-worker@01..06.service` (+ drop-in `sid-python.conf` setting SID_PYTHON) |
 | Operator unit | `sid-ai-operator.service`; template in `services/operator/`, installing it is SID's call |
-| Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `docker exec sid-ai-redis redis-cli ...` |
+| Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `scripts/sid-redis-cli ...`. Password (once `scripts/enable-redis-password.sh` ran): `REDIS_PASSWORD` in root-only `/etc/sid-ai/redis.env`, read by `services/sid_redis.py` in every host program and by compose for redis/api; never print it |
 | Postgres | Docker `sid-ai-postgres` (only used by projects/tasks/agents API) |
 | Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
 | Claude CLI | `claude` 2.1.285, claude.ai subscription login (shares plan limits with interactive sessions) |
@@ -70,7 +70,7 @@ Operator actions: `sid:operator-requests` (STREAM, consumer group `sid-operator`
 4. **Deploying is SID's call.** Propose, don't do: merging to main
    (`git merge --ff-only dev/claude` in the live tree), restarting units, or
    rebuilding containers. Before any restart, confirm no worker is busy
-   (`docker exec sid-ai-redis redis-cli hget sid:workers:sid-worker-0N status`
+   (`scripts/sid-redis-cli hget sid:workers:sid-worker-0N status`
    is not `working`). Restarting a worker mid-job kills that job.
    Workers/orchestrator need a restart for `services/` changes; api/web need
    `docker compose up -d --build api web` for `apps/` changes;

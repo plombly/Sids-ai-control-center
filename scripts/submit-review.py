@@ -6,7 +6,11 @@ import os
 import time
 import uuid
 
+import sys
+from pathlib import Path
 import redis
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,7 +32,7 @@ def main():
 
     r = redis.Redis.from_url(
         "redis://127.0.0.1:6379/0",
-        decode_responses=True,
+        password=sid_redis.password(), decode_responses=True,
     )
 
     builder_key = f"sid:jobs:{args.builder_job_id}"

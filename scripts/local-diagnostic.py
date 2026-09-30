@@ -11,6 +11,9 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
+
 
 REPO = Path(os.getenv("REPO_ROOT", Path(__file__).resolve().parent.parent))
 REDIS_HOST = "127.0.0.1"
@@ -53,6 +56,7 @@ def check_redis():
         client = redis.Redis(
             host=REDIS_HOST,
             port=int(REDIS_PORT),
+            password=sid_redis.password(),
             socket_connect_timeout=5,
             socket_timeout=5,
         )

@@ -36,6 +36,13 @@ BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/sid-ai/snapshots"))
 SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 KEEP = int(os.getenv("BACKUP_KEEP", "14"))
 REDIS_CONTAINER = os.getenv("REDIS_CONTAINER", "sid-ai-redis")
+# redis-cli inside the container, authenticated with the container's own
+# REDIS_PASSWORD (docker-compose env_file), so it never appears in argv.
+REDIS_CLI_SH = 'if [ -n "$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$REDIS_PASSWORD"; fi; exec redis-cli "$@"'
+
+
+def redis_cli(*args):
+    return ["docker", "exec", REDIS_CONTAINER, "sh", "-c", REDIS_CLI_SH, "redis-cli", *args]
 POSTGRES_CONTAINER = os.getenv("POSTGRES_CONTAINER", "sid-ai-postgres")
 BACKUP_REMOTE = os.getenv("BACKUP_REMOTE", "")
 # Off-host copy of the code: push these branches to this git remote (e.g.
@@ -76,7 +83,7 @@ def backup_repo(dest):
 def backup_redis(dest):
     # --rdb asks the server for a fresh RDB snapshot and writes it client-side.
     inside = "/tmp/sid-backup.rdb"
-    result = run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "--rdb", inside])
+    result = run(redis_cli("--rdb", inside))
     if result.returncode != 0:
         raise RuntimeError(f"redis dump failed: {(result.stderr or result.stdout).strip()}")
     target = dest / "redis.rdb"
@@ -135,7 +142,7 @@ def rotate(root, keep):
 
 def record_status(status):
     """Best effort: let the watchdog and dashboard see when backups last ran."""
-    run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "SET", LAST_BACKUP_KEY, json.dumps(status)])
+    run(redis_cli("SET", LAST_BACKUP_KEY, json.dumps(status)))
 
 
 def main():

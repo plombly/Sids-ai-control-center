@@ -22,10 +22,11 @@ WORKTREE_ROOT = Path(
 
 JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 
-r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
+
+r = redis.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
 
 # The project the current action works on. SID's paths are the module
 # settings above; any other project's repository and worktrees are swapped

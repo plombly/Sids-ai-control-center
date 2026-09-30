@@ -17,7 +17,10 @@ import sys
 import time
 import urllib.request
 
+from pathlib import Path
 import redis as redis_lib
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 REPO_ROOT = os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")
@@ -240,7 +243,7 @@ def publish(r, report):
 
 
 def main():
-    r = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
+    r = redis_lib.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
     report = run_checks(r)
     try:
         for line in publish(r, report):

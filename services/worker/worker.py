@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = os.environ.get("WORKER_QUEUE", "sid:jobs")
@@ -76,7 +77,7 @@ def efficiency_prefix(role):
 
 """
 
-redis = Redis.from_url(REDIS_URL, decode_responses=True)
+redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
 
 # The job this process is working on, published in every heartbeat. The
 # orchestrator treats work as in flight only while a live worker holds it

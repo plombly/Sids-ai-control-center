@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -42,7 +43,7 @@ MAX_REVIEW_RECOVERIES = int(os.getenv("MAX_REVIEW_RECOVERIES", "2"))
 # (across loop passes) before it is declared lost.
 LOST_CONFIRM_SECONDS = int(os.getenv("LOST_JOB_CONFIRM_SECONDS", "60"))
 
-r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+r = redis.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
 
 
 def now():

@@ -47,7 +47,8 @@ async def require_operator_token(request: Request, call_next):
 
 
 engine = create_engine(DATABASE_URL)
-redis = Redis.from_url(REDIS_URL, decode_responses=True)
+# REDIS_PASSWORD comes from /etc/sid-ai/redis.env (docker-compose env_file).
+redis = Redis.from_url(REDIS_URL, password=os.environ.get("REDIS_PASSWORD") or None, decode_responses=True)
 
 API_DEFAULT_LIMIT = 8
 API_MAX_LIMIT = 100

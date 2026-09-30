@@ -40,6 +40,8 @@ from pathlib import Path
 
 from redis import Redis
 from redis.exceptions import ResponseError
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,7 +96,7 @@ ALLOWED_ACTIONS = parse_allowed_actions(
 )
 REQUEST_TTL = int(os.getenv("OPERATOR_REQUEST_TTL", "600"))
 
-redis = Redis.from_url(REDIS_URL, decode_responses=True)
+redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
 
 
 def load_job_review():

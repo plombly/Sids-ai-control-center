@@ -10,6 +10,8 @@ import stat
 import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 
 PRUNABLE_STATUSES = {
@@ -160,7 +162,7 @@ def main(argv=None, redis_client=None) -> int:
 
         redis_client = redis.Redis.from_url(
             os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
-            decode_responses=True,
+            password=sid_redis.password(), decode_responses=True,
         )
     prune(args.log_root, args.days, redis_client, args.apply)
     return 0
