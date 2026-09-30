@@ -204,12 +204,15 @@ def _worker(key, data, jobs):
     matches = [job for job in jobs if job["worker"] == worker_id]
     active = [job for job in matches if job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
     job = max(active or matches, key=lambda item: (item["sort_time"], item["id"]), default={})
+    active_job = max(active, key=lambda item: (item["sort_time"], item["id"]), default={})
     job_data = _hash(f"sid:jobs:{job.get('id')}") if job else {}
     merged = {**data, **job_data}
     return {
         "id": worker_id,
         "role": _text(data.get("role", data.get("job_role")), job.get("role")),
+        # Keep latest-job telemetry, while exposing an unambiguous busy signal.
         "job_id": _text(data.get("job_id", data.get("current_job_id", data.get("active_job_id"))), job.get("id")),
+        "active_job_id": active_job.get("id"),
         "status": _text(data.get("status"), job.get("status"),),
         "provider": _text(data.get("provider"), job.get("provider")),
         "model": _text(data.get("model"), job.get("model")),
@@ -384,7 +387,11 @@ def api_failures(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _BUSY_WORKER_STATUSES = {"working", "busy", "claimed", "running", "active", "stopping"}
-_REDACT_KEY = re.compile(r"(password|passwd|secret|token|credential|api.?key|private.?key|authorization|cookie)", re.I)
+_REDACT_KEY = re.compile(
+    r"(?:password|passwd|secret|credential|api.?key|private.?key|authorization|cookie|"
+    r"(?:api|access|refresh|id|auth|bearer|session)[_-]?token|(?<![A-Za-z0-9_])token(?![A-Za-z0-9_]))",
+    re.I,
+)
 _REDACT_VALUE = re.compile(
     r"(?is)(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|"
     r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{8,}|"
