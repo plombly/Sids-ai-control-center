@@ -202,8 +202,11 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
             )
         except OSError as exc:  # executable missing mid-update
             return ClaudeRun(127, time.time() - started, None, raw_tail=f"{exc}")
-        process.stdin.write(prompt)
-        process.stdin.close()
+        try:
+            process.stdin.write(prompt)
+            process.stdin.close()
+        except BrokenPipeError:
+            pass  # exited before reading the prompt (e.g. mid-update); its status tells why
         while process.poll() is None:
             if tick:
                 try:
