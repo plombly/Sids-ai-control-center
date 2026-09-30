@@ -291,11 +291,11 @@ def _prepare_integration_locked(job_id, key):
         return False
 
 
-def create_worktree(job_id):
+def create_worktree(job_id, suffix=""):
     WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
 
-    branch = f"sid/job-{job_id}"
-    path = WORKTREE_ROOT / f"job-{job_id}"
+    branch = f"sid/job-{job_id}{suffix}"
+    path = WORKTREE_ROOT / f"job-{job_id}{suffix}"
 
     # A retried or orphaned build leaves this job's own worktree and branch
     # behind. Once the job is claimed again they are stale by definition.
@@ -533,6 +533,141 @@ def run_review_aspects(job, worktree, log_path, timeout):
     combined = agent_cli.combined_review_result(runs, verdicts)
     log_path.write_text(json.dumps(combined))
     return agent_cli.ClaudeRun(0, max(r.duration for r in runs.values()), combined)
+
+
+# --- best-of-N builds -------------------------------------------------------------
+#
+# A build that already failed once is built again by the configured builder
+# AND by the other provider in parallel, in separate worktrees. Each result
+# goes through the test gate; the winner must pass, then the smaller change
+# wins (ties: the configured builder). The winning change is applied to the
+# job's normal worktree, so integration and review are unchanged.
+
+BEST_OF_FROM_ATTEMPT = int(os.environ.get("BEST_OF_FROM_ATTEMPT", "2"))
+
+
+def best_of_enabled(job):
+    if BEST_OF_FROM_ATTEMPT <= 0 or job.get("role", "builder") != "builder":
+        return False
+    attempt = redis.hget(f"sid:jobs:{job['id']}", "build_attempt") or job.get("build_attempt") or "1"
+    try:
+        return int(attempt) >= BEST_OF_FROM_ATTEMPT
+    except ValueError:
+        return False
+
+
+def change_size(worktree):
+    """Lines added + removed, untracked files included (stages everything)."""
+    run_git("add", "-A", cwd=worktree)
+    total = 0
+    for line in run_git("diff", "--cached", "--numstat", cwd=worktree).stdout.splitlines():
+        added, removed = (line.split("\t") + ["0", "0"])[:2]
+        total += (int(added) if added.isdigit() else 0) + (int(removed) if removed.isdigit() else 0)
+    return total
+
+
+def run_alternate_builder(job, provider, worktree, log_path, timeout):
+    """(ok, duration, cost_usd, model) for the alternate provider's build."""
+    started = time.time()
+    if provider == "claude":
+        model = agent_cli.claude_model("builder")
+        run = agent_cli.run_claude(
+            "builder", efficiency_prefix("builder") + job["prompt"], worktree, log_path, timeout,
+            model=model, allowed_bash=repair_allowed_bash(), tick=lambda: heartbeat("working"))
+        cost = agent_cli.claude_usage(run.result)["cost_usd"] if run.result else ""
+        return run.ok, run.duration, cost, model
+    returncode, duration = run_codex({**job, "role": "builder"}, worktree, log_path)
+    return returncode == 0, duration, "", job.get("model", DEFAULT_MODEL)
+
+
+def run_best_of(job, worktree, log_path):
+    """Build with both providers in parallel; keep the better passing change
+    in `worktree`. Returns (returncode, duration) like run_agent."""
+    job_id = str(job["id"])
+    key = f"sid:jobs:{job_id}"
+    primary_provider = agent_cli.role_provider("builder")
+    alt_provider = "codex" if primary_provider == "claude" else "claude"
+    timeout = int(job.get("timeout_seconds") or role_limit(
+        "builder", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
+    slot = f"job:{job_id}:alt"
+    if alt_provider == "claude" and (
+        agent_cli.claude_cooling_down(redis)
+        or not agent_cli.wait_for_claude_slot(redis, slot, timeout + 120, 60,
+                                              tick=lambda: heartbeat("working"))
+    ):
+        redis.hset(key, "best_of", json.dumps({"skipped": "claude unavailable or at capacity"}))
+        return run_agent(job, worktree, log_path)
+
+    _, alt_worktree = create_worktree(job_id, "-alt")
+    alt_log = log_path.with_name(f"{log_path.stem}.alt{log_path.suffix}")
+    results = {}
+
+    def primary():
+        try:
+            results["primary"] = run_agent(job, worktree, log_path)
+        except Exception as exc:
+            results["primary_error"] = str(exc)
+
+    def alternate():
+        try:
+            results["alt"] = run_alternate_builder(job, alt_provider, alt_worktree, alt_log, timeout)
+        except Exception as exc:
+            results["alt_error"] = str(exc)
+
+    try:
+        threads = [threading.Thread(target=primary, daemon=True),
+                   threading.Thread(target=alternate, daemon=True)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        if alt_provider == "claude":
+            agent_cli.release_claude_slot(redis, slot)
+
+    report = {"primary": {"provider": primary_provider}, "alt": {"provider": alt_provider}}
+    candidates = {}
+    if "primary" in results and results["primary"][0] == 0:
+        candidates["primary"] = worktree
+    else:
+        report["primary"]["error"] = results.get("primary_error", "agent failed")
+    alt = results.get("alt")
+    if alt and alt[0]:
+        candidates["alt"] = alt_worktree
+        report["alt"].update(model=alt[3], cost_usd=alt[2])
+    else:
+        report["alt"]["error"] = results.get("alt_error", "agent failed")
+    for name, path in candidates.items():
+        tests_ok, _ = run_tests(path)
+        report[name].update(tests=tests_ok, lines=change_size(path) if tests_ok else None)
+    passing = [n for n in ("primary", "alt") if report[n].get("tests")]
+    chosen = min(passing, key=lambda n: (report[n]["lines"] or 0, n != "primary")) if passing else "primary"
+    report["chosen"] = chosen
+
+    try:
+        if chosen == "alt":
+            patch = run_git("diff", "--cached", "--binary", cwd=alt_worktree).stdout
+            run_git("reset", "--hard", "HEAD", cwd=worktree)
+            run_git("clean", "-fd", cwd=worktree)
+            applied = subprocess.run(["git", "apply", "--binary", "--index", "-"], cwd=worktree,
+                                     input=patch, text=True, capture_output=True)
+            if applied.returncode != 0:
+                raise RuntimeError(f"could not apply the alternate build: {applied.stderr.strip()}")
+            run_git("reset", "-q", cwd=worktree)  # leave changes unstaged, as a builder would
+            redis.hset(key, mapping={"provider": alt_provider, "model": report["alt"].get("model", "")})
+        elif chosen == "primary":
+            run_git("reset", "-q", cwd=worktree)
+    finally:
+        redis.hset(key, mapping={"best_of": json.dumps(report), "updated_at": str(time.time())})
+        run_git("worktree", "remove", "--force", str(alt_worktree), check=False)
+        run_git("branch", "-D", f"sid/job-{job_id}-alt", check=False)
+    print(f"[{WORKER_ID}] job={job_id} best-of: {json.dumps(report)}", flush=True)
+
+    if chosen == "primary" and "primary" not in candidates:
+        if "primary" in results:
+            return results["primary"]
+        raise RuntimeError(f"best-of build failed: {report}")
+    return 0, max(results.get("primary", (0, 0))[1], (alt or (0, 0))[1])
 
 
 def run_agent(job, worktree, log_path):
@@ -1434,7 +1569,10 @@ def _process_job(raw_job):
             },
         )
 
-        returncode, duration = run_agent(job, worktree, log_path)
+        if best_of_enabled(job):
+            returncode, duration = run_best_of(job, worktree, log_path)
+        else:
+            returncode, duration = run_agent(job, worktree, log_path)
         session_id, usage = parse_codex_log(log_path)
 
         redis.hset(
