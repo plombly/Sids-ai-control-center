@@ -206,15 +206,15 @@ job `17b11696` was hand-salvaged. What exists vs missing:
   - Dismiss is in-memory only.
   - List endpoints default to 8 items, so history silently truncates.
   - Repository panel is always "unknown" (API container has no git).
-  - Handoff `_redact` blanks token-usage counters: any key containing
-    `token` is treated as a secret. Distinguish credentials from usage numbers.
 - Missing: Web approve/reject/extend/reintegrate/reopen buttons (the backend
   for them is Plan A), add worker,
   queue management, goal/job drill-down UI, persisted command/tool events,
   prompts in UI, reviewer findings in UI, provider controls, auth.
-- `apps/web/app.js` is minified single-line JS. Readable code is fine and
-  preferred for anything you rewrite, but keep it dependency-free and keep
-  `apps/web/app.test.js` passing (the gate runs it).
+- `apps/web/app.js` / `styles.css` were reformatted with prettier (print width
+  120, single quotes in JS). Keep them readable and dependency-free, and keep
+  `apps/web/app.test.js` passing (the gate runs it). Mechanical rewrites belong
+  to a deterministic tool, not a builder agent: an agent reformat (job d14f4ccc)
+  changed string literals twice and was rejected.
 
 ## Plan (in order)
 
