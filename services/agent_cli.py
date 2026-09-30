@@ -97,7 +97,7 @@ def claude_budget(role):
     return float(os.getenv(f"CLAUDE_{role.upper()}_BUDGET_USD") or DEFAULT_CLAUDE_BUDGET_USD[role])
 
 
-def claude_command(role, model, budget_usd, allowed_bash=()):
+def claude_command(role, model, budget_usd, allowed_bash=(), tools=None):
     command = [
         "claude", "-p",
         "--output-format", "json",
@@ -107,7 +107,9 @@ def claude_command(role, model, budget_usd, allowed_bash=()):
         "--max-budget-usd", f"{budget_usd:.2f}",
         "--append-system-prompt", AGENT_CONTRACT,
     ]
-    if role in ("planner", "reviewer"):
+    if tools is not None:
+        command += ["--tools", tools]  # explicit ("" = no tools: answer from the prompt)
+    elif role in ("planner", "reviewer"):
         command += ["--tools", READ_ONLY_TOOLS]
     else:
         command += ["--tools", EDIT_TOOLS, "--permission-mode", "acceptEdits"]
@@ -159,12 +161,13 @@ class ClaudeRun:
 
 
 def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None,
-               allowed_bash=(), tick=None):
+               allowed_bash=(), tick=None, tools=None):
     """Run `claude -p` for one role. The JSON result is written to log_path."""
     command = claude_command(
         role, model or claude_model(role),
         claude_budget(role) if budget_usd is None else budget_usd,
         allowed_bash,
+        tools,
     )
     env = {**os.environ, "HOME": os.environ.get("HOME") or "/root"}
     started = time.time()

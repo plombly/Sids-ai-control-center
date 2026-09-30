@@ -541,6 +541,7 @@ def test_rebase_check_is_one_cheap_fresh_review(worker, tmp_path, monkeypatch, f
     worker.run_agent(job("reviewer", rebase_check=True), tmp_path, tmp_path / "rv.json")
     [call] = fake_claude()
     assert flag(call["argv"], "--model") == "claude-haiku-4-5-20251001"
+    assert flag(call["argv"], "--tools") == "", "no tools: one turn, no exploration"
     assert "REBASE CHECK" in call["prompt"]
     assert worker.redis.records["sid:jobs:reviewer1"]["review_kind"] == "rebase_check"
 
@@ -622,3 +623,27 @@ def test_docs_only_changes_get_the_documentation_bar(worker, tmp_path):
 def test_review_prompt_appends_docs_bar_only_for_docs():
     source = (ROOT / "services/worker/worker.py").read_text()
     assert "    if docs_only:\n        prompt += DOCS_REVIEW_BAR" in source
+
+
+
+def test_rebase_check_prompt_carries_main_changes(worker, tmp_path):
+    import subprocess as sp
+    repo = tmp_path / "m"
+    repo.mkdir()
+    g = lambda *a: sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout.strip()
+    g("init", "-q", "-b", "main")
+    (repo / "api.py").write_text("def f():\n    return 1\n")
+    g("add", "."); g("commit", "-qm", "old base")
+    old = g("rev-parse", "HEAD")
+    (repo / "api.py").write_text("def f():\n    return 2\n")
+    g("commit", "-qam", "main moved")
+    new = g("rev-parse", "HEAD")
+    worker.run_git = lambda *a, cwd=None, check=True: sp.run(["git", *a], cwd=cwd, capture_output=True, text=True)
+    packet = worker.main_changes_packet(old, new, repo)
+    assert "api.py" in packet and "+    return 2" in packet and old[:12] in packet
+
+
+def test_passing_review_records_its_base():
+    source = (ROOT / "services/worker/worker.py").read_text()
+    assert '"reviewed_base_commit": str(builder.get("integration_base_commit") or "") if verdict == "pass" else ""' in source

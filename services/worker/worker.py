@@ -762,7 +762,8 @@ def run_agent(job, worktree, log_path):
                 redis.hset(key, mapping={"model": model, "review_kind": "rebase_check"})
                 run = agent_cli.run_claude(
                     role, efficiency_prefix(role) + job["prompt"] + REBASE_CHECK_NOTE, worktree,
-                    log_path, timeout, model=model, tick=lambda: heartbeat("working"))
+                    log_path, timeout, model=model, tick=lambda: heartbeat("working"),
+                    tools="")  # one turn: everything it needs is in the prompt
             elif role == "reviewer" and len(agent_cli.review_aspects()) > 1:
                 run = run_review_aspects(job, worktree, log_path, timeout)
             else:
@@ -969,11 +970,25 @@ THIS CHANGE IS DOCUMENTATION ONLY. Use this bar instead of the code bar above:
 """
 
 
+MAIN_CHANGES_CHARS = int(os.environ.get("REBASE_MAIN_CHANGES_CHARS", "20000"))
+
+
+def main_changes_packet(old_base, new_base, worktree):
+    """What main changed between the last reviewed base and the new one."""
+    stat = run_git("diff", "--stat=200", old_base, new_base, cwd=worktree, check=False).stdout.strip()
+    diff = run_git("diff", old_base, new_base, cwd=worktree, check=False).stdout
+    if len(diff) > MAIN_CHANGES_CHARS:
+        diff = diff[:MAIN_CHANGES_CHARS] + "\n... (truncated)"
+    return (f"\nChanges on main since this change was last reviewed ({old_base[:12]}..{new_base[:12]}):\n"
+            f"{stat or '(none)'}\n\n{diff}")
+
+
 REBASE_CHECK_NOTE = (
     "\n\nREBASE CHECK: this exact change (identical patch) was already reviewed and "
-    "passed against an older main; it has been re-integrated onto the current main. "
-    "Confirm it is still correct against the new base: look only for problems the new "
-    "base introduces (conflicting behavior, broken assumptions, duplicated work). Do not "
+    "passed against an older main; it has been re-integrated onto the current main, "
+    "and the gate passed there. You have no tools: answer from this prompt alone. "
+    "Compare the change with the main changes listed above and look only for problems "
+    "those introduce (conflicting behavior, broken assumptions, duplicated work). Do not "
     "re-review the change from scratch.")
 
 
@@ -1014,6 +1029,9 @@ def queue_review_job(builder_job_id):
     patch_id = candidate_patch_id(review_base, candidate_commit, Path(worktree))
     docs_only = is_docs_only(review_base, candidate_commit, Path(worktree))
     rebase_check = bool(patch_id) and patch_id == builder.get("reviewed_patch_id")
+    main_changes = ""
+    if rebase_check and builder.get("reviewed_base_commit"):
+        main_changes = main_changes_packet(builder["reviewed_base_commit"], review_base, Path(worktree))
     gate_summary = integration_gate_summary(builder)
     prior_findings = prior_findings_packet(builder)
 
@@ -1076,6 +1094,8 @@ are no material findings, explicitly say so.
 """
     if docs_only:
         prompt += DOCS_REVIEW_BAR
+    if main_changes:
+        prompt += main_changes
 
     created_at = time.time()
 
@@ -1248,6 +1268,7 @@ def process_review_job(job, key, log_path):
     builder_update = {
         # Only a passing review vouches for this patch identity.
         "reviewed_patch_id": str(job.get("patch_id") or "") if verdict == "pass" else "",
+        "reviewed_base_commit": str(builder.get("integration_base_commit") or "") if verdict == "pass" else "",
         "review_aspects": review_aspects_json,
         "review_job_id": job_id,
         "review_status": "complete",
