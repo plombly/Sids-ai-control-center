@@ -455,3 +455,22 @@ button:hover {
 .token-form input {
   width: 180px;
 }
+.view-nav {
+  display: flex;
+  gap: 6px;
+}
+.view-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.view-nav a.active {
+  color: inherit;
+  border-color: #2a3a52;
+  background: #111a27;
+}
+[hidden] {
+  display: none !important;
+}

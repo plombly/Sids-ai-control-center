@@ -19,6 +19,7 @@ import { TERMINAL, asArray, asObject, duration, esc, number, pill, text } from '
 import { approvalMarkup, jobActionsMarkup, jobDetailMarkup, tokenStateText, workerMarkup } from './lib/markup.js';
 
 import { dispatchClick, renderPanels } from './lib/registry.js';
+import { applyRoute, currentRoute } from './lib/router.js';
 // Feature modules register panels/click handlers (see lib/registry.js).
 import './lib/features.js';
 
@@ -26,6 +27,7 @@ import './lib/features.js';
 export * from './lib/api.js';
 export * from './lib/markup.js';
 export * from './lib/registry.js';
+export * from './lib/router.js';
 
 const POLL_MS = 2000;
 const HISTORY_REFRESH_MS = 30000;
@@ -283,6 +285,8 @@ async function refreshTokenState() {
   }
 }
 if (typeof document !== 'undefined') {
+  applyRoute(currentRoute());
+  window.addEventListener('hashchange', () => applyRoute(currentRoute()));
   refreshTokenState();
   document.getElementById('token-form')?.addEventListener('submit', event => {
     event.preventDefault();

@@ -14,6 +14,10 @@
         <p class="eyebrow">SID // OPERATIONS</p>
         <h1>AI Command Center</h1>
       </div>
+      <nav class="view-nav" aria-label="Sections">
+        <a href="#/" data-nav="dashboard">Dashboard</a>
+        <a href="#/projects" data-nav="projects">Projects</a>
+      </nav>
       <form id="token-form" class="token-form" autocomplete="off">
         <input id="token-input" type="password" placeholder="Operator token" aria-label="Operator token">
         <button type="submit">Save</button>
@@ -30,14 +34,19 @@
       </div>
       <div id="job-detail-content"></div>
     </section>
+    <div id="view-projects" data-view="projects" hidden>
+    <div id="projects-root"></div>
     <section class="panel submit-panel">
-      <div class="panel-heading"><div><p class="eyebrow">INTAKE</p><h2>Submit a goal</h2></div></div>
+      <div class="panel-heading"><div><p class="eyebrow">INTAKE</p><h2>Submit a goal to SID</h2></div></div>
       <form id="goal-form" class="goal-form">
         <label class="sr-only" for="goal-input">Goal or prompt</label>
         <textarea id="goal-input" rows="3" maxlength="100000" placeholder="Describe the work to plan…" required></textarea>
         <div class="form-row"><label><input id="atomic-input" type="checkbox"> Atomic (one implementation job)</label><button type="submit">Submit goal</button><span id="goal-result" class="form-status" role="status"></span></div>
       </form>
     </section>
+    </div>
+
+    <div id="view-dashboard" data-view="dashboard">
     <section class="metric-grid" aria-label="System overview">
       <article class="metric-card accent"><span>System status</span><strong id="metric-status">—</strong><small id="metric-services">Awaiting telemetry</small></article>
       <article class="metric-card"><span>Repository</span><strong id="metric-branch">—</strong><small id="metric-repo">Unknown state</small></article>
@@ -55,6 +64,7 @@
       <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">JOB STREAM</p><h2>Actionable jobs</h2></div></div><div id="jobs" class="table-wrap" data-empty="No actionable jobs"></div></section>
       <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Failures & completions</h2></div><div><span class="count danger" id="failure-count">—</span><button data-dismiss-all="failures">Dismiss all shown</button></div></div><div id="failures" class="stack history" data-empty="No historical failures"></div></section>
       <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Completed work</h2></div><div class="history-controls"><span class="count" id="history-range">jobs 1-0</span><button data-history="newer">Newer</button><button data-history="older">Older</button><button data-dismiss-all="history">Dismiss all shown</button></div></div><div id="history" class="table-wrap" data-empty="No completed work"></div></section>
+    </div>
     </div>
     <footer>Read-only telemetry · refreshes every 2 seconds · <span id="poll-state">No data yet</span></footer>
   </main>

@@ -8,6 +8,13 @@
 // carrying the matching data-* attribute (dataset key in camelCase).
 export const panels = [];
 export const clickHandlers = new Map();
+export const routeHandlers = [];
+
+// onRoute(route => ...) runs on every navigation; route is
+// { view: 'dashboard' | 'projects', projectId: string | null } (see router.js).
+export const onRoute = handler => {
+  routeHandlers.push(handler);
+};
 
 export const registerPanel = renderPanel => {
   panels.push(renderPanel);
