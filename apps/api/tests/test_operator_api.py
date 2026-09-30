@@ -79,7 +79,12 @@ def fake(monkeypatch):
                   "integrated_candidate_commit": CANDIDATE},
     })
     monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "OPERATOR_TOKEN", TOKEN)
     return fake
+
+
+TOKEN = "operator-test-token"
+AUTH = {"X-SID-Token": TOKEN}
 
 
 def body(**fields):
@@ -88,8 +93,8 @@ def body(**fields):
             **fields}
 
 
-def post(client, job_id="b1", **fields):
-    return client.post(f"/api/jobs/{job_id}/actions", json=body(**fields))
+def post(client, job_id="b1", headers=AUTH, **fields):
+    return client.post(f"/api/jobs/{job_id}/actions", json=body(**fields), headers=headers)
 
 
 @pytest.mark.parametrize("fields,extra", [
@@ -203,7 +208,7 @@ def test_stream_failure_marks_request_queue_failed(client, fake):
 
 
 def test_requested_from_is_recorded_for_audit(client, fake):
-    client.post("/api/jobs/b1/actions", json=body(), headers={"X-Real-IP": "192.0.2.7"})
+    client.post("/api/jobs/b1/actions", json=body(), headers={**AUTH, "X-Real-IP": "192.0.2.7"})
     assert fake.hashes["sid:operator-results:req-00000001"]["requested_from"] == "192.0.2.7"
     assert fake.stream[0][1]["requested_from"] == "192.0.2.7"
 
@@ -243,3 +248,45 @@ def test_operator_endpoints_have_no_repository_authority():
     section = source[start:end]
     for forbidden in ("subprocess", '"git"', "rpush(", "sid:jobs:{"):
         assert forbidden not in section, forbidden
+
+
+# --- write access control ------------------------------------------------------
+
+def test_writes_need_the_operator_token(client, fake):
+    assert post(client, headers={}).status_code == 401
+    assert post(client, headers={"X-SID-Token": "wrong"}).status_code == 401
+    assert fake.stream == []
+    assert post(client).status_code == 202
+
+
+@pytest.mark.parametrize("method,path,payload", [
+    ("post", "/api/goals", {"goal": "x"}),
+    ("post", "/api/workers/w1/stop", None),
+    ("delete", "/api/workers/w1", None),
+    ("post", "/projects", {"name": "p"}),
+])
+def test_every_write_route_is_protected(client, fake, method, path, payload):
+    kwargs = {"json": payload} if payload is not None else {}
+    assert getattr(client, method)(path, **kwargs).status_code == 401
+
+
+def test_reads_stay_open(client, fake):
+    assert client.get("/api/operator/status").status_code == 200
+    assert client.get("/api/jobs").status_code == 200
+
+
+def test_auth_status_reports_requirement_and_validity(client, fake, monkeypatch):
+    assert client.get("/api/auth").json() == {"token_required": True, "token_valid": False}
+    assert client.get("/api/auth", headers=AUTH).json() == {"token_required": True, "token_valid": True}
+    monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
+    assert client.get("/api/auth", headers=AUTH).json() == {"token_required": False, "token_valid": False}
+
+
+def test_web_approval_is_refused_without_a_configured_token(client, fake, monkeypatch):
+    monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
+    response = post(client, headers={})
+    assert response.status_code == 403
+    assert "SID_OPERATOR_TOKEN" in response.json()["detail"]
+    assert fake.stream == []
+    # Other actions keep working without a token (unchanged behavior).
+    assert post(client, headers={}, action="reject", expected_candidate=None).status_code == 202

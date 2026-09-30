@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
+  authHeaders,
+  operatorToken,
+  requestJSON,
+  tokenStateText,
   ENDPOINTS,
   fetchEndpoint,
   fetchHistoryPage,
@@ -19,6 +23,19 @@ import {
 } from './app.js';
 
 async function main() {
+  // Operator token: sent on requests when set, absent otherwise.
+  assert.deepEqual(authHeaders(''), {});
+  assert.deepEqual(authHeaders('tok'), {'x-sid-token': 'tok'});
+  assert.equal(operatorToken.get(), '');  // no localStorage under node: must not throw
+  const seen = [];
+  await requestJSON('/api/x', {method: 'POST', headers: {'x-sid-token': 'tok'}},
+    async (path, opts) => { seen.push(opts); return {ok: true, json: async () => ({})}; });
+  assert.equal(seen[0].headers['x-sid-token'], 'tok');
+  assert.equal(seen[0].headers['content-type'], 'application/json');
+  assert.equal(seen[0].method, 'POST');
+  assert.match(tokenStateText({token_required: false}), /open/);
+  assert.equal(tokenStateText({token_required: true, token_valid: true}), 'Token OK');
+  assert.match(tokenStateText({token_required: true, token_valid: false}), /needed/);
   assert.deepEqual(normalize('workers', {unexpected:true}), []);
   assert.deepEqual(normalize('workers', [null, {id:'w-1'}, {progress:null}, 'bad']), [{id:'w-1'}, {progress:null}]);
   assert.deepEqual(normalize('queue', null), {});

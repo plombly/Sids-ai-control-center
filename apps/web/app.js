@@ -59,10 +59,34 @@ export async function fetchHistoryPage(offset, fetchImpl = fetch) {
   if (!Array.isArray(body)) throw new Error('Malformed payload');
   return normalize('jobs', body);
 }
+// Operator token for writes (the API requires it when SID_OPERATOR_TOKEN is
+// set). Kept in this browser only; storage can be unavailable.
+const TOKEN_KEY = 'sid-operator-token';
+export const operatorToken = {
+  get() {
+    try {
+      return globalThis.localStorage?.getItem(TOKEN_KEY) || '';
+    } catch {
+      return '';
+    }
+  },
+  set(value) {
+    try {
+      if (value) globalThis.localStorage?.setItem(TOKEN_KEY, value);
+      else globalThis.localStorage?.removeItem(TOKEN_KEY);
+    } catch {}
+  }
+};
+export const authHeaders = (token = operatorToken.get()) => (token ? { 'x-sid-token': token } : {});
 export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   const response = await fetchImpl(path, {
-    headers: { accept: 'application/json', 'content-type': 'application/json', ...(options.headers || {}) },
-    ...options
+    ...options,
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      ...authHeaders(),
+      ...(options.headers || {})
+    }
   });
   let body = {};
   try {
@@ -414,7 +438,26 @@ async function runJobAction(button) {
     button.disabled = false;
   }
 }
+export const tokenStateText = auth =>
+  !auth?.token_required ? 'Writes open (no token set on server)' : auth.token_valid ? 'Token OK' : 'Token needed for actions';
+async function refreshTokenState() {
+  const node = document.getElementById('token-state');
+  if (!node) return;
+  try {
+    node.textContent = tokenStateText(await requestJSON('/api/auth', { method: 'GET' }));
+  } catch (error) {
+    node.textContent = error.message;
+  }
+}
 if (typeof document !== 'undefined') {
+  refreshTokenState();
+  document.getElementById('token-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const input = document.getElementById('token-input');
+    operatorToken.set(input.value.trim());
+    input.value = '';
+    refreshTokenState();
+  });
   render();
   poll();
   loadHistoryPage();

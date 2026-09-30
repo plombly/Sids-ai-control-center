@@ -1,3 +1,4 @@
+import hmac
 import json
 import io
 import math
@@ -9,7 +10,7 @@ import uuid
 import zipfile
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import create_engine, text
 from redis import Redis
 import os
@@ -24,6 +25,27 @@ app = FastAPI(
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
+
+# Write access control. When SID_OPERATOR_TOKEN is set (host file
+# /etc/sid-ai/operator.env via docker-compose), every request that can change
+# state must carry it in X-SID-Token. Reads stay open. Web approval is only
+# accepted when a token is configured.
+OPERATOR_TOKEN = os.environ.get("SID_OPERATOR_TOKEN", "")
+_READ_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _token_ok(request):
+    supplied = request.headers.get("x-sid-token", "")
+    return bool(OPERATOR_TOKEN) and hmac.compare_digest(supplied, OPERATOR_TOKEN)
+
+
+@app.middleware("http")
+async def require_operator_token(request: Request, call_next):
+    if OPERATOR_TOKEN and request.method not in _READ_METHODS and not _token_ok(request):
+        return JSONResponse(status_code=401, content={
+            "detail": "Operator token required: enter it in the dashboard (X-SID-Token)"})
+    return await call_next(request)
+
 
 engine = create_engine(DATABASE_URL)
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
@@ -786,6 +808,12 @@ def _operator_result(data):
     )})
 
 
+@app.get("/api/auth")
+def auth_status(request: Request):
+    """Whether writes need a token, and whether the caller's token is valid."""
+    return {"token_required": bool(OPERATOR_TOKEN), "token_valid": _token_ok(request)}
+
+
 @app.get("/api/operator/status")
 def operator_status():
     service = _operator_service()
@@ -830,6 +858,10 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
     allowed = _text(service.get("allowed_actions"), "").split(",")
     if payload.action not in allowed:
         raise HTTPException(status_code=403, detail=f"Action {payload.action} is disabled on the host (OPERATOR_ALLOWED_ACTIONS)")
+    # Advancing main from the Web is never accepted from an open API, even
+    # if the host enabled it.
+    if payload.action == "approve" and not OPERATOR_TOKEN:
+        raise HTTPException(status_code=403, detail="Web approval requires SID_OPERATOR_TOKEN on the API")
 
     # Early feedback only; the operator service re-checks at execution time.
     _, job = _job_record(job_id)

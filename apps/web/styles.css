@@ -446,3 +446,12 @@ button:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.token-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.token-form input {
+  width: 180px;
+}
