@@ -150,6 +150,35 @@ Self-healing (orchestrator loop; approval is never automatic):
   then `needs_human` (`needs_human_kind=review`).
 - A failed repair resets the builder worktree to the committed candidate.
 
+Projects (2026-09-30): fully separated repositories sharing only the workers.
+- Registry: Redis hash sid:projects:<id> + set sid:projects, managed by
+  scripts/sid-project.py (create --empty|--clone URL, register-existing,
+  retry-clone, push-setup, set-importance, archive, list). Roots under
+  /opt/sid-projects/<id>/{repo,worktrees,logs}; per-project deploy key.
+  SID itself is project "sid" (its paths, gate and Redis key names never
+  come from the registry). services/sid_projects.py resolves a project;
+  an unknown project is an error, never a fallback to SID.
+- Every job carries project_id (reviews/repairs/integrations inherit it
+  from their builder). Worker switches repo/worktree/log roots per job;
+  job-review.py actions run inside the job's project; approval lock, merge
+  queue and main-head are per project (SID keeps sid:merge-queue etc.).
+- Non-SID gates: the project's gate_command, run with SID's venv first on
+  PATH, bytecode/pytest caches off, and every untracked file the gate
+  created removed afterwards (by exact path) so nothing leaks into
+  candidates or makes integrated worktrees look modified.
+- Web: #/ dashboard (health, per-project progress, approvals, workers),
+  #/projects list + create, #/projects/<id> with its own prompt input,
+  importance, GitHub push setup. Creation/clone/push-setup go through the
+  operator service (actions create_project, project_retry_clone,
+  project_push_setup), which runs sid-project.py on the host.
+- Scheduler: workers rank ready jobs by project importance (6 general
+  workers: high>medium>low; workers 07-08 WORKER_CLASS=support:
+  medium>low>high), then in-flight work, then least remaining effort
+  (planner sizes S/M/L = 1/3/8, sid:project-stats:<id>) minus aging, then
+  age; claim by LREM. Re-ranked every pick; never preempts.
+- The claude CLI self-updates (shared with interactive sessions); a missing
+  or half-installed executable is a 2-minute outage with Codex fallback.
+
 Parallelism (2026-09-30):
 - Scope scheduling: a builder holds its planner `scope` files from dispatch
   until final; overlapping jobs wait as `blocked` with `blocked_reason`,
