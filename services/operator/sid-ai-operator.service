@@ -2,8 +2,18 @@
 # Install (operator decision):
 #   cp services/operator/sid-ai-operator.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now sid-ai-operator.service
-# approve stays disabled until OPERATOR_ALLOWED_ACTIONS includes it. Enable it
-# only once the API is not reachable by people who must not approve merges.
+# Supported actions: approve merges the exact integrated candidate (ff-only);
+# queue_approve queues an approval bound to the exact source commits;
+# dequeue_approve removes a queued approval; reject, extend, reintegrate and
+# reopen behave as in scripts/job-review.py.
+# approve and queue_approve are not in the default OPERATOR_ALLOWED_ACTIONS.
+# Add them only when SID_OPERATOR_TOKEN is configured in
+# /etc/sid-ai/operator.env, because the API refuses these actions when no token
+# is configured. Also add them only once the API is not reachable by people who
+# must not approve merges. dequeue_approve is safe to enable by default because
+# it only withdraws a queued approval.
+# Example with all actions enabled:
+#   Environment=OPERATOR_ALLOWED_ACTIONS=approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen
 # job-review.py is loaded at start: restart this unit after changing it.
 [Unit]
 Description=SID AI Command Center Operator Actions
@@ -19,7 +29,7 @@ Environment=REDIS_URL=redis://127.0.0.1:6379/0
 Environment=REPO_ROOT=/opt/sids-ai-command-center
 Environment=WORKTREE_ROOT=/opt/sid-worktrees
 Environment=OPERATOR_ID=sid-operator-01
-Environment=OPERATOR_ALLOWED_ACTIONS=reject,extend,reintegrate,reopen
+Environment=OPERATOR_ALLOWED_ACTIONS=reject,extend,reintegrate,reopen,dequeue_approve
 Environment=OPERATOR_REQUEST_TTL=600
 ExecStart=/usr/bin/python3 /opt/sids-ai-command-center/services/operator/sid_operator.py
 Restart=always
