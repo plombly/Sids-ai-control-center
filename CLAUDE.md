@@ -150,6 +150,23 @@ Self-healing (orchestrator loop; approval is never automatic):
   then `needs_human` (`needs_human_kind=review`).
 - A failed repair resets the builder worktree to the committed candidate.
 
+Parallelism (2026-09-30):
+- Scope scheduling: a builder holds its planner `scope` files from dispatch
+  until final; overlapping jobs wait as `blocked` with `blocked_reason`,
+  released oldest-first. Planner scopes must list every changed file.
+- Merge queue: `queue_approve` / `job-review.py queue`; see contract item 13.
+  Operator service merges one ready job per loop; orchestrator re-integrates
+  stale queued jobs once per main commit.
+- Claude cap: `CLAUDE_MAX_CONCURRENT` (2) lease slots shared by workers and
+  planner; waiting jobs fall back to Codex after 15 min.
+- Specialist reviews: `REVIEW_ASPECTS` (spec on sonnet, safety on haiku) run
+  in parallel inside one reviewer job; all must pass.
+- Best-of: from `BEST_OF_FROM_ATTEMPT` (2) a retry builds with Codex and
+  Claude in parallel (job-<id>-alt worktree); smaller passing change wins.
+- Web: apps/web/app.js is split into lib/ modules; new features are a module
+  registering via lib/registry.js plus one import in lib/features.js, with
+  their own apps/web/<name>.test.js (the gate runs all of them).
+
 Operator commands (host):
 
 ```
