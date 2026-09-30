@@ -231,7 +231,7 @@ def run_codex_planner(goal, atomic=False):
         text=True,
         capture_output=True,
         timeout=PLAN_TIMEOUT,
-        env={**os.environ, "HOME": "/root"},
+        env={**os.environ, "HOME": os.environ.get("HOME") or "/root"},
     )
 
     if proc.returncode != 0:
