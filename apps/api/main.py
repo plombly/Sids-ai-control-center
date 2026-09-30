@@ -8,14 +8,14 @@ import time
 import uuid
 import zipfile
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, text
 from redis import Redis
 import os
 
 from database import init_database
-from schemas import GoalAccepted, GoalSubmit, PromptSubmit, WorkerAction
+from schemas import GoalAccepted, GoalSubmit, OperatorActionRequest, PromptSubmit, WorkerAction
 
 app = FastAPI(
     title="SID's AI Command Center",
@@ -653,6 +653,108 @@ def start_worker(worker_id: str):
     redis.hset(key, mapping={"status": "idle", "updated_at": str(time.time())})
     return _worker(key, {**data, "status": "idle"}, _all_jobs())
 
+
+
+# Operator actions. The API has no repository authority (no git, no
+# shell): it records a request and the host-side operator service
+# (services/operator/sid_operator.py) validates and executes it with
+# scripts/job-review.py. Nothing here writes job state.
+OPERATOR_STREAM = "sid:operator-requests"
+OPERATOR_STREAM_MAXLEN = 10000
+OPERATOR_REQUEST_FIELDS = ("request_id", "job_id", "action", "expected_status", "expected_candidate", "extra")
+_OPERATOR_JOB_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
+_OPERATOR_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+
+
+def _operator_service():
+    """The live operator heartbeat (30s TTL), or None when offline."""
+    for key in _keys("sid:operator-service:*"):
+        data = _hash(key)
+        if data:
+            return data
+    return None
+
+
+def _operator_result(data):
+    return _redact({field: _text(data.get(field), "") for field in (
+        *OPERATOR_REQUEST_FIELDS, "status", "message", "output",
+        "requested_from", "created_at", "started_at", "finished_at",
+    )})
+
+
+@app.get("/api/operator/status")
+def operator_status():
+    service = _operator_service()
+    if not service:
+        return {"online": False, "allowed_actions": []}
+    return {
+        "online": True,
+        "id": _text(service.get("id")),
+        "status": _text(service.get("status")),
+        "allowed_actions": [a for a in _text(service.get("allowed_actions"), "").split(",") if a],
+        "request_ttl": _number(service.get("request_ttl")),
+        "last_seen": _timestamp(service.get("last_seen")),
+    }
+
+
+@app.post("/api/jobs/{job_id}/actions", status_code=202)
+def request_job_action(job_id: str, payload: OperatorActionRequest, request: Request, response: Response):
+    if not _OPERATOR_JOB_ID.fullmatch(job_id):
+        raise HTTPException(status_code=422, detail="Invalid job id")
+    fields = {
+        "request_id": payload.request_id,
+        "job_id": job_id,
+        "action": payload.action,
+        "expected_status": payload.expected_status,
+        "expected_candidate": payload.expected_candidate or "",
+        "extra": str(payload.extra) if payload.extra is not None else "",
+    }
+    key = f"sid:operator-results:{payload.request_id}"
+
+    # A retried request (same id) returns its existing result, never a
+    # second execution. The same id for a different action is a conflict.
+    existing = _hash(key)
+    if existing:
+        if any(_text(existing.get(f), "") != fields[f] for f in OPERATOR_REQUEST_FIELDS):
+            raise HTTPException(status_code=409, detail="Request id already used for a different request")
+        response.status_code = 200
+        return _operator_result(existing)
+
+    service = _operator_service()
+    if not service:
+        raise HTTPException(status_code=503, detail="Operator service is offline; use scripts/job-review.py on the host")
+    allowed = _text(service.get("allowed_actions"), "").split(",")
+    if payload.action not in allowed:
+        raise HTTPException(status_code=403, detail=f"Action {payload.action} is disabled on the host (OPERATOR_ALLOWED_ACTIONS)")
+
+    # Early feedback only; the operator service re-checks at execution time.
+    _, job = _job_record(job_id)
+    if _text(job.get("status"), "") != payload.expected_status:
+        raise HTTPException(status_code=409, detail=f"Job status is now {job.get('status')!r}; refresh and decide again")
+
+    if not redis.hsetnx(key, "request_id", payload.request_id):
+        raise HTTPException(status_code=409, detail="A request with this id is already being submitted")
+    # Audit only: forwarded headers are client-controlled without auth.
+    requested_from = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    now = str(time.time())
+    redis.hset(key, mapping={**fields, "status": "pending", "requested_from": requested_from, "created_at": now})
+    try:
+        redis.xadd(OPERATOR_STREAM, {**fields, "requested_from": requested_from},
+                   maxlen=OPERATOR_STREAM_MAXLEN, approximate=True)
+    except Exception:
+        redis.hset(key, mapping={"status": "queue_failed", "message": "operator request stream is unavailable"})
+        raise HTTPException(status_code=503, detail="Operator request stream is unavailable")
+    return _operator_result(_hash(key))
+
+
+@app.get("/api/operator-requests/{request_id}")
+def get_operator_request(request_id: str):
+    if not _OPERATOR_REQUEST_ID.fullmatch(request_id):
+        raise HTTPException(status_code=422, detail="Invalid request id")
+    data = _hash(f"sid:operator-results:{request_id}")
+    if not data:
+        raise HTTPException(status_code=404, detail="Operator request not found")
+    return _operator_result(data)
 
 def _redact(value, key=""):
     if _REDACT_KEY.search(key):
