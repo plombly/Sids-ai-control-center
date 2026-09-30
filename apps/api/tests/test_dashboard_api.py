@@ -178,3 +178,52 @@ def test_failed_queue_releases_request_id_reservation(client, monkeypatch):
 
     assert response.status_code == 503
     assert fake.get("sid:goal-requests:retry-me") is None
+
+
+def test_request_id_duplicate_rejects_atomic_mode_mismatch(client, monkeypatch):
+    fake = WritableFakeRedis({
+        "sid:goals:existing": {
+            "id": "existing",
+            "goal": "original work",
+            "status": "queued",
+            "atomic": "false",
+        }
+    })
+    fake.values["sid:goal-requests:same-request"] = "existing"
+    monkeypatch.setattr(main, "redis", fake)
+
+    response = client.post(
+        "/api/goals/submit-atomic",
+        json={
+            "goal": "original work",
+            "request_id": "same-request",
+        },
+    )
+
+    assert response.status_code == 409
+
+
+def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch):
+    fake = WritableFakeRedis({
+        "sid:goals:existing": {
+            "id": "existing",
+            "goal": "original work",
+            "status": "queued",
+            "atomic": "true",
+        }
+    })
+    fake.values["sid:goal-requests:same-request"] = "existing"
+    monkeypatch.setattr(main, "redis", fake)
+
+    response = client.post(
+        "/api/goals",
+        json={
+            "goal": "original work",
+            "atomic": True,
+            "request_id": "same-request",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["id"] == "existing"
+    assert response.json()["atomic"] is True

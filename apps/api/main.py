@@ -427,7 +427,21 @@ def _submit_goal(payload):
             if not redis.set(marker, "reserved", nx=True, ex=86400):
                 existing = redis.get(marker)
                 if existing and existing != "reserved":
-                    return {"id": existing, "status": "accepted", "atomic": payload.atomic, "duplicate": True}
+                    existing_goal = _hash(f"sid:goals:{existing}")
+                    existing_atomic = str(
+                        existing_goal.get("atomic", "false")
+                    ).lower() in {"1", "true", "yes"}
+                    if existing_atomic != bool(payload.atomic):
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Request id already belongs to a goal with a different atomic mode",
+                        )
+                    return {
+                        "id": existing,
+                        "status": "accepted",
+                        "atomic": existing_atomic,
+                        "duplicate": True,
+                    }
                 raise HTTPException(status_code=409, detail="A goal with this request id is already being submitted")
         except HTTPException:
             raise
