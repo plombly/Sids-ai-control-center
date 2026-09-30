@@ -1,0 +1,217 @@
+# CLAUDE.md — SID's AI Command Center
+
+Context for Claude Code working on this repository. Read this fully before
+changing anything. The owner is SID (the operator). Ask before anything
+destructive or anything that affects the running system.
+
+## What this is
+
+A self-hosted AI software-engineering control plane on host `ai-server`:
+goals are planned into jobs, builder agents implement them in isolated Git
+worktrees, SID integrates each candidate onto the latest main in isolation,
+an independent reviewer agent reviews that exact integrated candidate, and a
+human approves before main advances.
+
+```
+apps/api/            FastAPI (Docker: sid-ai-api, :8000). Reads Redis, NO repo authority
+apps/web/            Dependency-free UI served by nginx (Docker: sid-ai-web, :8080, /api -> api)
+apps/tui/sid-tui.py  Terminal dashboard
+services/orchestrator/orchestrator.py   planning, repair dispatch, dependency release, goal state
+services/worker/worker.py               builder / reviewer / repair / integrate jobs
+scripts/job-review.py        HOST-SIDE authority: approve / reject / extend / reintegrate / reopen
+scripts/integration-check.py deterministic gate (tests, self-tests, diagnostics)
+scripts/workflow-self-test.py, efficiency-self-test.py   fast no-network contract tests
+```
+
+Runtime (all live, all as root):
+
+| Thing | Where |
+| --- | --- |
+| Live checkout (main) | `/opt/sids-ai-command-center` |
+| Job worktrees | `/opt/sid-worktrees/job-<id>` and `job-<id>-integration` |
+| Job logs | `/var/log/sid-ai/jobs/<id>.jsonl`, `<id>-tests.log`; gate reports in `/var/log/sid-ai/integration/` |
+| Test Python | `/opt/sid-venv/bin/python` (via `SID_PYTHON`; `/tmp` venv is legacy — /tmp is wiped on reboot) |
+| Orchestrator unit | `sid-ai-orchestrator.service` (`sid-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
+| Worker units | `sid-ai-worker@01..06.service` (+ drop-in `sid-python.conf` setting SID_PYTHON) |
+| Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `docker exec sid-ai-redis redis-cli ...` |
+| Postgres | Docker `sid-ai-postgres` (only used by projects/tasks/agents API) |
+| Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
+
+Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
+— never hash-command it), `sid:jobs:<id>` (hash), queues `sid:goals` / `sid:jobs`
+(lists), `sid:workers:<id>` (heartbeat hash, 30s TTL),
+`sid:worker-control:<id>` (`disabled` = stop claiming jobs),
+`sid:integration-lock:<id>`, `sid:approval-lock:main`.
+
+## Working rules (non-negotiable)
+
+1. **Never edit `/opt/sids-ai-command-center` directly.** Work in the dev
+   worktree `/opt/sid-dev` on branch `dev/claude`. The live tree must stay
+   clean: workers refuse to integrate when main is dirty, and the gate's
+   `local-diagnostic` check fails on ANY untracked file there.
+2. **Commit before running the gate.** `local-diagnostic` also requires the
+   tree it runs in to be clean, including untracked files.
+3. **Gate command** (from `/opt/sid-dev`, after committing):
+   `SID_PYTHON=/opt/sid-venv/bin/python REPO_ROOT=/opt/sid-dev python3 scripts/integration-check.py`
+   Check its exit code directly. Do not pipe it into `tail`, because the pipe
+   hides failure.
+4. **Deploying is SID's call.** Propose, don't do: merging to main
+   (`git merge --ff-only dev/claude` in the live tree), restarting units, or
+   rebuilding containers. Before any restart, confirm no worker is busy
+   (`docker exec sid-ai-redis redis-cli hget sid:workers:sid-worker-0N status`
+   is not `working`). Restarting a worker mid-job kills that job.
+   Workers/orchestrator need a restart for `services/` changes; api/web need
+   `docker compose up -d --build api web` for `apps/` changes;
+   `scripts/job-review.py` takes effect immediately.
+5. **Do not read or print secrets**: `.env`, `/root/.codex/auth.json`,
+   `/root/.claude*`, container env. Nothing here requires them.
+6. **Do not mutate Redis job/goal state by hand** except through
+   `scripts/job-review.py` or code paths under test. Failed goals are audit
+   history. Leave them.
+7. Do not give the API container repository, systemd, or shell authority.
+
+## v1.2 safety contract (preserve all of it)
+
+1. Integrate exact source candidates into an isolated worktree based on the latest clean main before review.
+2. Integration failure leaves main unchanged.
+3. Persist source candidates, integration base, exact integrated candidate, and integration result.
+4. Independent review inspects the exact integrated candidate (full `base..candidate` range).
+5. Approval requires integration PASS and independent review PASS on that exact candidate.
+6. If main changed after integration, approval refuses; recovery is reintegration + fresh review.
+7. Approval may advance main only (ff-only) to the immutable integrated candidate.
+8. No duplicate integration/review (atomic reservations: `hsetnx`, `SET NX`).
+9. Integration and approval locks are ownership-safe (compare-and-delete Lua).
+10. Bounded repair behavior and dependency handling.
+11. Human approval stays mandatory. No auto-approve, no verdict override.
+12. Host-side `scripts/job-review.py` is authoritative for final Git validation and merge.
+
+`workflow-self-test.py` and `efficiency-self-test.py` assert several of these
+by inspecting source text. If you legitimately change such code, update
+the assertion to check the NEW correct behavior. Never delete a check to
+get green.
+
+## Job lifecycle
+
+Builder: `queued|blocked` -> `claimed` -> `running` -> `testing` ->
+`awaiting_review` (candidate committed) -> integration (`integration_status`
+running/passed, or job `integration_failed`) -> review queued -> reviewer job
+`reviewing` -> `review_complete` (verdict on builder: `pass` |
+`changes_required`) -> orchestrator dispatches a repair (up to
+`max_repair_attempts`, default `MAX_REPAIR_ATTEMPTS=2`) -> repair commits onto
+the builder worktree, appends to `source_candidate_commits`, clears derived
+review/integration fields -> re-integrate -> re-review ... -> human
+`approve` -> `merged`.
+
+Terminal/failure: `failed`, `test_failed`, `integration_failed`, `rejected`,
+`blocked_failed_dependency` (cascades), legacy `repair_exhausted`.
+Non-terminal hand-off: `needs_human` (repairs exhausted; dependents wait).
+Other roles: reviewer (`review_complete`), repair (`repair_complete`),
+integrate (`integrate_complete` / `integration_failed`).
+
+Operator commands (host):
+
+```
+python3 scripts/job-review.py approve JOB
+python3 scripts/job-review.py reject JOB        # awaiting_review, needs_human, repair_exhausted, integration_failed
+python3 scripts/job-review.py extend JOB [N]    # grant N more repairs to a needs_human job
+python3 scripts/job-review.py reintegrate JOB   # fresh integration on current main + fresh review (stale recovery)
+python3 scripts/job-review.py reopen JOB        # un-block blocked_failed_dependency once deps recovered
+python3 scripts/submit-goal.py [--atomic] "GOAL"
+```
+
+## History you must know
+
+The repo was built by an automated Codex loop and "broke constantly".
+Root causes found in the audit and fixed in `b1d8a6f` (+ `50f0375`):
+
+- **Reviewers could not run tests.** Codex `read-only` sandbox has no writable
+  temp dir; pytest crashed in 30/57 reviews. Reviewers now get the gate
+  result in the prompt and are told not to run tests.
+- **Reviewers saw the wrong diff.** It was truncated at 12k chars and, on re-reviews, only
+  showed the last repair commit (`candidate^..candidate`). Now the full
+  `integration_base_commit..candidate` range is sent, per file, and omitted files are named.
+- **Goalposts moved every round.** Each fresh reviewer found new nits with no
+  memory of prior findings, so `repair_exhausted` was the expected outcome.
+  Now: prior findings (`review_findings_history`), a blocking-severity bar,
+  and `VERDICT: PASS_WITH_NOTES` (recorded as `pass`; approval contract unchanged).
+- **Exhaustion was terminal.** It is now `needs_human`, with `extend` / `reintegrate` / `reject`.
+- **Approval could strand jobs.** Merge is now recorded in Redis BEFORE best-effort cleanup.
+- **Dependency failures didn't cascade.** `blocked_failed_dependency` now counts as failed.
+- **Web Stop/Start were cosmetic.** The heartbeat overwrote them. Now there's a separate control key.
+- **Busy workers vanished.** No heartbeat ran during tests or integration. A background keep-alive fixes it.
+- New telemetry: `test_status`, `files_changed`, `review_findings`.
+
+Verified after deploy: smoke goal `dc04a711` / job `7a96c19c` built in 20s,
+reviewer passed on the first review in 14s with one command. Three legacy
+exhausted jobs were reintegrated, hit genuine cherry-pick conflicts, and were rejected.
+
+Merged merges reviewed under the old partial-diff reviewer (worth a skeptical
+look if touching their code): `4b87827f`, `358966df`, `17b11696`.
+
+## Current gaps (the work ahead)
+
+Web v2 was supposed to be a 4-job goal (`a9bb98ee`). Only its backend job
+merged. The UI, stale-recovery, and tests jobs never ran. The later single
+job `17b11696` was hand-salvaged. What exists vs missing:
+
+- Working: goal submit (normal/atomic, request_id idempotency), approval-ready
+  read model, worker idle/busy, Copy for ChatGPT, handoff zip, Stop/Start.
+- Broken or incomplete:
+  - Dismiss is in-memory only.
+  - List endpoints default to 8 items, so history silently truncates.
+  - Repository panel is always "unknown" (API container has no git).
+  - Handoff `_redact` blanks token-usage counters: any key containing
+    `token` is treated as a secret. Distinguish credentials from usage numbers.
+- Missing: Web approve/reject/extend/reintegrate/reopen buttons, add worker,
+  queue management, goal/job drill-down UI, persisted command/tool events,
+  prompts in UI, reviewer findings in UI, provider controls, auth.
+- `apps/web/app.js` is minified single-line JS. Readable code is fine and
+  preferred for anything you rewrite, but keep it dependency-free and keep
+  `apps/web/app.test.js` passing (the gate runs it).
+
+## Plan (in order)
+
+**A. Host-side action service (do this first, carefully).** A small service
+on the host (NOT in Docker) that executes operator actions requested from the
+Web by calling the same functions as `scripts/job-review.py`. Suggested shape:
+the API writes validated requests to a Redis stream/list
+(`sid:operator-requests`) with job id, action, the exact candidate commit the
+human saw, and a request id. The host service validates and executes each
+request, records the result (`sid:operator-results:<request_id>`), and is
+idempotent per request id. Approval MUST re-check everything
+`_approve_unlocked` checks and refuse if the candidate the human confirmed
+≠ `integrated_candidate_commit`. New systemd unit (e.g.
+`sid-ai-operator.service`). Full tests for every action and every refusal
+path. Don't break the CLI.
+
+**B. Web v2 UI features.** Approval UI with exact-candidate confirmation,
+needs_human actions, drill-down views (job lineage, candidates, integration +
+review state, findings, tests, tokens, runtime), persisted dismiss/archive
+(audit-preserving), un-truncated history with paging, redaction fix. Prefer
+submitting these to SID itself as small `--atomic` goals once A is merged;
+that exercises the pipeline. Write the goals narrowly.
+
+**C. Claude CLI provider.** Install `@anthropic-ai/claude-code` if missing.
+Implement an adapter beside `apps/api/providers/codex.py` behind the existing
+`Provider` interface. Worker execution currently hard-codes `codex exec`
+(`run_codex`, planner in the orchestrator), so factor that behind a provider
+selection per job/worker. Use non-interactive print mode with JSON output.
+Verify flags with `claude --help`; do not guess. Include model selection,
+auth detection, and Codex<->Claude cross-review (a reviewer of the opposite
+provider). Keep the UI provider-agnostic.
+
+**D. Public repo prep.** Git history is already clean of secrets. Still needed:
+- Add a LICENSE.
+- Remove hard-coded `HOME=/root` (worker `run_codex`, orchestrator planner).
+- Replace the `gpt-5.6-luna` defaults in scripts with env config.
+- Write a generic setup guide.
+
+**Deferred by the owner until fully operational (do not do unasked):** secret
+rotation, binding :8000/:8080 to localhost, API auth. Mention it when
+relevant, but it's SID's decision.
+
+## Style
+
+Small, reviewable commits with clear messages. Tests with every behavior
+change. Explain the root cause, not just the fix. When unsure about live
+state, inspect it read-only (Redis, logs, `systemctl status`) rather than guessing.
