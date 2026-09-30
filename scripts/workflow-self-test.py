@@ -42,6 +42,12 @@ def expect_exit(call, contains):
     except SystemExit as exc:
         if exc.code != 1:
             raise AssertionError(f"expected exit 1, got {exc.code}") from exc
+        # A refusal for the wrong reason must not pass as the expected one.
+        message = getattr(exc, "message", "")
+        if contains.lower() not in message.lower():
+            raise AssertionError(
+                f"refusal {message!r} does not mention {contains!r}"
+            ) from exc
     else:
         raise AssertionError("expected SystemExit")
 

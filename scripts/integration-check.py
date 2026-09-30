@@ -58,6 +58,10 @@ CHECKS = [
         [str(PYTHON), "scripts/workflow-self-test.py"],
     ),
     (
+        "host-tests",
+        [str(PYTHON), "-m", "pytest", "tests", "scripts/test_local_diagnostic.py", "-q"],
+    ),
+    (
         "efficiency-self-test",
         [str(PYTHON), "scripts/efficiency-self-test.py"],
     ),

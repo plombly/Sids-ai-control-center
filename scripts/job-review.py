@@ -24,9 +24,19 @@ JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 
+class Refused(SystemExit):
+    """An action was refused. Exits 1 like a plain SystemExit(1), so the CLI
+    is unchanged, but carries the reason for callers such as the operator
+    service that must report it rather than exit."""
+
+    def __init__(self, message):
+        super().__init__(1)
+        self.message = message
+
+
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
-    raise SystemExit(1)
+    raise Refused(message)
 
 
 def git(*args, cwd=REPO_ROOT, check=True):
