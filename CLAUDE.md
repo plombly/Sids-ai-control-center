@@ -161,11 +161,27 @@ Parallelism (2026-09-30):
   planner; waiting jobs fall back to Codex after 15 min.
 - Specialist reviews: `REVIEW_ASPECTS` (spec on sonnet, safety on haiku) run
   in parallel inside one reviewer job; all must pass.
-- Best-of: from `BEST_OF_FROM_ATTEMPT` (2) a retry builds with Codex and
-  Claude in parallel (job-<id>-alt worktree); smaller passing change wins.
+- Best-of: from `BEST_OF_FROM_ATTEMPT` (2) a retry builds twice in parallel
+  (job-<id>-alt worktree), both on Codex by default (`BEST_OF_ALT_PROVIDER`);
+  smaller passing change wins. SID's intent: Claude never builds by default.
+- Cheap re-reviews: a passing review records the change's `git patch-id`; a
+  merge-queue re-integration with the identical patch gets one Haiku
+  "rebase check" instead of the full specialist review.
+- Planner: Opus for multi-job goals, Sonnet for atomic goals.
 - Web: apps/web/app.js is split into lib/ modules; new features are a module
   registering via lib/registry.js plus one import in lib/features.js, with
   their own apps/web/<name>.test.js (the gate runs all of them).
+
+Operations (host timers, units in deploy/systemd/):
+- `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
+  /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg
+  dump, config tar incl. secrets, root-only), newest 14 kept; set
+  BACKUP_REMOTE for an off-host copy (none configured yet). Hand-made
+  backups in /var/backups/sid-ai are never touched (12 were lost once).
+- `sid-ai-watchdog.timer` every 2 min: scripts/sid-watchdog.py -> sid:health.
+- `sid-ai-prune.timer` weekly: scripts/prune-sid-data.py --days 30 --apply.
+- Claude runs on the operator's claude.ai plan, shared with interactive
+  sessions; a limit makes the pipeline fall back to Codex for 30 min.
 
 Operator commands (host):
 
