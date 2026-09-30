@@ -4,6 +4,7 @@ import math
 import os
 import re
 import subprocess
+from pathlib import Path
 import time
 import uuid
 import zipfile
@@ -413,7 +414,12 @@ def _approval_ready(job):
         return False
 
     # Mirror the immutable metadata enforced by job-review.py.
-    expected_worktree = f"/opt/sid-worktrees/job-{job.get('id')}-integration"
+    worktree_root = Path(
+        os.getenv("WORKTREE_ROOT", "/opt/sid-worktrees")
+    ).resolve()
+    expected_worktree = str(
+        (worktree_root / f"job-{job.get('id')}-integration").resolve()
+    )
     expected_branch = f"sid/integration-{job.get('id')}"
 
     if job.get("integration_worktree") != expected_worktree:
