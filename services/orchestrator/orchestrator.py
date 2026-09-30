@@ -161,6 +161,14 @@ Return ONLY valid JSON using this exact shape:
 """.strip()
 
 
+def planner_model(atomic):
+    """Atomic goals are one job the planner mostly restates and scopes: a
+    lighter model is enough. Decomposing a goal keeps the planner model."""
+    if atomic:
+        return os.getenv("CLAUDE_PLANNER_ATOMIC_MODEL", "sonnet")
+    return agent_cli.claude_model("planner")
+
+
 def busy_files_summary(limit=40):
     held = sorted({
         path
@@ -192,11 +200,11 @@ def run_planner(goal, atomic=False, info=None):
             return run_codex_planner(goal, atomic)
         try:
             run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
-                                       REPO_ROOT, log_path, PLAN_TIMEOUT)
+                                       REPO_ROOT, log_path, PLAN_TIMEOUT, model=planner_model(atomic))
         finally:
             agent_cli.release_claude_slot(r, slot)
         if run.ok:
-            info.update(provider="claude", model=agent_cli.claude_model("planner"),
+            info.update(provider="claude", model=planner_model(atomic),
                         cost_usd=agent_cli.claude_usage(run.result)["cost_usd"])
             return extract_json(run.text)
         if not run.unavailable:

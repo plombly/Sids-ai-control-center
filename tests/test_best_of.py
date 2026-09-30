@@ -69,8 +69,8 @@ def test_smaller_passing_alternate_wins_and_lands_in_the_normal_worktree(worker,
     assert (worktree / "app.py").read_text() == "OK\n"
     assert (worktree / "helper.py").read_text() == "added by alt\n", "new files carried over"
     assert git(worktree, "diff", "--cached", "--name-only") == "", "left unstaged like a builder"
-    assert worker.redis.records["sid:jobs:b1"]["provider"] == "claude"
-    assert report["alt"]["cost_usd"] == "0.1234"
+    assert worker.redis.records["sid:jobs:b1"]["provider"] == "codex"
+    assert report["alt"]["provider"] == "codex"
     assert not (tmp_path / "worktrees" / "job-b1-alt").exists(), "alternate worktree removed"
     assert "sid/job-b1-alt" not in git(worktree, "branch", "--list")
 
@@ -105,6 +105,7 @@ def test_both_fail_returns_the_primary_result(worker):
 
 
 def test_skipped_when_claude_is_at_capacity(worker, monkeypatch):
+    monkeypatch.setenv("BEST_OF_ALT_PROVIDER", "claude")  # opt-in only
     monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
     worker.agent_cli.acquire_claude_slot(worker.redis, "job:busy", 1000)
     worker.agent_cli.wait_for_claude_slot = lambda *a, **k: False
@@ -124,3 +125,24 @@ def test_when_best_of_applies(worker, attempt, role, setting, enabled):
     worker.BEST_OF_FROM_ATTEMPT = int(setting)
     worker.redis.records["sid:jobs:b1"]["build_attempt"] = attempt
     assert worker.best_of_enabled({"id": "b1", "role": role}) is enabled
+
+
+def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypatch):
+    # Heavy building stays on Codex (the operator's routing intent).
+    monkeypatch.setenv("REPO_ROOT", str(repo))
+    monkeypatch.setenv("WORKTREE_ROOT", str(tmp_path / "worktrees"))
+    monkeypatch.delenv("BEST_OF_ALT_PROVIDER", raising=False)
+    module = load_module(ROOT / "services/worker/worker.py")
+    module.redis = MemoryRedis()
+    module.redis.records["sid:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
+    module.heartbeat = lambda status="idle": None
+    module.run_tests = lambda wt: (True, "")
+    module.run_agent = lambda job, wt, log: (0, 1.0)
+    prompts = []
+    module.run_codex = lambda job, wt, log: prompts.append(job["prompt"]) or (0, 1.0)
+    module.agent_cli.run_claude = lambda *a, **k: pytest.fail("Claude must not build")
+    module.agent_cli.wait_for_claude_slot = lambda *a, **k: pytest.fail("no Claude slot needed")
+    _, worktree = module.create_worktree("b1")
+    module.run_best_of({"id": "b1", "role": "builder", "prompt": "task"}, worktree, worktree.parent / "l")
+    assert len(prompts) == 1 and "independent second attempt" in prompts[0]
+    assert json.loads(module.redis.records["sid:jobs:b1"]["best_of"])["alt"]["provider"] == "codex"

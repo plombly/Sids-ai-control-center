@@ -530,3 +530,62 @@ def test_aspect_models_are_overridable(agent_cli, monkeypatch):
     assert agent_cli.aspect_model("safety") == "claude-haiku-4-5-20251001"
     monkeypatch.setenv("CLAUDE_REVIEW_SAFETY_MODEL", "sonnet")
     assert agent_cli.aspect_model("safety") == "sonnet"
+
+
+
+# --- cheaper Claude usage ----------------------------------------------------------------
+
+def test_rebase_check_is_one_cheap_fresh_review(worker, tmp_path, monkeypatch, fake_claude):
+    monkeypatch.setenv("REVIEW_ASPECTS", "spec,safety")
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT", "still fine\nVERDICT: PASS")
+    worker.run_agent(job("reviewer", rebase_check=True), tmp_path, tmp_path / "rv.json")
+    [call] = fake_claude()
+    assert flag(call["argv"], "--model") == "claude-haiku-4-5-20251001"
+    assert "REBASE CHECK" in call["prompt"]
+    assert worker.redis.records["sid:jobs:reviewer1"]["review_kind"] == "rebase_check"
+
+
+def test_changed_patch_gets_the_full_specialist_review(worker, tmp_path, monkeypatch, fake_claude):
+    monkeypatch.setenv("REVIEW_ASPECTS", "spec,safety")
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT", "VERDICT: PASS")
+    worker.run_agent(job("reviewer", rebase_check=False), tmp_path, tmp_path / "rv.json")
+    assert len(fake_claude()) == 2
+
+
+def test_patch_id_ignores_the_base(worker, tmp_path):
+    import subprocess as sp
+    repo = tmp_path / "r"
+    repo.mkdir()
+    g = lambda *a: sp.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    g("init", "-q", "-b", "main")
+    (repo / "a.txt").write_text("1\n")
+    (repo / "b.txt").write_text("x\n")
+    g("add", "."); g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+    base1 = g("rev-parse", "HEAD")
+    (repo / "a.txt").write_text("1\n2\n")
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "change"], cwd=repo, check=True)
+    cand1 = g("rev-parse", "HEAD")
+    # same change on a newer, unrelated base
+    g("checkout", "-q", base1); (repo / "b.txt").write_text("y\n")
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "main moved"], cwd=repo, check=True)
+    base2 = g("rev-parse", "HEAD")
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "cherry-pick", cand1], cwd=repo, check=True, capture_output=True)
+    cand2 = g("rev-parse", "HEAD")
+    worker.run_git = lambda *a, cwd=None, check=True: sp.run(["git", *a], cwd=cwd, capture_output=True, text=True)
+    first = worker.candidate_patch_id(base1, cand1, repo)
+    assert first and first == worker.candidate_patch_id(base2, cand2, repo)
+    assert worker.candidate_patch_id(base1, base1, repo) == ""
+
+
+def test_only_a_passing_review_vouches_for_the_patch():
+    source = (ROOT / "services/worker/worker.py").read_text()
+    assert '"reviewed_patch_id": str(job.get("patch_id") or "") if verdict == "pass" else ""' in source
+
+
+def test_atomic_goals_plan_on_sonnet(orch, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT", '{"jobs": []}')
+    info = {}
+    orch.run_planner("one thing", atomic=True, info=info)
+    assert flag(fake_claude()[-1]["argv"], "--model") == "sonnet" and info["model"] == "sonnet"
+    orch.run_planner("many things", atomic=False, info=info)
+    assert flag(fake_claude()[-1]["argv"], "--model") == "opus"

@@ -576,7 +576,10 @@ def run_alternate_builder(job, provider, worktree, log_path, timeout):
             model=model, allowed_bash=repair_allowed_bash(), tick=lambda: heartbeat("working"))
         cost = agent_cli.claude_usage(run.result)["cost_usd"] if run.result else ""
         return run.ok, run.duration, cost, model
-    returncode, duration = run_codex({**job, "role": "builder"}, worktree, log_path)
+    independent = {**job, "role": "builder", "prompt": job["prompt"] + (
+        "\n\nThis is an independent second attempt built in parallel with another. "
+        "Prefer the simplest correct approach and keep the change small.")}
+    returncode, duration = run_codex(independent, worktree, log_path)
     return returncode == 0, duration, "", job.get("model", DEFAULT_MODEL)
 
 
@@ -586,7 +589,9 @@ def run_best_of(job, worktree, log_path):
     job_id = str(job["id"])
     key = f"sid:jobs:{job_id}"
     primary_provider = agent_cli.role_provider("builder")
-    alt_provider = "codex" if primary_provider == "claude" else "claude"
+    # Heavy building stays on Codex: the second build is an independent Codex
+    # attempt unless the operator opts in to another provider.
+    alt_provider = os.environ.get("BEST_OF_ALT_PROVIDER", "codex")
     timeout = int(job.get("timeout_seconds") or role_limit(
         "builder", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
     slot = f"job:{job_id}:alt"
@@ -704,7 +709,13 @@ def run_agent(job, worktree, log_path):
                                      "updated_at": str(time.time())})
             CURRENT_AGENT.update(provider="claude", model=model)
             heartbeat("working")
-            if role == "reviewer" and len(agent_cli.review_aspects()) > 1:
+            if role == "reviewer" and job.get("rebase_check"):
+                model = os.environ.get("CLAUDE_REBASE_REVIEW_MODEL", "claude-haiku-4-5-20251001")
+                redis.hset(key, mapping={"model": model, "review_kind": "rebase_check"})
+                run = agent_cli.run_claude(
+                    role, efficiency_prefix(role) + job["prompt"] + REBASE_CHECK_NOTE, worktree,
+                    log_path, timeout, model=model, tick=lambda: heartbeat("working"))
+            elif role == "reviewer" and len(agent_cli.review_aspects()) > 1:
                 run = run_review_aspects(job, worktree, log_path, timeout)
             else:
                 run = agent_cli.run_claude(
@@ -874,6 +885,28 @@ def parse_review_verdict(messages):
     return verdict, findings
 
 
+def candidate_patch_id(base, candidate, worktree):
+    """Stable identity of the change base..candidate, independent of the base
+    it sits on (git patch-id --stable); '' when it cannot be computed."""
+    try:
+        diff = run_git("diff", base, candidate, cwd=worktree, check=False).stdout
+        if not diff.strip():
+            return ""
+        result = subprocess.run(["git", "patch-id", "--stable"], cwd=worktree, input=diff,
+                                text=True, capture_output=True)
+        return result.stdout.split()[0] if result.stdout.split() else ""
+    except Exception:
+        return ""
+
+
+REBASE_CHECK_NOTE = (
+    "\n\nREBASE CHECK: this exact change (identical patch) was already reviewed and "
+    "passed against an older main; it has been re-integrated onto the current main. "
+    "Confirm it is still correct against the new base: look only for problems the new "
+    "base introduces (conflicting behavior, broken assumptions, duplicated work). Do not "
+    "re-review the change from scratch.")
+
+
 def queue_review_job(builder_job_id):
     builder_key = f"sid:jobs:{builder_job_id}"
     builder = redis.hgetall(builder_key)
@@ -905,6 +938,11 @@ def queue_review_job(builder_job_id):
     candidate_diff, diff_stat, review_base = review_diff_packet(
         builder, candidate_commit, Path(worktree)
     )
+    # Same change as an already-passed review, only re-integrated onto a newer
+    # main (merge queue): still a fresh review of this exact candidate, but a
+    # single cheap rebase check instead of the full specialist set.
+    patch_id = candidate_patch_id(review_base, candidate_commit, Path(worktree))
+    rebase_check = bool(patch_id) and patch_id == builder.get("reviewed_patch_id")
     gate_summary = integration_gate_summary(builder)
     prior_findings = prior_findings_packet(builder)
 
@@ -978,6 +1016,8 @@ are no material findings, explicitly say so.
         "worktree": worktree,
         "candidate_commit": candidate_commit,
         "integrated_candidate_commit": candidate_commit,
+        "patch_id": patch_id,
+        "rebase_check": rebase_check,
         "created_at": created_at,
     }
 
@@ -994,6 +1034,8 @@ are no material findings, explicitly say so.
                 "candidate_commit": candidate_commit,
                 "integrated_candidate_commit": candidate_commit,
                 "prompt": prompt,
+                "patch_id": patch_id,
+                "rebase_check": "1" if rebase_check else "",
                 "created_at": str(created_at),
             },
         )
@@ -1131,6 +1173,8 @@ def process_review_job(job, key, log_path):
     review_aspects_json = json.dumps((agent_cli.read_claude_result(log_path) or {}).get("aspects") or {})
     redis.hset(key, mapping={"status": "review_complete", "review_aspects": review_aspects_json, **common})
     builder_update = {
+        # Only a passing review vouches for this patch identity.
+        "reviewed_patch_id": str(job.get("patch_id") or "") if verdict == "pass" else "",
         "review_aspects": review_aspects_json,
         "review_job_id": job_id,
         "review_status": "complete",
