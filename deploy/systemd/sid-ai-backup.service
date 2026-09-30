@@ -1,0 +1,11 @@
+[Unit]
+Description=SID AI Command Center backup (repo, Redis, Postgres, config)
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=REPO_ROOT=/opt/sids-ai-command-center
+Environment=BACKUP_ROOT=/var/backups/sid-ai
+Environment=BACKUP_KEEP=14
+# Environment=BACKUP_REMOTE=user@host:/path   (off-host copy; recommended)
+ExecStart=/usr/bin/python3 /opt/sids-ai-command-center/scripts/backup-sid.py
