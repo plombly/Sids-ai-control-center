@@ -37,8 +37,16 @@ FAKE_CLAUDE = textwrap.dedent('''\
         sys.exit(1)
     if mode == "noise":
         print("warning: something on stderr", file=sys.stderr)
-    print(json.dumps({**base, "is_error": False, "subtype": "success",
-                      "result": os.environ.get("FAKE_CLAUDE_RESULT", "done")}))
+    result = os.environ.get("FAKE_CLAUDE_RESULT", "done")
+    for aspect, marker in (("SPEC", "YOUR FOCUS: specification"),
+                           ("SAFETY", "YOUR FOCUS: security"), ("TESTS", "YOUR FOCUS: tests")):
+        if marker in prompt:
+            result = os.environ.get(f"FAKE_ASPECT_{aspect}", result)
+    if mode == "aspect_limit" and "YOUR FOCUS: security" in prompt:
+        print(json.dumps({**base, "is_error": True, "subtype": "success",
+                          "result": "You've hit your session limit"}))
+        sys.exit(1)
+    print(json.dumps({**base, "is_error": False, "subtype": "success", "result": result}))
 ''')
 
 
@@ -220,7 +228,8 @@ def test_cooldown(agent_cli):
 # --- worker: provider per role, fallback, telemetry ---------------------------------
 
 @pytest.fixture
-def worker(tmp_path, fake_claude):
+def worker(tmp_path, fake_claude, monkeypatch):
+    monkeypatch.setenv("REVIEW_ASPECTS", "spec")  # single review unless a test opts in
     module = load_module(ROOT / "services/worker/worker.py")
     module.redis = MemoryRedis()
     module.agent_cli.POLL_SECONDS = 0.05
@@ -450,3 +459,74 @@ def test_planner_shares_the_cap(orch, monkeypatch, fake_claude):
     info = {}
     assert orch.run_planner("g", info=info) == {"jobs": ["codex"]}
     assert "at capacity" in info["fallback"] and fake_claude() == []
+
+
+
+# --- specialist reviews ------------------------------------------------------------------
+
+@pytest.fixture
+def aspects(worker, monkeypatch):
+    monkeypatch.setenv("REVIEW_ASPECTS", "spec,safety")
+    return worker
+
+
+def test_specialist_reviews_run_in_parallel_and_all_must_pass(aspects, tmp_path, monkeypatch, fake_claude):
+    monkeypatch.setenv("FAKE_ASPECT_SPEC", "req 1 MET\nVERDICT: PASS")
+    monkeypatch.setenv("FAKE_ASPECT_SAFETY", "no issues\nVERDICT: PASS_WITH_NOTES")
+    log = tmp_path / "rv.json"
+    assert aspects.run_agent(job("reviewer"), tmp_path, log)[0] == 0
+    calls = fake_claude()
+    models = sorted(flag(c["argv"], "--model") for c in calls)
+    assert models == ["claude-haiku-4-5-20251001", "sonnet"], "spec on sonnet, safety on haiku"
+    assert all(flag(c["argv"], "--tools") == "Read,Grep,Glob" for c in calls)
+    verdict, findings = aspects.parse_review_verdict(aspects.agent_cli.agent_messages(log))
+    assert verdict == "pass"
+    assert "## spec review (sonnet)" in findings and "## safety review" in findings
+    assert aspects.redis.records["sid:jobs:reviewer1"]["cost_usd"] == "0.0842", "costs summed"
+    assert aspects.parse_codex_log(log)[1]["effective_tokens"] == "520", "usage summed"
+
+
+def test_any_blocking_aspect_blocks_the_review(aspects, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_ASPECT_SPEC", "all MET\nVERDICT: PASS")
+    monkeypatch.setenv("FAKE_ASPECT_SAFETY", "BLOCKING: token logged\nVERDICT: CHANGES_REQUIRED")
+    log = tmp_path / "rv.json"
+    aspects.run_agent(job("reviewer"), tmp_path, log)
+    text = aspects.agent_cli.agent_messages(log)[0]
+    assert aspects.parse_review_verdict([text])[0] == "changes_required"
+    assert "Blocking findings from: safety" in text
+    assert text.count("VERDICT:") == 1, "aspect verdict lines are relabelled"
+
+
+def test_aspect_without_verdict_fails_the_review(aspects, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_ASPECT_SPEC", "VERDICT: PASS")
+    monkeypatch.setenv("FAKE_ASPECT_SAFETY", "I looked around.")
+    with pytest.raises(RuntimeError, match="no verdict: safety"):
+        aspects.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
+
+
+def test_aspect_hitting_plan_limit_falls_back_to_one_codex_review(aspects, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "aspect_limit")
+    monkeypatch.setenv("FAKE_ASPECT_SPEC", "VERDICT: PASS")
+    aspects.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
+    assert aspects.codex_calls == ["reviewer1"]
+    assert aspects.agent_cli.claude_cooling_down(aspects.redis)
+    assert aspects.redis.zsets[aspects.agent_cli.SLOTS_KEY] == {}, "one slot, released"
+
+
+def test_single_aspect_is_a_plain_review(worker, tmp_path, fake_claude, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT", "VERDICT: PASS")
+    worker.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
+    assert len(fake_claude()) == 1
+
+
+def test_unknown_aspect_is_a_configuration_error(agent_cli, monkeypatch):
+    monkeypatch.setenv("REVIEW_ASPECTS", "spec,vibes")
+    with pytest.raises(ValueError, match="vibes"):
+        agent_cli.review_aspects()
+
+
+def test_aspect_models_are_overridable(agent_cli, monkeypatch):
+    assert agent_cli.aspect_model("spec") == "sonnet"
+    assert agent_cli.aspect_model("safety") == "claude-haiku-4-5-20251001"
+    monkeypatch.setenv("CLAUDE_REVIEW_SAFETY_MODEL", "sonnet")
+    assert agent_cli.aspect_model("safety") == "sonnet"

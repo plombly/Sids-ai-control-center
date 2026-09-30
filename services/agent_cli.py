@@ -321,6 +321,80 @@ def wait_for_claude_slot(redis_client, holder, lease_seconds, max_wait, tick=Non
         sleep(POLL_SECONDS * 2)
 
 
+# --- specialist reviews -------------------------------------------------------
+#
+# A Claude review runs several focused reviews of the same candidate in
+# parallel inside one reviewer job and passes only if every aspect passes.
+# One reviewer job keeps the approval contract (one linked, exact reviewer)
+# unchanged; the job holds a single Claude slot for all of its aspects.
+
+REVIEW_ASPECT_FOCUS = {
+    "spec": (
+        "YOUR FOCUS: specification. Check that the change does exactly what the "
+        "original task requires: every required behavior, field name, file "
+        "restriction, error case and test. List each requirement as MET or NOT MET "
+        "with evidence (file:line). An unmet requirement is BLOCKING. Leave security "
+        "and code style to other reviewers."
+    ),
+    "safety": (
+        "YOUR FOCUS: security and safety of the added or changed code only: output "
+        "escaping/injection, authentication and token handling, destructive or "
+        "irreversible operations, data loss, secrets, unsafe shell/git/subprocess "
+        "use, and concurrency or race conditions. Leave requirement coverage and "
+        "style to other reviewers. Report only concrete, realistic problems."
+    ),
+    "tests": (
+        "YOUR FOCUS: tests. Check that the tests added or changed actually exercise "
+        "the new behavior and its failure paths and would fail if it broke. Missing "
+        "tests the task explicitly required are BLOCKING; other suggestions are NOTEs."
+    ),
+}
+DEFAULT_ASPECT_MODELS = {"spec": None, "safety": "claude-haiku-4-5-20251001",
+                         "tests": "claude-haiku-4-5-20251001"}
+
+
+def review_aspects():
+    """REVIEW_ASPECTS=spec,safety (default). One aspect = a single review."""
+    names = [a.strip() for a in os.getenv("REVIEW_ASPECTS", "spec,safety").split(",") if a.strip()]
+    unknown = [a for a in names if a not in REVIEW_ASPECT_FOCUS]
+    if unknown:
+        raise ValueError(f"REVIEW_ASPECTS: unknown aspects {unknown}")
+    return names or ["spec"]
+
+
+def aspect_model(aspect):
+    """Spec uses the reviewer model; the narrower aspects default to Haiku."""
+    return (os.getenv(f"CLAUDE_REVIEW_{aspect.upper()}_MODEL")
+            or DEFAULT_ASPECT_MODELS.get(aspect) or claude_model("reviewer"))
+
+
+def combined_review_result(aspect_runs, aspect_verdicts):
+    """One Claude-style result for several aspect runs: texts in sections,
+    usage and cost summed, and a final VERDICT that passes only if every
+    aspect passed (aspect verdict lines are relabelled so only it counts)."""
+    sections, usage_sum, cost = [], {}, 0.0
+    for aspect, run in aspect_runs.items():
+        text = re.sub(r"(?m)^\s*VERDICT:", "Aspect verdict:", run.text).strip()
+        model = (run.result or {}).get("_model", "")
+        sections.append(f"## {aspect} review{f' ({model})' if model else ''}\n\n{text}")
+        for field, value in ((run.result or {}).get("usage") or {}).items():
+            if isinstance(value, (int, float)):
+                usage_sum[field] = usage_sum.get(field, 0) + value
+        cost += float((run.result or {}).get("total_cost_usd") or 0)
+    verdict = ("PASS" if all(v == "pass" for v in aspect_verdicts.values())
+               else "CHANGES_REQUIRED")
+    blocking = [a for a, v in aspect_verdicts.items() if v != "pass"]
+    summary = (f"All {len(aspect_runs)} specialist reviews passed." if not blocking
+               else f"Blocking findings from: {', '.join(blocking)}.")
+    return {
+        "type": "result", "is_error": False, "subtype": "success",
+        "session_id": ",".join(str((r.result or {}).get("session_id", "")) for r in aspect_runs.values()),
+        "result": "\n\n".join(sections) + f"\n\n{summary}\nVERDICT: {verdict}",
+        "total_cost_usd": round(cost, 6), "usage": usage_sum,
+        "aspects": {a: v for a, v in aspect_verdicts.items()},
+    }
+
+
 def claude_cooling_down(redis_client):
     try:
         return bool(redis_client.get(COOLDOWN_KEY))

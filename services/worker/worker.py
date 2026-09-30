@@ -499,6 +499,42 @@ def repair_allowed_bash():
     )
 
 
+def run_review_aspects(job, worktree, log_path, timeout):
+    """Run the configured specialist reviews concurrently and combine them
+    into one Claude result at log_path (see agent_cli.combined_review_result).
+    Returns an unavailable/failed run as-is so run_agent can fall back."""
+    aspects = agent_cli.review_aspects()
+    runs, errors = {}, []
+
+    def review(aspect):
+        model = agent_cli.aspect_model(aspect)
+        prompt = (efficiency_prefix("reviewer") + job["prompt"] + "\n\n"
+                  + agent_cli.REVIEW_ASPECT_FOCUS[aspect])
+        run = agent_cli.run_claude(
+            "reviewer", prompt, worktree, log_path.with_name(f"{log_path.stem}.{aspect}.json"),
+            timeout, model=model, tick=lambda: heartbeat("working"))
+        if run.result is not None:
+            run.result["_model"] = model
+        runs[aspect] = run
+
+    threads = [threading.Thread(target=review, args=(a,), daemon=True) for a in aspects]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for aspect in aspects:
+        run = runs.get(aspect)
+        if run is None or not run.ok:
+            return run or agent_cli.ClaudeRun(1, 0.0, None)  # unavailable/failed: caller decides
+    verdicts = {a: parse_review_verdict([runs[a].text])[0] for a in aspects}
+    missing = [a for a, v in verdicts.items() if v == "unknown"]
+    if missing:
+        raise RuntimeError(f"specialist review(s) gave no verdict: {', '.join(missing)}")
+    combined = agent_cli.combined_review_result(runs, verdicts)
+    log_path.write_text(json.dumps(combined))
+    return agent_cli.ClaudeRun(0, max(r.duration for r in runs.values()), combined)
+
+
 def run_agent(job, worktree, log_path):
     """Run the provider configured for this job's role (ROLE_PROVIDERS).
 
@@ -533,12 +569,15 @@ def run_agent(job, worktree, log_path):
                                      "updated_at": str(time.time())})
             CURRENT_AGENT.update(provider="claude", model=model)
             heartbeat("working")
-            run = agent_cli.run_claude(
-                role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
-                model=model,
-                allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
-                tick=lambda: heartbeat("working"),
-            )
+            if role == "reviewer" and len(agent_cli.review_aspects()) > 1:
+                run = run_review_aspects(job, worktree, log_path, timeout)
+            else:
+                run = agent_cli.run_claude(
+                    role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
+                    model=model,
+                    allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
+                    tick=lambda: heartbeat("working"),
+                )
             if run.unavailable:
                 fallback = f"claude unavailable: {run.describe_error()}"
                 agent_cli.start_cooldown(redis, fallback)
