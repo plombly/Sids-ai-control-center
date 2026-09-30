@@ -1,0 +1,29 @@
+# Host-side executor for operator actions requested from the Web.
+# Install (operator decision):
+#   cp services/operator/sid-ai-operator.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now sid-ai-operator.service
+# approve stays disabled until OPERATOR_ALLOWED_ACTIONS includes it. Enable it
+# only once the API is not reachable by people who must not approve merges.
+# job-review.py is loaded at start: restart this unit after changing it.
+[Unit]
+Description=SID AI Command Center Operator Actions
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sids-ai-command-center
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+Environment=REPO_ROOT=/opt/sids-ai-command-center
+Environment=WORKTREE_ROOT=/opt/sid-worktrees
+Environment=OPERATOR_ID=sid-operator-01
+Environment=OPERATOR_ALLOWED_ACTIONS=reject,extend,reintegrate,reopen
+Environment=OPERATOR_REQUEST_TTL=600
+ExecStart=/usr/bin/python3 /opt/sids-ai-command-center/services/operator/sid_operator.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

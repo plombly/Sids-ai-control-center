@@ -7,9 +7,11 @@ an in-memory fake and Git is a scripted fake keyed on (args, cwd).
 import importlib.util
 import itertools
 import sys
+import time
 from pathlib import Path
 
 import pytest
+from redis.exceptions import ResponseError
 
 ROOT = Path(__file__).resolve().parents[1]
 _module_ids = itertools.count()
@@ -28,9 +30,13 @@ def load_module(path, name=None):
 class MemoryRedis:
     """The subset of redis-py used by job-review.py and the operator."""
 
-    def __init__(self, records=None):
+    def __init__(self, records=None, clock=time.time):
         self.records = records if records is not None else {}
         self.values = {}
+        self.ttls = {}
+        self.streams = {}
+        self.groups = {}
+        self.clock = clock
 
     # hashes
     def hgetall(self, key):
@@ -80,6 +86,54 @@ class MemoryRedis:
             del self.values[key]
             return 1
         return 0
+
+    def expire(self, key, seconds):
+        self.ttls[key] = seconds
+        return True
+
+    # streams: one consumer group per stream is enough for the operator
+    def xadd(self, name, fields, maxlen=None, approximate=True):
+        ms = int(self.clock() * 1000)
+        entries = self.streams.setdefault(name, [])
+        seq = sum(1 for entry_id, _ in entries if entry_id.startswith(f"{ms}-"))
+        entry_id = f"{ms}-{seq}"
+        entries.append((entry_id, {str(k): str(v) for k, v in fields.items()}))
+        return entry_id
+
+    def xgroup_create(self, name, groupname, id="$", mkstream=False):
+        if name not in self.streams:
+            if not mkstream:
+                raise ResponseError("ERR The XGROUP subcommand requires the key to exist")
+            self.streams[name] = []
+        if (name, groupname) in self.groups:
+            raise ResponseError("BUSYGROUP Consumer Group name already exists")
+        self.groups[(name, groupname)] = {"delivered": 0, "pending": {}}
+        return True
+
+    def xreadgroup(self, groupname, consumername, streams, count=None, block=None):
+        replies = []
+        for name, position in streams.items():
+            group = self.groups[(name, groupname)]
+            entries = dict(self.streams.get(name, []))
+            if position == ">":
+                fresh = self.streams[name][group["delivered"]:][:count]
+                group["delivered"] += len(fresh)
+                for entry_id, _ in fresh:
+                    group["pending"][entry_id] = consumername
+                messages = [(entry_id, dict(fields)) for entry_id, fields in fresh]
+            else:
+                ids = [i for i, c in group["pending"].items() if c == consumername][:count]
+                messages = [(i, dict(entries.get(i, {}))) for i in ids]
+            if messages:
+                replies.append([name, messages])
+        return replies
+
+    def xack(self, name, groupname, *ids):
+        pending = self.groups[(name, groupname)]["pending"]
+        return sum(1 for i in ids if pending.pop(i, None) is not None)
+
+    def pending(self, name, groupname):
+        return dict(self.groups[(name, groupname)]["pending"])
 
 
 class GitResult:
@@ -154,3 +208,45 @@ def fake_git(job_review):
     git = FakeGit(job_review)
     job_review.git = git
     return git
+
+
+JOB = "b1"
+BASE = "b" * 40
+INTEGRATED = "c" * 40
+
+
+def make_builder(job_review, status="awaiting_review", **fields):
+    worktree = job_review.WORKTREE_ROOT / f"job-{JOB}"
+    worktree.mkdir(exist_ok=True)
+    record = {
+        "id": JOB, "role": "builder", "status": status,
+        "worktree": str(worktree), "branch": f"sid/job-{JOB}",
+        **fields,
+    }
+    job_review.r.records[f"sid:jobs:{JOB}"] = record
+    return record
+
+
+@pytest.fixture
+def approvable(job_review, fake_git):
+    """A builder/reviewer pair that satisfies every approval check."""
+    integration = job_review.WORKTREE_ROOT / f"job-{JOB}-integration"
+    integration.mkdir()
+    record = make_builder(
+        job_review,
+        review_status="complete", review_verdict="pass", review_job_id="rv1",
+        integration_status="passed", integration_base_commit=BASE,
+        integrated_candidate_commit=INTEGRATED, reviewed_commit=INTEGRATED,
+        integration_worktree=str(integration),
+        integration_branch=f"sid/integration-{JOB}",
+    )
+    reviewer = {
+        "id": "rv1", "role": "reviewer", "builder_job_id": JOB,
+        "status": "review_complete", "review_verdict": "pass",
+        "candidate_commit": INTEGRATED, "reviewed_commit": INTEGRATED,
+    }
+    job_review.r.records["sid:jobs:rv1"] = reviewer
+    fake_git.main_head = BASE
+    fake_git.integrated_head = INTEGRATED
+    fake_git.branch_heads[f"sid/integration-{JOB}"] = INTEGRATED
+    return record, reviewer, integration

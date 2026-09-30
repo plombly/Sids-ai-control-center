@@ -2,19 +2,7 @@
 
 import pytest
 
-JOB = "b1"
-
-
-def builder(job_review, status="awaiting_review", **fields):
-    worktree = job_review.WORKTREE_ROOT / f"job-{JOB}"
-    worktree.mkdir(exist_ok=True)
-    record = {
-        "id": JOB, "role": "builder", "status": status,
-        "worktree": str(worktree), "branch": f"sid/job-{JOB}",
-        **fields,
-    }
-    job_review.r.records[f"sid:jobs:{JOB}"] = record
-    return record
+from conftest import BASE, INTEGRATED, JOB, make_builder as builder
 
 
 def refused(call, contains):
@@ -132,34 +120,7 @@ def test_reject_git_failure_leaves_job_unrejected(job_review, fake_git):
 
 # --- approve -----------------------------------------------------------------
 
-BASE = "b" * 40
-INTEGRATED = "c" * 40
 LOCK = "sid:approval-lock:main"
-
-
-@pytest.fixture
-def approvable(job_review, fake_git):
-    """A builder/reviewer pair that satisfies every approval check."""
-    integration = job_review.WORKTREE_ROOT / f"job-{JOB}-integration"
-    integration.mkdir()
-    record = builder(
-        job_review,
-        review_status="complete", review_verdict="pass", review_job_id="rv1",
-        integration_status="passed", integration_base_commit=BASE,
-        integrated_candidate_commit=INTEGRATED, reviewed_commit=INTEGRATED,
-        integration_worktree=str(integration),
-        integration_branch=f"sid/integration-{JOB}",
-    )
-    reviewer = {
-        "id": "rv1", "role": "reviewer", "builder_job_id": JOB,
-        "status": "review_complete", "review_verdict": "pass",
-        "candidate_commit": INTEGRATED, "reviewed_commit": INTEGRATED,
-    }
-    job_review.r.records["sid:jobs:rv1"] = reviewer
-    fake_git.main_head = BASE
-    fake_git.integrated_head = INTEGRATED
-    fake_git.branch_heads[f"sid/integration-{JOB}"] = INTEGRATED
-    return record, reviewer, integration
 
 
 @pytest.mark.parametrize("expected_candidate", [INTEGRATED, None])
