@@ -442,3 +442,7 @@ button:hover {
   white-space: nowrap;
   border: 0;
 }
+.detail-row span {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
