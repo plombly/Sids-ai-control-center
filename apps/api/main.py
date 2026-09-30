@@ -4,7 +4,6 @@ import io
 import math
 import os
 import re
-import subprocess
 import time
 import uuid
 import zipfile
@@ -297,11 +296,13 @@ def _orchestrator(key, data):
 
 def _repository():
     try:
-        branch = subprocess.check_output(["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL).strip()
-        dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL).strip())
-        return {"branch": branch or "(detached)", "status": "dirty" if dirty else "clean"}
+        value = redis.get("sid:main-head")
+        sha = value.strip() if isinstance(value, str) else ""
+        if sha:
+            return {"branch": "main", "head": sha, "short": sha[:12], "status": "ok"}
     except Exception:
-        return {"branch": "unknown", "status": "unknown"}
+        pass
+    return {"branch": "unknown", "head": None, "short": None, "status": "unknown"}
 
 
 @app.get("/")

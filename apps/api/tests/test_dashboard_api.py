@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -29,9 +31,10 @@ def client():
 
 
 class FakeRedis:
-    def __init__(self, hashes, queue_depth=0):
+    def __init__(self, hashes, queue_depth=0, strings=None):
         self.hashes = hashes
         self.queue_depth = queue_depth
+        self.strings = strings or {}
         self.sets = {}
 
     def scan_iter(self, pattern):
@@ -40,6 +43,12 @@ class FakeRedis:
 
     def hgetall(self, key):
         value = self.hashes.get(key, {})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def get(self, key):
+        value = self.strings.get(key)
         if isinstance(value, Exception):
             raise value
         return value
@@ -81,7 +90,7 @@ def dashboard_redis(monkeypatch):
             "id": "j1", "status": "awaiting_review", "role": "builder", "worker_id": "w1",
             "review_status": "complete", "review_verdict": "pass",
             "review_job_id": "review-j1", "integration_status": "passed",
-            "integration_base_commit": main.subprocess.check_output(
+            "integration_base_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], text=True
             ).strip(),
             "integrated_candidate_commit": "candidate-j1",
@@ -128,6 +137,40 @@ def test_dashboard_endpoints_and_bounded_normalization(client, monkeypatch):
     assert status["pending_human_approvals"][0]["id"] == "j1"
 
 
+def test_repository_uses_main_head_from_redis(client, monkeypatch):
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"sid:main-head": sha}))
+
+    response = client.get("/api/repository")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "branch": "main", "head": sha, "short": "0123456789ab", "status": "ok",
+    }
+
+
+def test_repository_is_unknown_when_main_head_is_missing(client, monkeypatch):
+    monkeypatch.setattr(main, "redis", FakeRedis({}))
+
+    response = client.get("/api/repository")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "branch": "unknown", "head": None, "short": None, "status": "unknown",
+    }
+
+
+def test_repository_is_unknown_when_redis_errors(client, monkeypatch):
+    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"sid:main-head": RuntimeError("redis down")}))
+
+    response = client.get("/api/repository")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "branch": "unknown", "head": None, "short": None, "status": "unknown",
+    }
+
+
 def test_dismissals_use_only_the_dismissed_set(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
     before = {key: value.copy() if isinstance(value, dict) else value for key, value in fake.hashes.items()}
@@ -155,7 +198,7 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
         "review_verdict": "pass",
         "review_job_id": "review-approval",
         "integration_status": "passed",
-        "integration_base_commit": main.subprocess.check_output(
+        "integration_base_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True
         ).strip(),
         "integrated_candidate_commit": "candidate-approval",
