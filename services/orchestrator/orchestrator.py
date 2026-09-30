@@ -57,7 +57,10 @@ def heartbeat(status="idle", goal_id="", goal_ids=None):
             "status": status,
             "goal_id": goal_id,
             "goal_ids": json.dumps(goal_ids or ([goal_id] if goal_id else [])),
-            "model": DEFAULT_MODEL,
+            # The orchestrator's own model is the planner's.
+            "provider": agent_cli.role_provider("planner"),
+            "model": (agent_cli.claude_model("planner")
+                      if agent_cli.role_provider("planner") == "claude" else DEFAULT_MODEL),
             "last_seen": now(),
         },
     )
@@ -146,19 +149,25 @@ Return ONLY valid JSON using this exact shape:
 """.strip()
 
 
-def run_planner(goal, atomic=False):
+def run_planner(goal, atomic=False, info=None):
     """Plan a goal with the provider configured for the planner role; Claude
-    falls back to Codex when it cannot serve the call."""
+    falls back to Codex when it cannot serve the call. `info`, if given, is
+    filled with the provider/model that produced the plan."""
+    info = {} if info is None else info
     if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
         run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
                                    REPO_ROOT, log_path, PLAN_TIMEOUT)
         if run.ok:
+            info.update(provider="claude", model=agent_cli.claude_model("planner"),
+                        cost_usd=agent_cli.claude_usage(run.result)["cost_usd"])
             return extract_json(run.text)
         if not run.unavailable:
             raise RuntimeError(f"claude planner failed: {run.describe_error()}")
         agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
         print(f"[{ORCHESTRATOR_ID}] claude planner unavailable; falling back to codex", flush=True)
+        info["fallback"] = run.describe_error()
+    info.update(provider="codex", model=DEFAULT_MODEL)
     return run_codex_planner(goal, atomic)
 
 
@@ -422,7 +431,8 @@ def process_goal(raw):
     )
 
     atomic = str(data.get("atomic", "")).lower() in {"1", "true", "yes"}
-    plan = run_planner(goal, atomic=atomic)
+    planner = {}
+    plan = run_planner(goal, atomic=atomic, info=planner)
     jobs = validate_plan(plan, atomic=atomic)
 
     number_to_id = {}
@@ -479,6 +489,9 @@ def process_goal(raw):
             "status": "running",
             "plan": json.dumps(plan),
             "jobs": json.dumps(job_ids),
+            "planner_provider": planner.get("provider", ""),
+            "planner_model": planner.get("model", ""),
+            "planner_cost_usd": planner.get("cost_usd", ""),
             "updated_at": now(),
         },
     )

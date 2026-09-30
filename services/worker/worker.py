@@ -81,6 +81,10 @@ redis = Redis.from_url(REDIS_URL, decode_responses=True)
 # (or it is still queued), which is how it detects jobs orphaned by a
 # worker restart or crash.
 CURRENT_JOB_ID = ""
+# Role, provider and model of the held job, published in the heartbeat so the
+# dashboard shows what is actually running (any worker takes any role).
+CURRENT_JOB_ROLE = ""
+CURRENT_AGENT = {}
 
 
 def worker_key():
@@ -107,9 +111,9 @@ def heartbeat(status="idle"):
         worker_key(),
         mapping={
             "id": WORKER_ID,
-            "role": WORKER_ROLE,
-            "provider": DEFAULT_PROVIDER,
-            "model": DEFAULT_MODEL,
+            "role": CURRENT_JOB_ROLE or "any",
+            "provider": CURRENT_AGENT.get("provider") or "per role",
+            "model": CURRENT_AGENT.get("model") or agent_cli.routing_summary(DEFAULT_MODEL),
             "status": status,
             "job_id": CURRENT_JOB_ID,
             "last_seen": str(time.time()),
@@ -515,6 +519,8 @@ def run_agent(job, worktree, log_path):
             role, "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
         redis.hset(key, mapping={"provider": "claude", "model": model,
                                  "updated_at": str(time.time())})
+        CURRENT_AGENT.update(provider="claude", model=model)
+        heartbeat("working")
         run = agent_cli.run_claude(
             role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
             model=model,
@@ -540,6 +546,8 @@ def run_agent(job, worktree, log_path):
     redis.hset(key, mapping={"provider": "codex", "model": model,
                              "provider_fallback": fallback,
                              "updated_at": str(time.time())})
+    CURRENT_AGENT.update(provider="codex", model=model)
+    heartbeat("working")
     return run_codex(job, worktree, log_path)
 
 
@@ -1293,11 +1301,13 @@ def process_integrate_job(job, key):
 
 
 def process_job(raw_job):
-    global CURRENT_JOB_ID
+    global CURRENT_JOB_ID, CURRENT_JOB_ROLE
     try:
-        CURRENT_JOB_ID = str(json.loads(raw_job).get("id", ""))
+        parsed = json.loads(raw_job)
+        CURRENT_JOB_ID = str(parsed.get("id", ""))
+        CURRENT_JOB_ROLE = str(parsed.get("role") or "builder")
     except (ValueError, AttributeError):
-        CURRENT_JOB_ID = ""
+        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
     try:
         # Publish the held job before touching its state, so the
         # orchestrator never sees it claimed by nobody.
@@ -1305,7 +1315,8 @@ def process_job(raw_job):
         with keep_alive("working"):
             _process_job(raw_job)
     finally:
-        CURRENT_JOB_ID = ""
+        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
+        CURRENT_AGENT.clear()
 
 
 def _process_job(raw_job):
@@ -1533,8 +1544,9 @@ def _process_job(raw_job):
         print(f"[{WORKER_ID}] job={job_id} FAILED: {exc}", flush=True)
 
     finally:
-        global CURRENT_JOB_ID
-        CURRENT_JOB_ID = ""
+        global CURRENT_JOB_ID, CURRENT_JOB_ROLE
+        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
+        CURRENT_AGENT.clear()
         heartbeat("idle")
 
 

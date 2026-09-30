@@ -212,6 +212,8 @@ def _goal(key, data):
         "created_at": _text(data.get("created_at")),
         "updated_at": _text(data.get("updated_at")),
         "child_job_ids": child_ids,
+        "planner_provider": _text(data.get("planner_provider")),
+        "planner_model": _text(data.get("planner_model")),
         "progress": {
             "total": len(child_ids),
             "completed": sum(counts.get(status, 0) for status in JOB_TERMINAL_STATUSES),

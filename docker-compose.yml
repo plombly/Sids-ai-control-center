@@ -68,6 +68,10 @@ services:
       context: ./apps/web
     container_name: sid-ai-web
     restart: unless-stopped
+    # Same token file as the api: nginx injects it into /api requests.
+    env_file:
+      - path: /etc/sid-ai/operator.env
+        required: false
     depends_on:
       api:
         condition: service_healthy

@@ -286,7 +286,7 @@ export function render() {
     g => {
       const p = g.progress || {},
         percent = p.total ? Math.min(100, Math.round(((p.completed || 0) / p.total) * 100)) : 0;
-      return `<div class="item"><div class="item-head"><span class="item-title">${esc(g.summary || g.prompt || g.id)}</span>${pill(g.status)}</div><div class="subtle">${esc(g.id)} · ${p.completed || 0}/${p.total || 0} jobs complete</div><div class="bar"><i style="width:${percent}%"></i></div><button data-handoff="${esc(g.id)}">Copy for ChatGPT</button><button data-download="${esc(g.id)}">Download handoff</button><button data-dismiss="${esc(g.id)}">Dismiss</button></div>`;
+      return `<div class="item"><div class="item-head"><span class="item-title">${esc(g.summary || g.prompt || g.id)}</span>${pill(g.status)}</div><div class="subtle">${esc(g.id)} · ${p.completed || 0}/${p.total || 0} jobs complete${g.planner_provider ? ` · planned by ${esc(g.planner_provider)}/${esc(g.planner_model || '?')}` : ''}</div><div class="bar"><i style="width:${percent}%"></i></div><button data-handoff="${esc(g.id)}">Copy for ChatGPT</button><button data-download="${esc(g.id)}">Download handoff</button><button data-dismiss="${esc(g.id)}">Dismiss</button></div>`;
     },
     'No actionable goals'
   );
@@ -433,12 +433,16 @@ async function runJobAction(button) {
   }
 }
 export const tokenStateText = auth =>
-  !auth?.token_required ? 'Writes open (no token set on server)' : auth.token_valid ? 'Token OK' : 'Token needed for actions';
+  !auth?.token_required ? 'Writes open (no token set on server)' : auth.token_valid ? 'Actions enabled' : 'Token needed for actions';
 async function refreshTokenState() {
   const node = document.getElementById('token-state');
   if (!node) return;
   try {
-    node.textContent = tokenStateText(await requestJSON('/api/auth', { method: 'GET' }));
+    const auth = await requestJSON('/api/auth', { method: 'GET' });
+    node.textContent = tokenStateText(auth);
+    // nginx injects the token for this dashboard: nothing to enter.
+    const form = document.getElementById('token-form');
+    form?.querySelectorAll('input, button').forEach(el => (el.hidden = Boolean(auth.token_valid)));
   } catch (error) {
     node.textContent = error.message;
   }

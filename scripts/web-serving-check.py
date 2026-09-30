@@ -36,13 +36,20 @@ def main():
 
     dockerfile = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
     require("FROM nginx:" in dockerfile, "web must use nginx")
-    require("COPY nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile, "nginx config must be installed")
+    require(
+        "COPY nginx.conf /etc/nginx/templates/default.conf.template" in dockerfile,
+        "nginx config must be installed as a template (operator token substitution)",
+    )
     require("HEALTHCHECK" in dockerfile, "web container must define a healthcheck")
 
     nginx = (ROOT / "apps/web/nginx.conf").read_text(encoding="utf-8")
     require("location /api/" in nginx, "nginx must define the API route")
     require("proxy_pass http://api:8000;" in nginx, "API traffic must use the internal api service")
     require("location = /health" in nginx, "nginx must provide a health endpoint")
+    require(
+        'proxy_set_header X-SID-Token "${SID_OPERATOR_TOKEN}";' in nginx,
+        "API route must inject the operator token from the environment",
+    )
 
 
 if __name__ == "__main__":

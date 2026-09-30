@@ -34,7 +34,7 @@ async function main() {
   assert.equal(seen[0].headers['content-type'], 'application/json');
   assert.equal(seen[0].method, 'POST');
   assert.match(tokenStateText({token_required: false}), /open/);
-  assert.equal(tokenStateText({token_required: true, token_valid: true}), 'Token OK');
+  assert.equal(tokenStateText({token_required: true, token_valid: true}), 'Actions enabled');
   assert.match(tokenStateText({token_required: true, token_valid: false}), /needed/);
   assert.deepEqual(normalize('workers', {unexpected:true}), []);
   assert.deepEqual(normalize('workers', [null, {id:'w-1'}, {progress:null}, 'bad']), [{id:'w-1'}, {progress:null}]);

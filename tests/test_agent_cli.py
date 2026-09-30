@@ -343,3 +343,39 @@ def test_successful_answer_about_login_or_rate_limits_is_not_unavailability(agen
     monkeypatch.setenv("FAKE_CLAUDE_RESULT", "The login handler lacks a rate limit.\nVERDICT: CHANGES_REQUIRED")
     run = agent_cli.run_claude("reviewer", "x", tmp_path, tmp_path / "l.json", 30)
     assert run.ok and not run.unavailable
+
+
+# --- the dashboard shows what actually runs -------------------------------------------
+
+def test_worker_heartbeat_shows_the_running_jobs_provider_and_model(worker, tmp_path):
+    beats = []
+    original = worker.heartbeat
+
+    def spy(status="idle"):
+        original(status)
+        beats.append(dict(worker.redis.records[worker.worker_key()]))
+
+    worker.heartbeat = spy
+    worker._process_job = lambda raw: worker.run_agent(json.loads(raw), tmp_path, tmp_path / "rv.json")
+    worker.process_job(json.dumps(job("reviewer")))
+    working = [b for b in beats if b["status"] == "working" and b["provider"] == "claude"]
+    assert working and working[-1]["model"] == "sonnet" and working[-1]["role"] == "reviewer"
+    worker.heartbeat()
+    idle = worker.redis.records[worker.worker_key()]
+    assert idle["role"] == "any" and idle["provider"] == "per role"
+    assert "reviewer claude/sonnet" in idle["model"] and "builder codex/" in idle["model"]
+
+
+def test_orchestrator_heartbeat_and_goal_record_the_planner(orch, fake_claude, monkeypatch):
+    orch.heartbeat()
+    beat = orch.r.records[f"sid:orchestrators:{orch.ORCHESTRATOR_ID}"]
+    assert (beat["provider"], beat["model"]) == ("claude", "opus")
+    monkeypatch.setenv("FAKE_CLAUDE_RESULT", '{"jobs": []}')
+    info = {}
+    orch.run_planner("goal", info=info)
+    assert info == {"provider": "claude", "model": "opus", "cost_usd": "0.0421"}
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "limit")
+    orch.run_codex_planner = lambda goal, atomic=False: {"jobs": []}
+    info = {}
+    orch.run_planner("goal", info=info)
+    assert info["provider"] == "codex" and "session limit" in info["fallback"]

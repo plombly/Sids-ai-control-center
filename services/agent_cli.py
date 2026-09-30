@@ -79,6 +79,16 @@ def role_provider(role):
     return provider
 
 
+def routing_summary(codex_model=""):
+    """e.g. 'builder codex/gpt-5.6-luna · reviewer claude/sonnet · ...'"""
+    parts = []
+    for role in ("builder", "reviewer", "repair"):
+        provider = role_provider(role)
+        model = claude_model(role) if provider == "claude" else codex_model
+        parts.append(f"{role} {provider}/{model}" if model else f"{role} {provider}")
+    return " · ".join(parts)
+
+
 def claude_model(role):
     return os.getenv(f"CLAUDE_{role.upper()}_MODEL") or DEFAULT_CLAUDE_MODELS[role]
 
