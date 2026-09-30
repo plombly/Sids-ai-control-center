@@ -58,10 +58,12 @@ READ_BLOCK_MS = 5000
 OUTPUT_LIMIT = 8000
 
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
-           "create_project", "project_retry_clone", "project_push_setup", "delete_project")
+           "create_project", "project_retry_clone", "project_push_setup", "delete_project",
+           "project_commit_upload")
 # Project-level actions run scripts/sid-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
-PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project")
+PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project",
+                   "project_commit_upload")
 # Actions that carry the exact integrated candidate the human confirmed.
 CANDIDATE_ACTIONS = ("approve", "queue_approve")
 DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
@@ -69,7 +71,7 @@ FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
-    "project_id", "name", "importance", "source", "url", "gate", "confirm",
+    "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload",
 )
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 # Web-requested clones and push remotes: network git URLs only (never a host
@@ -201,6 +203,15 @@ def validate_project_request(action, fields):
         if fields.get("confirm", "") != project_id:
             raise Invalid("type the project id to confirm deletion")
         request["confirm"] = project_id
+    elif action == "project_commit_upload":
+        if project_id == "sid":
+            raise Invalid("SID's own code cannot be changed by upload")
+        path = fields.get("path", "")
+        if not path or len(path) > 400 or any(ord(c) < 32 for c in path) or path.startswith("/"):
+            raise Invalid("invalid upload path")
+        if not REQUEST_ID.fullmatch(fields.get("upload", "")):
+            raise Invalid("invalid upload id")
+        request.update(path=path, upload=fields["upload"])
     elif action == "project_push_setup":
         if not GIT_URL.fullmatch(url):
             raise Invalid("push setup needs a git@..., ssh:// or https:// URL")
@@ -223,6 +234,8 @@ def project_cli_args(request):
         return ["retry-clone", project_id]
     if action == "delete_project":
         return ["delete", project_id, "--confirm", request["confirm"]]
+    if action == "project_commit_upload":
+        return ["commit-upload", project_id, "--path", request["path"], "--upload", request["upload"]]
     return ["push-setup", project_id, request["url"]]
 
 

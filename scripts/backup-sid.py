@@ -5,7 +5,10 @@ Each run writes BACKUP_ROOT/<UTC timestamp>/ (root-only) containing:
   repo.bundle        git bundle of every ref in REPO_ROOT (verified)
   redis.rdb          point-in-time Redis dump (jobs, goals, queues, audit)
   postgres.sql.gz    projects/tasks/agents database
-  config.tar.gz      /etc/sid-ai, SID systemd units and drop-ins, repo .env
+  config.tar.gz      /etc/sid-ai (incl. project deploy keys), SID systemd
+                     units and drop-ins, repo .env
+  projects/          <id>.bundle for every project repository, and
+                     project-data.tar.gz (every project's app data)
   manifest.json      sizes, checks, and what to do to restore
 then keeps the newest BACKUP_KEEP snapshots (default 14).
 
@@ -60,9 +63,12 @@ CONFIG_PATHS = [
     Path("/etc/systemd/system/sid-ai-backup.timer"),
     Path("/etc/systemd/system/sid-ai-watchdog.service"),
     Path("/etc/systemd/system/sid-ai-watchdog.timer"),
+    Path("/etc/systemd/system/sid-ai-apps.service"),
     REPO_ROOT / ".env",
 ]
 LAST_BACKUP_KEY = "sid:backup:last"
+PROJECTS_BASE = Path(os.getenv("SID_PROJECTS_BASE", "/opt/sid-projects"))
+PROJECT_DATA = Path(os.getenv("SID_PROJECT_DATA", "/opt/sid-project-data"))
 
 
 def run(command, **kwargs):
@@ -119,6 +125,29 @@ def backup_config(dest):
     return {"bytes": target.stat().st_size, "paths": included}
 
 
+def backup_projects(dest):
+    """A verified git bundle of each project repository (with commits) and
+    one tarball of all projects' app data."""
+    out = dest / "projects"
+    out.mkdir(mode=0o700, exist_ok=True)
+    bundles = {}
+    for repo in sorted(PROJECTS_BASE.glob("*/repo")):
+        if not (repo / ".git").is_dir() or run(["git", "-C", str(repo), "rev-parse", "--verify", "-q", "HEAD"]).returncode:
+            continue
+        target = out / f"{repo.parent.name}.bundle"
+        made = run(["git", "-C", str(repo), "bundle", "create", str(target), "--all"])
+        if made.returncode or run(["git", "-C", str(repo), "bundle", "verify", str(target)]).returncode:
+            raise RuntimeError(f"bundle of {repo.parent.name} failed: {made.stderr.strip()[:200]}")
+        bundles[repo.parent.name] = target.stat().st_size
+    data_bytes = 0
+    if PROJECT_DATA.is_dir() and any(PROJECT_DATA.iterdir()):
+        archive = out / "project-data.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(str(PROJECT_DATA), arcname=str(PROJECT_DATA).lstrip("/"))
+        data_bytes = archive.stat().st_size
+    return {"bundles": bundles, "data_bytes": data_bytes}
+
+
 def push_git_remote():
     branches = [b.strip() for b in BACKUP_GIT_BRANCHES if b.strip()]
     result = run(["git", "-C", str(REPO_ROOT), "push", BACKUP_GIT_REMOTE, *branches])
@@ -153,7 +182,8 @@ def main():
     dest.mkdir(mode=0o700)
     manifest = {"created": stamp, "repo_root": str(REPO_ROOT), "parts": {}, "errors": {}}
     for name, step in (("repo", backup_repo), ("redis", backup_redis),
-                       ("postgres", backup_postgres), ("config", backup_config)):
+                       ("postgres", backup_postgres), ("config", backup_config),
+                       ("projects", backup_projects)):
         try:
             manifest["parts"][name] = step(dest)
         except Exception as exc:

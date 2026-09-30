@@ -204,6 +204,18 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   and <project>/data writable), env PORT (8100-8199, assigned once) and
   HOST=0.0.0.0. Redeploys on a new main commit, changed command/port or
   POST /api/projects/<id>/app/restart; status in sid:app-status:<id>.
+- Files (web #/projects/<id>/files, apps/api/file_routes.py): browse and
+  download "Code (main)" = the project's repo checkout (read-only mount
+  /opt/sid-projects:/projects:ro in the api container, .git hidden) and
+  "App data" = /opt/sid-project-data/<id> (rw mount; the app's DATA_DIR);
+  upload/new folder/delete in data. Code uploads are staged in
+  /opt/sid-uploads/<request_id>/file and committed to main on the host by
+  sid-project.py commit-upload (operator action project_commit_upload,
+  holds the project's approval lock, author "SID operator", hooks off).
+  Paths are confined (no .., no .git, symlinks may not lead out); SID's own
+  repo is not browsable. New deploy keys live in /etc/sid-ai/project-keys/
+  <id>/ (older ones stay in the project dir). Backups include every project
+  repo bundle and a tarball of /opt/sid-project-data.
 - Delete: sid-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
   Refuses SID and projects with running work; removes queued work,

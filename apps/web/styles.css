@@ -665,3 +665,28 @@ label {
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+.file-tabs {
+  display: flex;
+  gap: 8px;
+}
+.file-tabs button.active {
+  background: var(--accent);
+  color: var(--bg);
+}
+.breadcrumb {
+  margin: 12px 0;
+}
+.file-actions {
+  margin-bottom: 12px;
+}
+.file-actions label.button {
+  cursor: pointer;
+}
+.file-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+.file-table td:last-child > * + * {
+  margin-left: 6px;
+}

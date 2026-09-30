@@ -43,6 +43,11 @@ def redis(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def keys_in_tmp(monkeypatch, tmp_path):
+    monkeypatch.setattr(sid_project, "KEYS_BASE", tmp_path / "keys")
+
+
+@pytest.fixture(autouse=True)
 def git_environment(monkeypatch, tmp_path):
     config = tmp_path / "gitconfig"
     config.write_text("")
@@ -165,6 +170,8 @@ def deletable(monkeypatch, tmp_path):
     base = tmp_path / "projects"
     monkeypatch.setattr(sid_project, "PROJECTS_BASE", base)
     monkeypatch.setattr(sid_project, "SYSTEMCTL", "true")
+    monkeypatch.setattr(sid_project, "KEYS_BASE", tmp_path / "keys")
+    monkeypatch.setattr(sid_project.sid_projects, "DATA_BASE", tmp_path / "project-data")
     root = base / "shop"
     for sub in ("repo", "worktrees", "logs"):
         (root / sub).mkdir(parents=True)
@@ -238,3 +245,100 @@ def test_delete_ignores_a_symlinked_project_root(deletable, capsys, tmp_path):
     fake.hashes["sid:projects:linked"] = {"id": "linked", "root": str(link), "repo": str(link / "repo"), "status": "active"}
     code, _, out = invoke(["delete", "linked", "--confirm", "linked"], capsys)
     assert code == 0 and "removed_path" not in out and (target / "keep.txt").exists()
+
+
+def test_delete_also_removes_app_data_and_the_key_dir(deletable, capsys, tmp_path):
+    fake, root = deletable
+    data = tmp_path / "project-data" / "shop"
+    data.mkdir(parents=True)
+    (data / "app.db").write_text("x")
+    keys = tmp_path / "keys" / "shop"
+    keys.mkdir(parents=True)
+    code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    assert code == 0 and not data.exists() and not keys.exists()
+    assert (tmp_path / "project-data").exists()
+
+
+def test_new_deploy_keys_live_outside_the_project_directory(tmp_path):
+    root = tmp_path / "shop"
+    root.mkdir()
+    key = sid_project.make_key(root, "shop")
+    assert key == tmp_path / "keys" / "shop" / "deploy_key" and key.exists()
+    assert not (root / "deploy_key").exists()
+
+
+# --- commit-upload: a file from the dashboard onto main ---------------------------------
+
+class UploadRedis(FakeRedis):
+    def __init__(self):
+        super().__init__()
+        self.strings = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.strings:
+            return False
+        self.strings[key] = value
+        return True
+
+    def eval(self, script, numkeys, key, token):
+        if self.strings.get(key) == token:
+            del self.strings[key]
+
+
+@pytest.fixture
+def uploadable(monkeypatch, tmp_path):
+    fake = UploadRedis()
+    monkeypatch.setattr(sid_project, "get_redis", lambda: fake)
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(sid_project, "UPLOADS_BASE", uploads)
+    repo = tmp_path / "shop" / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "README.md").write_text("hi\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True)
+    fake.hashes["sid:projects:shop"] = {"id": "shop", "repo": str(repo), "default_branch": "main", "status": "active"}
+
+    def stage(upload_id, content=b"data"):
+        (uploads / upload_id).mkdir(parents=True)
+        (uploads / upload_id / "file").write_bytes(content)
+    return fake, repo, uploads, stage
+
+
+def test_upload_is_committed_to_main_and_the_staging_removed(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    stage("upload-0001", b"\x89PNG")
+    code, captured, out = invoke(["commit-upload", "shop", "--path", "static/img/logo.png", "--upload", "upload-0001"], capsys)
+    assert code == 0, captured.err
+    assert out["status"] == "committed" and (repo / "static/img/logo.png").read_bytes() == b"\x89PNG"
+    log = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%an|%s"], capture_output=True, text=True).stdout
+    assert log.strip() == "SID operator|Upload static/img/logo.png from the dashboard"
+    assert not (uploads / "upload-0001").exists() and not fake.strings
+
+
+@pytest.mark.parametrize("path", ["../x", "/etc/passwd", ".git/hooks/post-commit", "a/../../x", "a/.git/config", "", "a\nb"])
+def test_upload_paths_are_confined_to_the_repository(uploadable, capsys, path):
+    fake, repo, uploads, stage = uploadable
+    stage("upload-0002")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", path, "--upload", "upload-0002"], capsys)
+    assert code == 1 and "invalid path" in captured.err
+    assert not (uploads / "upload-0002").exists()  # staging is always cleaned up
+
+
+def test_upload_refuses_symlinked_parents_dirty_main_and_a_held_lock(uploadable, capsys, tmp_path):
+    fake, repo, uploads, stage = uploadable
+    (repo / "link").symlink_to(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "add", "link"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "link"], check=True)
+    stage("upload-0003")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", "link/x.txt", "--upload", "upload-0003"], capsys)
+    assert code == 1 and "link" in captured.err and not (tmp_path / "x.txt").exists()
+    (repo / "dirty.txt").write_text("x")
+    stage("upload-0004")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", "a.txt", "--upload", "upload-0004"], capsys)
+    assert code == 1 and "uncommitted" in captured.err
+    (repo / "dirty.txt").unlink()
+    fake.strings["sid:approval-lock:shop"] = "someone"
+    stage("upload-0005")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", "a.txt", "--upload", "upload-0005"], capsys)
+    assert code == 1 and "approval" in captured.err and fake.strings["sid:approval-lock:shop"] == "someone"
+    assert invoke(["commit-upload", "sid", "--path", "a.txt", "--upload", "upload-0006"], capsys)[0] == 1

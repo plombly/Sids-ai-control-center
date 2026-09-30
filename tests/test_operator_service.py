@@ -480,3 +480,16 @@ def test_delete_request_validates_to_its_confirmation(op):
     request = op.validate({"action": "delete_project", "project_id": "web", "confirm": "web"},
                           f"{int(NOW * 1000)}-0", NOW)
     assert request["confirm"] == "web" and op.project_cli_args(request)[:2] == ["delete", "web"]
+
+
+def test_commit_upload_request(op):
+    request = op.validate({"action": "project_commit_upload", "project_id": "web", "path": "static/a.png",
+                           "upload": "upload-0001"}, f"{int(NOW * 1000)}-0", NOW)
+    assert op.project_cli_args(request) == ["commit-upload", "web", "--path", "static/a.png", "--upload", "upload-0001"]
+    for bad in ({"path": "/etc/x", "upload": "upload-0001"}, {"path": "a", "upload": "../x"},
+                {"path": "a\nb", "upload": "upload-0001"}):
+        with pytest.raises(op.Invalid):
+            op.validate({"action": "project_commit_upload", "project_id": "web", **bad}, f"{int(NOW * 1000)}-0", NOW)
+    with pytest.raises(op.Invalid, match="SID"):
+        op.validate({"action": "project_commit_upload", "project_id": "sid", "path": "a", "upload": "upload-0001"},
+                    f"{int(NOW * 1000)}-0", NOW)

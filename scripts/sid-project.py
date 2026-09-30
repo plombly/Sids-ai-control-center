@@ -10,7 +10,8 @@ import stat
 import subprocess
 import sys
 import time
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import sid_redis  # noqa: E402  (services/sid_redis.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
@@ -20,6 +21,8 @@ PROJECT_SET = "sid:projects"
 # Directories under this base are the only ones delete ever removes.
 PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
 SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
+KEYS_BASE = Path(os.environ.get("SID_PROJECT_KEYS", "/etc/sid-ai/project-keys"))
+UPLOADS_BASE = Path(os.environ.get("SID_UPLOADS", "/opt/sid-uploads"))
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -85,7 +88,15 @@ def register(redis_client, record):
 
 
 def make_key(root, project_id):
-    key = Path(root) / "deploy_key"
+    """The project's deploy key. New keys live in KEYS_BASE/<id>/ (root-only,
+    outside the project directory, which the API container can read); a key
+    made before that stays where it is."""
+    legacy = Path(root) / "deploy_key"
+    if legacy.exists():
+        return legacy
+    key_dir = KEYS_BASE / project_id
+    key_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    key = key_dir / "deploy_key"
     if not key.exists():
         run_command(["ssh-keygen", "-t", "ed25519", "-N", "", "-C",
                      f"sid-project {project_id} deploy key", "-f", str(key)])
@@ -306,9 +317,85 @@ def delete(args):
         result["removed_path"] = str(root)
     else:
         result["kept_paths"] = sorted({record.get(k, "") for k in ("repo", "worktrees", "logs") if record.get(k)})
+    # Its app data and deploy key: exactly <base>/<id>, real directories only.
+    for base, name in ((sid_projects.DATA_BASE, "data"), (KEYS_BASE, "key")):
+        target = base / args.id
+        if target.is_dir() and not target.is_symlink() and target.resolve().parent == base.resolve():
+            shutil.rmtree(target)
+            result[f"removed_{name}"] = str(target)
     if record.get("push_remote"):
         result["note"] = "Remove the project's deploy key from the GitHub repository settings"
     return result
+
+
+UPLOAD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+
+
+def repo_path_parts(rel):
+    """A file path inside a repository, as parts; refuses anything that is
+    absolute, climbs out, touches .git or contains control characters."""
+    rel = rel or ""
+    parts = PurePosixPath(rel).parts
+    if (not rel or len(rel) > 400 or rel.startswith("/") or "\\" in rel
+            or any(ord(c) < 32 for c in rel) or not parts
+            or any(part in ("", ".", "..", ".git") for part in parts)):
+        raise ProjectError(f"invalid path: {rel!r}")
+    return parts
+
+
+def commit_upload(args):
+    """Commit a file uploaded from the dashboard (staged by the API in
+    UPLOADS_BASE/<upload>/file) to the project's main, as the operator.
+    Holds the project's approval lock so it never races a merge."""
+    validate_id(args.id)
+    if args.id == "sid":
+        raise ProjectError("SID's own code cannot be changed by upload")
+    if not UPLOAD_ID.fullmatch(args.upload or ""):
+        raise ProjectError("invalid upload id")
+    staged_dir = UPLOADS_BASE / args.upload
+    staged = staged_dir / "file"
+    try:
+        parts = repo_path_parts(args.path)
+        r = get_redis()
+        record = project(r, args.id)
+        if staged.is_symlink() or not staged.is_file():
+            raise ProjectError("uploaded file not found (it may have expired)")
+        repo = Path(record["repo"])
+        lock_key, token = f"sid:approval-lock:{args.id}", uuid.uuid4().hex
+        if not r.set(lock_key, token, nx=True, ex=300):
+            raise ProjectError("main is being advanced by an approval right now; try again in a moment")
+        try:
+            branch = run_git(["symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
+            if branch != (record.get("default_branch") or "main"):
+                raise ProjectError(f"the project's checkout is on {branch!r}, not its main branch")
+            if run_git(["status", "--porcelain"], cwd=repo).stdout.strip():
+                raise ProjectError("the project's main checkout has uncommitted changes")
+            current = repo
+            for part in parts[:-1]:
+                current = current / part
+                if current.is_symlink() or (current.exists() and not current.is_dir()):
+                    raise ProjectError(f"{args.path}: a parent is a file or a link")
+            dest = repo.joinpath(*parts)
+            if dest.is_symlink() or dest.is_dir():
+                raise ProjectError(f"{args.path} is a folder or a link")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(staged, dest)
+            rel = "/".join(parts)
+            run_git(["add", "--", rel], cwd=repo)
+            if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo).returncode == 0:
+                return {"id": args.id, "status": "unchanged", "path": rel}
+            who = {"GIT_AUTHOR_NAME": "SID operator", "GIT_AUTHOR_EMAIL": "operator@sid.local",
+                   "GIT_COMMITTER_NAME": "SID operator", "GIT_COMMITTER_EMAIL": "operator@sid.local"}
+            run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m",
+                     f"Upload {rel} from the dashboard"], cwd=repo, env={**os.environ, **who})
+            head = run_git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        finally:
+            r.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) "
+                   "else return 0 end", 1, lock_key, token)
+    finally:
+        if staged_dir.is_dir() and not staged_dir.is_symlink() and staged_dir.parent == UPLOADS_BASE:
+            shutil.rmtree(staged_dir, ignore_errors=True)
+    return {"id": args.id, "status": "committed", "path": rel, "commit": head}
 
 
 def retry_clone(args):
@@ -346,6 +433,7 @@ def main(argv=None):
     p = sub.add_parser("set-importance"); p.add_argument("id"); p.add_argument("level")
     p = sub.add_parser("archive"); p.add_argument("id")
     p = sub.add_parser("delete"); p.add_argument("id"); p.add_argument("--confirm", required=True, help="the project id again")
+    p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True)
     p = sub.add_parser("show"); p.add_argument("id")
     sub.add_parser("list")
     args = parser.parse_args(argv)
@@ -361,6 +449,8 @@ def main(argv=None):
             validate_id(args.id); r = get_redis(); record = project(r, args.id); record["status"] = "archived"; record["updated_at"] = now(); r.hset(key_for(args.id), mapping=record); result = record
         elif args.command == "delete":
             result = delete(args)
+        elif args.command == "commit-upload":
+            result = commit_upload(args)
         elif args.command == "show":
             validate_id(args.id); result = project(get_redis(), args.id)
         else:

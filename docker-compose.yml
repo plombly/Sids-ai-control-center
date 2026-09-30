@@ -55,6 +55,13 @@ services:
         required: false
       - path: /etc/sid-ai/redis.env
         required: false
+    # Project file browser (apps/api/file_routes.py): code read-only, app
+    # data and staged code uploads writable. Repositories are only ever
+    # written on the host (sid-project.py commit-upload).
+    volumes:
+      - /opt/sid-projects:/projects:ro
+      - /opt/sid-project-data:/project-data
+      - /opt/sid-uploads:/uploads
     depends_on:
       postgres:
         condition: service_healthy

@@ -44,7 +44,7 @@ export function projectDetailMarkup(project) {
   const jobRows = jobs.map(job => `<tr><td><button type="button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${pill(
     job.status
   )}</td><td>${esc(job.review_verdict)}</td><td>${esc(job.provider)}/${esc(job.model)}</td></tr>`).join('');
-  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECT</p><h2>${esc(name)}</h2></div><label>Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
+  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECT</p><h2>${esc(name)}</h2></div>${id && id !== 'sid' ? `<a class="button" href="#/projects/${encodeURIComponent(id)}/files">Files</a>` : ''}<label>Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
     project.importance === 'low' ? ' selected' : ''
@@ -163,7 +163,7 @@ if (typeof document !== 'undefined') {
   };
   async function render(route, force = false) {
     const container = root();
-    if (!container || route.view !== 'projects' || route.create || busy || (!force && focusedForm(container))) return;
+    if (!container || route.view !== 'projects' || route.create || route.files || busy || (!force && focusedForm(container))) return;
     const version = ++renderVersion;
     if (route.projectId === null) {
       try {
@@ -187,7 +187,7 @@ if (typeof document !== 'undefined') {
     activeRoute = route;
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
-    if (route.view !== 'projects' || route.create) return;
+    if (route.view !== 'projects' || route.create || route.files) return;
     render(route, true);
     refreshTimer = setInterval(() => render(activeRoute), 5000);
   });

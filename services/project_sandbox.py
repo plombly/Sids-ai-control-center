@@ -21,8 +21,8 @@ Inside the sandbox a process sees:
     persistent per-project package cache (<project>/cache as HOME), because
     npm/pip must download. It is otherwise confined like a gate;
   - for a running app (services/apps/sid_apps.py), the host network (so your
-    PC can reach its port), its live checkout writable and a persistent
-    <project>/data directory (HOME and DATA_DIR).
+    PC can reach its port), its live checkout writable and its persistent
+    data directory /opt/sid-project-data/<id> (HOME and DATA_DIR).
 
 The SID project itself is the control plane and is never sandboxed here.
 """
@@ -35,7 +35,8 @@ BWRAP = os.environ.get("SID_BWRAP", "/usr/bin/bwrap")
 # Hidden from every sandbox (replaced by an empty tmpfs when present).
 HIDDEN = (
     "/opt/sids-ai-command-center", "/opt/sid-dev", "/opt/sid-worktrees",
-    "/opt/sid-projects", "/etc/sid-ai", "/var/backups", "/var/log/sid-ai",
+    "/opt/sid-projects", "/opt/sid-project-data", "/opt/sid-uploads", "/etc/sid-ai",
+    "/var/backups", "/var/log/sid-ai",
     "/root", "/home", "/srv", "/mnt", "/media",
 )
 # Sockets that grant root on the host.
@@ -97,9 +98,10 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
         for path in AGENT_STATE:
             if _exists(path):
                 args += ["--bind", path, path]
-    if kind == "app" and project_root.is_dir():
-        data = project_root / "data"
-        data.mkdir(exist_ok=True)
+    if kind == "app":
+        import sid_projects
+        data = sid_projects.data_dir(project.id)
+        data.mkdir(parents=True, exist_ok=True)
         args += ["--bind", str(data), str(data), "--setenv", "HOME", str(data), "--setenv", "DATA_DIR", str(data)]
     if kind == "setup" and project_root.is_dir():
         cache = project_root / "cache"

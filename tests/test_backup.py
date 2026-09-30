@@ -28,6 +28,7 @@ def fake_steps(bk, fail=None):
         return run
     bk.backup_repo, bk.backup_redis = step("repo"), step("redis")
     bk.backup_postgres, bk.backup_config = step("postgres"), step("config")
+    bk.backup_projects = step("projects")
 
 
 def test_snapshot_is_root_only_with_manifest(bk):
@@ -37,7 +38,7 @@ def test_snapshot_is_root_only_with_manifest(bk):
     assert oct(bk.BACKUP_ROOT.stat().st_mode)[-3:] == "700"
     assert oct(snap.stat().st_mode)[-3:] == "700"
     manifest = json.loads((snap / "manifest.json").read_text())
-    assert set(manifest["parts"]) == {"repo", "redis", "postgres", "config"} and not manifest["errors"]
+    assert set(manifest["parts"]) == {"repo", "redis", "postgres", "config", "projects"} and not manifest["errors"]
     assert bk.recorded[-1]["ok"] is True
 
 
@@ -118,3 +119,24 @@ def test_git_remote_push_failure_fails_the_backup(bk, monkeypatch):
     monkeypatch.setattr(bk, "run", lambda cmd, **k: SimpleNamespace(returncode=1, stderr="rejected (non-fast-forward)", stdout=""))
     assert bk.main() == 1
     assert "non-fast-forward" in bk.recorded[-1]["errors"]["git_remote"]
+
+
+def test_projects_are_bundled_with_their_app_data(bk, tmp_path):
+    import subprocess
+    import tarfile
+    base, data = tmp_path / "projects", tmp_path / "project-data"
+    repo = base / "shop" / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    (repo / "a.txt").write_text("a")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a"], check=True)
+    subprocess.run(["git", "init", "-q", str(base / "empty" / "repo")], check=True)  # no commits: skipped
+    (data / "shop").mkdir(parents=True)
+    (data / "shop" / "app.db").write_text("rows")
+    bk.PROJECTS_BASE, bk.PROJECT_DATA = base, data
+    dest = tmp_path / "snap"
+    dest.mkdir()
+    result = bk.backup_projects(dest)
+    assert set(result["bundles"]) == {"shop"} and result["data_bytes"] > 0
+    names = tarfile.open(dest / "projects" / "project-data.tar.gz").getnames()
+    assert any(n.endswith("shop/app.db") for n in names)

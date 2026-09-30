@@ -16,6 +16,9 @@ import re
 from pathlib import Path
 
 SID_PROJECT = "sid"
+# A project's app data (uploads, databases) lives outside its directory so
+# the API container can be given write access to it and nothing else.
+DATA_BASE = Path(os.environ.get("SID_PROJECT_DATA", "/opt/sid-project-data"))
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 IMPORTANCE = ("high", "medium", "low")
 
@@ -221,3 +224,11 @@ def verify_worktree_pointer(top, repo):
             raise ValueError(f"points to {target}")
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"worktree {top.name} .git pointer was tampered with ({exc}); refusing to run git in it")
+
+
+def data_dir(project_id):
+    """<DATA_BASE>/<id>: the project's app data (HOME/DATA_DIR of its app,
+    the "Data" area of the dashboard file browser)."""
+    if not PROJECT_ID.fullmatch(project_id or ""):
+        raise ValueError(f"invalid project id: {project_id!r}")
+    return DATA_BASE / project_id
