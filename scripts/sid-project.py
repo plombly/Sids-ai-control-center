@@ -169,16 +169,21 @@ def create(args):
     repo.mkdir(); worktrees.mkdir(); logs.mkdir()
     record = base_record(args.id, args.name, args.importance, root, repo, worktrees, logs)
     clone_env = None
+    is_ssh = False
     if args.clone:
         record["clone_url"] = args.clone
         if args.clone.startswith(("git@", "ssh://")):
             key = make_key(root, args.id)
             record["deploy_key"] = str(key)
             clone_env = ssh_env(key)
+            is_ssh = True
+        else:
+            clone_env = os.environ.copy()
+            clone_env["GIT_TERMINAL_PROMPT"] = "0"
         try:
             run_git(["clone", args.clone, str(repo)], env=clone_env)
         except ProjectError as exc:
-            if clone_env is not None:
+            if is_ssh:
                 record["status"] = "pending_key"
                 record["gate_command"] = ""
                 record["updated_at"] = now()
