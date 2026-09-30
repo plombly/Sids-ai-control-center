@@ -252,3 +252,13 @@ def test_merge_queue_processes_every_project_on_its_own_main(job_review, fake_gi
     assert job_review.process_merge_queue() == []
     assert repos == [job_review.REPO_ROOT, (tmp_path / "web-shop" / "repo").resolve()]
     assert set(k for k in r.values if k.startswith("sid:main-head")) == {"sid:main-head", "sid:main-head:web-shop"}
+
+
+def test_project_gates_find_the_venvs_python_tooling(worker, tmp_path, monkeypatch):
+    register(worker.redis, "py", tmp_path, gate_command='python3 -c "import pytest; print(\'pytest-ok\')"')
+    worker.use_project(worker.sid_projects.load(worker.redis, "py"))
+    monkeypatch.setattr(worker, "SID_PYTHON", "/opt/sid-venv/bin/python")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    ok, output = worker.run_tests(tmp_path)
+    assert ok and "pytest-ok" in output
+    assert worker.gate_env()["PATH"].startswith("/opt/sid-venv/bin" + __import__("os").pathsep)

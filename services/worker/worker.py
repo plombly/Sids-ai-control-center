@@ -176,6 +176,16 @@ def use_project(project):
         REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = project.repo, project.worktrees, project.logs
 
 
+def gate_env():
+    """Environment for project gates: SID's venv first on PATH, so
+    'python3 -m pytest' (the detected default for Python projects) finds the
+    test tooling; system tools (npm, cargo, go, make) still resolve."""
+    env = os.environ.copy()
+    venv_bin = str(Path(SID_PYTHON).parent)
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    return env
+
+
 def project_gate(worktree, timeout=900):
     """(ok, output) of a non-SID project's own gate command, run in worktree."""
     command = PROJECT.gate_command if PROJECT else ""
@@ -183,7 +193,7 @@ def project_gate(worktree, timeout=900):
         return True, f"no gate command configured for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
     try:
         result = subprocess.run(["/bin/sh", "-c", command], cwd=worktree, text=True,
-                                capture_output=True, timeout=timeout)
+                                capture_output=True, timeout=timeout, env=gate_env())
     except subprocess.TimeoutExpired:
         return False, f"$ {command}\ntimed out after {timeout}s\n"
     return result.returncode == 0, f"$ {command}\n{result.stdout}{result.stderr}"
