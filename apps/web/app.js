@@ -91,6 +91,21 @@ export const jobAction = (jobId, body, fetchImpl = fetch) =>
   );
 export const operatorRequest = (requestId, fetchImpl = fetch) =>
   requestJSON(`/api/operator-requests/${encodeURIComponent(requestId)}`, { method: 'GET' }, fetchImpl);
+export async function dismiss(ids, fetchImpl = fetch) {
+  const response = await fetchImpl('/api/dismissals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids })
+  });
+  if (!response.ok) throw new Error(`Unable to dismiss items (HTTP ${response.status})`);
+  return response.json();
+}
+export async function loadDismissals(fetchImpl = fetch) {
+  const response = await fetchImpl('/api/dismissals');
+  if (!response.ok) throw new Error(`Unable to load dismissals (HTTP ${response.status})`);
+  const body = await response.json();
+  return body.ids;
+}
 export async function poll(fetchImpl = fetch) {
   if (state.polling) return state;
   state.polling = true;
@@ -102,6 +117,9 @@ export async function poll(fetchImpl = fetch) {
           ? { data: result.value, error: null, stale: false }
           : { ...state[key], error: result.reason?.message || 'Request failed', stale: state[key].data !== null };
     });
+    try {
+      state.dismissed = new Set(await loadDismissals(fetchImpl));
+    } catch {}
     state.lastUpdated = new Date();
     render();
   } finally {
@@ -234,7 +252,8 @@ export function render() {
   document.getElementById('metric-orchestrators').textContent = `Orchestrators ${orchestrators.length}`;
   document.getElementById('orchestrator-count').textContent = orchestrators.length;
   document.getElementById('approval-count').textContent = approvals.length;
-  document.getElementById('failure-count').textContent = failures.length;
+  const visibleFailures = failures.filter(j => !state.dismissed.has(j.id));
+  document.getElementById('failure-count').textContent = visibleFailures.length;
   list(
     'orchestrators',
     orchestrators,
@@ -256,7 +275,7 @@ export function render() {
   list('approvals', approvals, approvalMarkup, 'No jobs are ready for approval');
   list(
     'failures',
-    failures.filter(j => !state.dismissed.has(j.id)),
+    visibleFailures,
     j =>
       `<div class="item history-item"><div class="item-head"><span class="item-title">${esc(j.id)}</span>${pill(j.status)}</div><p>${esc(j.error || 'Failure reason unavailable')}</p><button data-dismiss="${esc(j.id)}">Dismiss</button></div>`,
     'No historical failures'
@@ -267,6 +286,8 @@ export function render() {
       : '<div class="empty">No jobs found</div>';
   document.getElementById('jobs').innerHTML = table(actionJobs);
   document.getElementById('history').innerHTML = table(history);
+  document.querySelector('[data-dismiss-all="failures"]').disabled = visibleFailures.length === 0;
+  document.querySelector('[data-dismiss-all="history"]').disabled = history.length === 0;
   const historyRange = document.getElementById('history-range'),
     historyNewer = document.querySelector('[data-history="newer"]'),
     historyOlder = document.querySelector('[data-history="older"]');
@@ -399,7 +420,7 @@ if (typeof document !== 'undefined') {
   loadHistoryPage();
   setInterval(() => poll(), POLL_MS);
   setInterval(() => loadHistoryPage(), HISTORY_REFRESH_MS);
-  document.addEventListener('click', event => {
+  document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button) return;
     if (button.dataset.detailClose) {
@@ -421,9 +442,22 @@ if (typeof document !== 'undefined') {
         });
       return;
     }
-    if (button.dataset.dismiss) {
-      state.dismissed.add(button.dataset.dismiss);
-      render();
+    if (button.dataset.dismiss || button.dataset.dismissAll) {
+      const panelId = button.dataset.dismissAll,
+        ids = panelId
+          ? [...document.querySelectorAll(`#${panelId} [data-dismiss]`)].map(item => item.dataset.dismiss).slice(0, 500)
+          : [button.dataset.dismiss];
+      button.disabled = true;
+      try {
+        await dismiss(ids);
+        ids.forEach(id => state.dismissed.add(id));
+        render();
+      } catch (error) {
+        const banner = document.getElementById('banner');
+        banner.hidden = false;
+        banner.textContent = error.message;
+        button.disabled = false;
+      }
     }
     if (button.dataset.action) {
       const id = button.dataset.worker,

@@ -15,7 +15,7 @@ from redis import Redis
 import os
 
 from database import init_database
-from schemas import GoalAccepted, GoalSubmit, OperatorActionRequest, PromptSubmit, WorkerAction
+from schemas import DismissalsRequest, GoalAccepted, GoalSubmit, OperatorActionRequest, PromptSubmit, WorkerAction
 
 app = FastAPI(
     title="SID's AI Command Center",
@@ -472,6 +472,32 @@ def _valid_identifier(value, label="identifier"):
     if not value or not _IDENTIFIER.fullmatch(value):
         raise HTTPException(status_code=422, detail=f"Invalid {label}")
     return value
+
+
+@app.get("/api/dismissals")
+def api_dismissals():
+    values = redis.smembers("sid:dismissed")
+    return {"ids": sorted(value.decode() if isinstance(value, bytes) else str(value) for value in values)}
+
+
+@app.post("/api/dismissals")
+def add_dismissals(payload: DismissalsRequest):
+    ids = []
+    seen = set()
+    for value in payload.ids:
+        if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+            raise HTTPException(status_code=422, detail="Invalid dismissal id")
+        if value not in seen:
+            seen.add(value)
+            ids.append(value)
+    added = [item_id for item_id in ids if redis.sadd("sid:dismissed", item_id) == 1]
+    return {"ids": added, "total": redis.scard("sid:dismissed")}
+
+
+@app.delete("/api/dismissals/{item_id:path}")
+def remove_dismissal(item_id: str):
+    _valid_identifier(item_id, "dismissal id")
+    return {"id": item_id, "removed": redis.srem("sid:dismissed", item_id) == 1}
 
 
 def _goal_record(goal_id):

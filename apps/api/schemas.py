@@ -61,6 +61,10 @@ class WorkerAction(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=500)
 
 
+class DismissalsRequest(BaseModel):
+    ids: list[Any] = Field(min_length=1, max_length=500)
+
+
 class OperatorActionRequest(BaseModel):
     """An operator action for the host-side operator service to execute.
 

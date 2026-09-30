@@ -32,6 +32,7 @@ class FakeRedis:
     def __init__(self, hashes, queue_depth=0):
         self.hashes = hashes
         self.queue_depth = queue_depth
+        self.sets = {}
 
     def scan_iter(self, pattern):
         prefix = pattern[:-1]
@@ -45,6 +46,25 @@ class FakeRedis:
 
     def llen(self, _key):
         return self.queue_depth
+
+    def sadd(self, key, value):
+        values = self.sets.setdefault(key, set())
+        added = value not in values
+        values.add(value)
+        return int(added)
+
+    def srem(self, key, value):
+        values = self.sets.setdefault(key, set())
+        if value in values:
+            values.remove(value)
+            return 1
+        return 0
+
+    def smembers(self, key):
+        return self.sets.get(key, set())
+
+    def scard(self, key):
+        return len(self.sets.get(key, set()))
 
 
 def dashboard_redis(monkeypatch):
@@ -106,6 +126,24 @@ def test_dashboard_endpoints_and_bounded_normalization(client, monkeypatch):
     assert status["queue"]["depth"] == 3
     assert status["active_goal"]["id"] == "g1"
     assert status["pending_human_approvals"][0]["id"] == "j1"
+
+
+def test_dismissals_use_only_the_dismissed_set(client, monkeypatch):
+    fake = dashboard_redis(monkeypatch)
+    before = {key: value.copy() if isinstance(value, dict) else value for key, value in fake.hashes.items()}
+
+    assert client.post("/api/dismissals", json={"ids": ["j2", "g1", "j2"]}).json() == {
+        "ids": ["j2", "g1"], "total": 2
+    }
+    assert client.post("/api/dismissals", json={"ids": ["g1", "j3"]}).json() == {"ids": ["j3"], "total": 3}
+    assert client.get("/api/dismissals").json() == {"ids": ["g1", "j2", "j3"]}
+    assert client.delete("/api/dismissals/j2").json() == {"id": "j2", "removed": True}
+    assert client.delete("/api/dismissals/j2").json() == {"id": "j2", "removed": False}
+    assert client.delete("/api/dismissals/bad/id").status_code == 422
+    assert client.post("/api/dismissals", json={"ids": []}).status_code == 422
+    assert client.post("/api/dismissals", json={"ids": ["j1"] * 501}).status_code == 422
+    assert client.post("/api/dismissals", json={"ids": ["bad/id"]}).status_code == 422
+    assert fake.hashes == before
 
 
 def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, monkeypatch):

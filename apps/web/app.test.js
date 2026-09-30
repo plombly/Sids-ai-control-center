@@ -13,7 +13,9 @@ import {
   jobActionsMarkup,
   approvalMarkup,
   fetchJobDetail,
-  jobDetailMarkup
+  jobDetailMarkup,
+  dismiss,
+  loadDismissals
 } from './app.js';
 
 async function main() {
@@ -74,6 +76,19 @@ async function main() {
   assert.equal(endpointPaths[0], '/api/jobs?limit=100');
   assert.equal(endpointPaths[1], '/api/status');
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:false,status:503})), /HTTP 503/);
+  const dismissalCalls = [];
+  const dismissalFetch = async (path, options = {}) => {
+    dismissalCalls.push([path, options]);
+    return {ok:true, json:async()=>({ids:['j-1']})};
+  };
+  assert.deepEqual(await dismiss(['j-1'], dismissalFetch), {ids:['j-1']});
+  assert.equal(dismissalCalls[0][0], '/api/dismissals');
+  assert.equal(dismissalCalls[0][1].method, 'POST');
+  assert.deepEqual(JSON.parse(dismissalCalls[0][1].body), {ids:['j-1']});
+  assert.deepEqual(await loadDismissals(dismissalFetch), ['j-1']);
+  assert.equal(dismissalCalls[1][1].method, undefined);
+  await assert.rejects(dismiss(['j-1'], async () => ({ok:false,status:422})), /HTTP 422/);
+  await assert.rejects(loadDismissals(async () => ({ok:false,status:503})), /HTTP 503/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>{throw new Error('bad')}})), /Malformed JSON/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>({})})), /Malformed payload/);
   const result = await fetchEndpoint('jobs', async () => ({ok:true,json:async()=>[{id:'j-1'}]}));
@@ -127,6 +142,9 @@ async function main() {
   assert.match(jobDetailMarkup({id:'j2'}), /No gate result/);
   assert.match(jobDetailMarkup({id:'j2'}), /<span>—<\/span>/);
   const appSource = fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  const indexSource = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  assert.match(indexSource, /data-dismiss-all="failures"/);
+  assert.match(indexSource, /data-dismiss-all="history"/);
   for (const field of ['command_count', 'j.files', 'j.base', 'j.candidate', 'j.tests', 'j.error']) {
     assert.match(appSource, new RegExp(field.replace('.', '\\.')));
   }
