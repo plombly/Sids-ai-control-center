@@ -2,7 +2,7 @@
 
 import pytest
 
-from conftest import BASE, INTEGRATED, JOB, make_builder as builder
+from sid_testing import BASE, INTEGRATED, JOB, make_builder as builder
 
 
 def refused(call, contains):
@@ -104,11 +104,24 @@ def test_reject_refuses_unexpected_paths_before_removing_anything(
     assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "awaiting_review"
 
 
-def test_reject_refuses_when_builder_worktree_is_missing(job_review, fake_git):
-    builder(job_review)
+def test_reject_tolerates_builder_worktree_already_gone(job_review, fake_git):
+    builder(job_review, "needs_human")
     (job_review.WORKTREE_ROOT / f"job-{JOB}").rmdir()
-    refused(lambda: job_review.reject(JOB), "worktree does not exist")
-    assert fake_git.calls == []
+    job_review.reject(JOB)
+    assert fake_git.ran("worktree", "remove") == []
+    assert fake_git.ran("branch", "-D") == [("branch", "-D", f"sid/job-{JOB}")]
+    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
+
+
+def test_reject_build_that_never_created_a_worktree(job_review, fake_git):
+    # needs_human after repeated build failures before any worktree existed.
+    record = builder(job_review, "needs_human", needs_human_kind="build")
+    record.pop("worktree")
+    fake_git.branch_heads.clear()
+    job_review.reject(JOB)
+    assert fake_git.ran("worktree", "remove") == []
+    assert fake_git.ran("branch", "-D") == []
+    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
 
 
 def test_reject_git_failure_leaves_job_unrejected(job_review, fake_git):
@@ -247,3 +260,37 @@ def test_cli_approve_requires_full_lowercase_sha(job_review, monkeypatch, candid
     monkeypatch.setattr(job_review, "approve", lambda *a, **k: pytest.fail("approved"))
     monkeypatch.setattr("sys.argv", ["job-review.py", "approve", JOB, "--candidate", candidate])
     refused(job_review.main, "full 40-character")
+
+
+# --- extend / reintegrate for self-healing hand-offs ---------------------------------
+
+def test_extend_build_failure_grants_rebuilds(job_review):
+    builder(job_review, "needs_human", needs_human_kind="build",
+            failed_status="test_failed", build_attempt="2",
+            needs_human_reason="build failed after 2 attempt(s)")
+    job_review.extend(JOB, 2)
+    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    assert record["status"] == "test_failed"  # the orchestrator retries it
+    assert record["max_build_attempts"] == "4"
+    assert record["needs_human_kind"] == ""
+
+
+def test_extend_review_stall_points_to_reintegrate(job_review):
+    builder(job_review, "needs_human", needs_human_kind="review")
+    refused(lambda: job_review.extend(JOB, 1), "use 'reintegrate'")
+
+
+@pytest.mark.parametrize("extra", [0, 6])
+def test_extend_build_failure_bounds_extra(job_review, extra):
+    builder(job_review, "needs_human", needs_human_kind="build", build_attempt="2")
+    refused(lambda: job_review.extend(JOB, extra), "between 1 and 5")
+
+
+def test_reintegrate_resets_review_recovery_budget(job_review, fake_git):
+    builder(job_review, "needs_human", needs_human_kind="review",
+            review_recoveries="2", source_candidate_commits='["s1"]')
+    job_review.reintegrate(JOB)
+    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    assert record["review_recoveries"] == "0"
+    assert record["needs_human_kind"] == ""
+    assert record["status"] == "awaiting_review"

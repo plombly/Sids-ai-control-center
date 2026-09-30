@@ -2,7 +2,7 @@
 
 import pytest
 
-from conftest import BASE, INTEGRATED, JOB, ROOT, load_module, make_builder
+from sid_testing import BASE, INTEGRATED, JOB, ROOT, load_module, make_builder
 
 STREAM = "sid:operator-requests"
 GROUP = "sid-operator"

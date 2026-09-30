@@ -25,6 +25,15 @@ MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
 MAX_CONCURRENT_GOALS = max(1, int(os.getenv("MAX_CONCURRENT_GOALS", "4")))
+# Self-healing bounds. A failed build is rebuilt from current main until
+# MAX_BUILD_ATTEMPTS, and a review that could not complete is re-integrated
+# and re-reviewed up to MAX_REVIEW_RECOVERIES times. Past either bound the
+# job goes to needs_human (not a failure), so dependents wait for a person.
+MAX_BUILD_ATTEMPTS = int(os.getenv("MAX_BUILD_ATTEMPTS", "2"))
+MAX_REVIEW_RECOVERIES = int(os.getenv("MAX_REVIEW_RECOVERIES", "2"))
+# Work neither queued nor held by a live worker must stay that way this long
+# (across loop passes) before it is declared lost.
+LOST_CONFIRM_SECONDS = int(os.getenv("LOST_JOB_CONFIRM_SECONDS", "60"))
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -267,6 +276,7 @@ def create_job(goal_id, planned_job, number_to_id):
         "priority": "0",
         "dependencies": json.dumps(dependencies),
         "status": "blocked" if dependencies else "queued",
+        "build_attempt": "1",
         "created_at": now(),
         "updated_at": now(),
     }
@@ -690,23 +700,13 @@ def release_dependencies():
         if not deps:
             continue
 
-        dep_states = [
-            r.hget(f"sid:jobs:{dep}", "status")
-            for dep in deps
-        ]
+        dep_jobs = [r.hgetall(f"sid:jobs:{dep}") for dep in deps]
+        dep_states = [dep.get("status") for dep in dep_jobs]
 
         # blocked_failed_dependency is itself a failure for grandchildren;
         # without it, jobs two levels below a failure stay "blocked" forever.
-        failed_states = {
-            "failed",
-            "test_failed",
-            "integration_failed",
-            "rejected",
-            "repair_exhausted",
-            "blocked_failed_dependency",
-        }
-
-        if any(state in failed_states for state in dep_states):
+        # A failed build that will be retried is not terminal yet.
+        if any(is_terminal_failure(dep) for dep in dep_jobs):
             r.hset(
                 key,
                 mapping={
@@ -753,6 +753,282 @@ def release_dependencies():
             )
 
 
+TERMINAL_FAILURE_STATES = {
+    "failed", "test_failed", "integration_failed", "rejected",
+    "repair_exhausted", "blocked_failed_dependency",
+}
+BUILD_FAILED_STATES = {"failed", "test_failed", "integration_failed"}
+IN_FLIGHT_STATES = {
+    "queued", "claimed", "running", "testing",
+    "reviewing", "repairing", "integrating",
+}
+# Same set scripts/job-review.py reintegrate clears.
+DERIVED_REVIEW_FIELDS = (
+    "review_job_id", "review_status", "review_verdict", "reviewed_commit",
+    "review_error", "review_findings",
+    "integration_status", "integration_base_commit",
+    "integrated_candidate_commit", "integration_result", "integration_error",
+)
+# A rebuild starts from main: nothing derived from the previous attempt's
+# candidate survives. Findings history and audit fields are kept.
+BUILD_DERIVED_FIELDS = DERIVED_REVIEW_FIELDS + (
+    "candidate_commit", "source_candidate_commits", "changes",
+    "files_changed", "test_status", "error", "codex_exit_code",
+    "dispatch_reserved_at", "repair_job_id", "last_repair_job_id",
+    "repair_status", "repair_error", "review_history",
+    "last_integrate_job_id", "review_recoveries",
+    "needs_human_reason", "needs_human_kind", "failed_status",
+)
+
+# Loop-local memory of work that looked lost: job/builder id -> first seen.
+_lost_suspects = {}
+
+
+def _int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def is_builder(job):
+    return job.get("role", "builder") in {"", "builder"}
+
+
+def build_limit(job):
+    return _int(job.get("max_build_attempts"), MAX_BUILD_ATTEMPTS)
+
+
+def build_retry_pending(job):
+    """A failed build that retry_failed_builds() will rebuild. Records from
+    before retries existed have no build_attempt and are never retried."""
+    return (
+        is_builder(job)
+        and job.get("status") in BUILD_FAILED_STATES
+        and bool(job.get("build_attempt"))
+        and _int(job.get("build_attempt"), 1) < build_limit(job)
+    )
+
+
+def is_terminal_failure(job):
+    return (
+        job.get("status") in TERMINAL_FAILURE_STATES
+        and not build_retry_pending(job)
+    )
+
+
+def live_work():
+    """(ids held by live workers, queued ids), or None if any live worker
+    runs code too old to report the job it holds."""
+    held = set()
+    for key in r.scan_iter("sid:workers:*"):
+        beat = r.hgetall(key)
+        if not beat:
+            continue
+        if "job_id" not in beat:
+            return None
+        if beat["job_id"]:
+            held.add(beat["job_id"])
+    queued = set()
+    for raw in r.lrange(JOB_QUEUE, 0, -1):
+        try:
+            queued.add(str(json.loads(raw).get("id", "")))
+        except (ValueError, AttributeError):
+            continue
+    return held, queued
+
+
+def confirmed_lost(suspect, seen, now_ts):
+    """True once `suspect` has looked lost for LOST_CONFIRM_SECONDS."""
+    seen.add(suspect)
+    first = _lost_suspects.setdefault(suspect, now_ts)
+    return now_ts - first >= LOST_CONFIRM_SECONDS
+
+
+def release_stale_integration_lock(builder_id):
+    """Drop a builder's integration lock whose holder is gone. Only called
+    when no live worker holds any job for this builder."""
+    lock_key = f"sid:integration-lock:{builder_id}"
+    owner = r.get(lock_key)
+    if owner:
+        r.eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+            "return redis.call('del', KEYS[1]) else return 0 end",
+            1, lock_key, owner,
+        )
+
+
+def failure_reason(job):
+    status = job.get("status")
+    if status == "test_failed":
+        tail = ""
+        try:
+            tail = Path(job.get("test_log", "")).read_text()[-1500:]
+        except OSError:
+            pass
+        return "SID test gate failed:\n" + (tail or "(no test log)")
+    if status == "integration_failed":
+        return "integration onto main failed: " + (job.get("integration_error") or "unknown")
+    return job.get("error") or "unknown error"
+
+
+def recover_lost_jobs(now_ts=None):
+    """Fail jobs that look in flight but no live worker holds and the queue
+    does not contain: their worker died (restart, crash, reboot). The retry
+    and stall recovery below then carry the work forward."""
+    work = live_work()
+    if work is None:
+        return
+    held, queued = work
+    now_ts = time.time() if now_ts is None else now_ts
+    seen = set()
+    for key in r.scan_iter("sid:jobs:*"):
+        job = r.hgetall(key)
+        job_id = job.get("id") or key.rsplit(":", 1)[-1]
+        if job.get("status") not in IN_FLIGHT_STATES:
+            continue
+        if job_id in held or job_id in queued:
+            continue
+        if not confirmed_lost(f"job:{job_id}", seen, now_ts):
+            continue
+        r.hset(key, mapping={
+            "status": "failed",
+            "error": (
+                f"worker lost: job was {job.get('status')!r} but no live worker "
+                f"held it and it was not queued (last worker "
+                f"{job.get('worker_id') or 'none'})"
+            ),
+            "lost_at": now(),
+            "updated_at": now(),
+        })
+        print(f"[{ORCHESTRATOR_ID}] lost job={job_id} marked failed", flush=True)
+    for suspect in [s for s in _lost_suspects if s.startswith("job:") and s not in seen]:
+        del _lost_suspects[suspect]
+
+
+def retry_failed_builds():
+    for key in r.scan_iter("sid:jobs:*"):
+        job = r.hgetall(key)
+        if not (is_builder(job) and job.get("status") in BUILD_FAILED_STATES):
+            continue
+        if not job.get("build_attempt"):
+            continue  # legacy record: audit history, never retried
+        job_id = job.get("id") or key.rsplit(":", 1)[-1]
+        attempt = _int(job.get("build_attempt"), 1)
+        reason = failure_reason(job)[-2000:]
+
+        if attempt >= build_limit(job):
+            r.hset(key, mapping={
+                "status": "needs_human",
+                "needs_human_kind": "build",
+                "failed_status": job["status"],
+                "needs_human_reason": f"build failed after {attempt} attempt(s): {reason}",
+                "updated_at": now(),
+            })
+            print(f"[{ORCHESTRATOR_ID}] build job={job_id} needs_human", flush=True)
+            continue
+
+        next_attempt = attempt + 1
+        if not r.hsetnx(key, f"retry_{next_attempt}_dispatched_at", now()):
+            continue
+        base_prompt = job.get("base_prompt") or job.get("prompt", "")
+        prompt = (
+            f"{base_prompt}\n\n"
+            f"Attempt {attempt} of this job failed and was discarded:\n{reason}\n"
+            "Start again from current main. Avoid what caused that failure and "
+            "keep the change as small as the task allows."
+        )
+        release_stale_integration_lock(job_id)
+        r.hdel(key, *BUILD_DERIVED_FIELDS)
+        r.hset(key, mapping={
+            "status": "queued",
+            "build_attempt": str(next_attempt),
+            "base_prompt": base_prompt,
+            "prompt": prompt,
+            "retry_reason": reason,
+            "repair_attempts": "0",
+            "updated_at": now(),
+        })
+        dispatch_job_once({"id": job_id}, {
+            "id": job_id,
+            "goal_id": job.get("goal_id", ""),
+            "prompt": prompt,
+            "provider": job.get("provider", DEFAULT_PROVIDER),
+            "model": job.get("model", DEFAULT_MODEL),
+            "role": "builder",
+            "priority": _int(job.get("priority")),
+            "created_at": job.get("created_at", now()),
+        })
+        print(f"[{ORCHESTRATOR_ID}] retry job={job_id} attempt={next_attempt}", flush=True)
+
+
+def recover_stalled_reviews(now_ts=None):
+    """Re-integrate and re-review a candidate whose review cannot finish:
+    the reviewer failed, or the worker running its integration, review
+    dispatch or repair died. Same operation as job-review.py reintegrate."""
+    work = live_work()
+    if work is None:
+        return
+    busy = work[0] | work[1]
+    now_ts = time.time() if now_ts is None else now_ts
+    seen = set()
+    for key in r.scan_iter("sid:jobs:*"):
+        builder = r.hgetall(key)
+        if not is_builder(builder) or builder.get("status") != "awaiting_review":
+            continue
+        if builder.get("review_status") == "complete":
+            continue  # resting: repair loop or human approval
+        builder_id = builder.get("id") or key.rsplit(":", 1)[-1]
+        related = {
+            builder_id, builder.get("review_job_id"), builder.get("repair_job_id"),
+            builder.get("last_repair_job_id"), builder.get("last_integrate_job_id"),
+        } - {None, ""}
+        if related & busy:
+            continue
+        if not confirmed_lost(f"stall:{builder_id}", seen, now_ts):
+            continue
+        del _lost_suspects[f"stall:{builder_id}"]
+        reason = builder.get("review_error") or (
+            f"review did not complete (review_status={builder.get('review_status') or 'none'}, "
+            f"integration_status={builder.get('integration_status') or 'none'}; nothing in flight)"
+        )
+        recoveries = _int(builder.get("review_recoveries"))
+        if recoveries >= MAX_REVIEW_RECOVERIES:
+            r.hset(key, mapping={
+                "status": "needs_human",
+                "needs_human_kind": "review",
+                "needs_human_reason": f"review could not complete after {recoveries} recovery attempt(s): {reason}",
+                "updated_at": now(),
+            })
+            print(f"[{ORCHESTRATOR_ID}] review builder={builder_id} needs_human", flush=True)
+            continue
+        if not r.hsetnx(key, f"review_recovery_{recoveries + 1}_at", now()):
+            continue
+        release_stale_integration_lock(builder_id)
+        integrate_id = uuid.uuid4().hex[:8]
+        created = now()
+        r.hdel(key, *DERIVED_REVIEW_FIELDS)
+        r.hset(key, mapping={
+            "last_integrate_job_id": integrate_id,
+            "review_recoveries": str(recoveries + 1),
+            "review_recovery_reason": reason[-2000:],
+            "updated_at": created,
+        })
+        r.hset(f"sid:jobs:{integrate_id}", mapping={
+            "id": integrate_id, "status": "queued", "role": "integrate",
+            "target_builder_id": builder_id, "goal_id": builder.get("goal_id", ""),
+            "created_at": created, "updated_at": created,
+        })
+        r.rpush(JOB_QUEUE, json.dumps({
+            "id": integrate_id, "role": "integrate",
+            "target_builder_id": builder_id, "created_at": created,
+        }))
+        print(f"[{ORCHESTRATOR_ID}] review recovery builder={builder_id} "
+              f"integrate={integrate_id} ({recoveries + 1}/{MAX_REVIEW_RECOVERIES})", flush=True)
+    for suspect in [s for s in _lost_suspects if s.startswith("stall:") and s not in seen]:
+        del _lost_suspects[suspect]
+
+
 def update_goals():
     for key in r.scan_iter("sid:goals:*"):
         # Planning reservations share the sid:goals:* namespace but are
@@ -776,12 +1052,10 @@ def update_goals():
         if not job_ids:
             continue
 
-        states = [
-            r.hget(f"sid:jobs:{job_id}", "status")
-            for job_id in job_ids
-        ]
+        jobs = [r.hgetall(f"sid:jobs:{job_id}") for job_id in job_ids]
+        states = [job.get("status") for job in jobs]
 
-        if any(state in {"failed", "test_failed", "integration_failed", "rejected", "repair_exhausted", "blocked_failed_dependency"} for state in states):
+        if any(is_terminal_failure(job) for job in jobs):
             # Preserve historical failed-goal metadata while its children
             # remain terminally failed. If a child later recovers, this
             # branch stops matching and normal reconciliation can proceed.
@@ -881,6 +1155,9 @@ def main():
                         futures.remove(future)
                         finish_goal_future(future)
 
+                recover_lost_jobs()
+                retry_failed_builds()
+                recover_stalled_reviews()
                 queue_repairs()
                 release_dependencies()
                 update_goals()

@@ -295,7 +295,13 @@ def reject(job_id):
             f"expected one of {sorted(REJECTABLE)}"
         )
 
-    worktree = safe_worktree(job_id, data)
+    # A build that failed before or while creating its worktree has none.
+    # Validate the recorded path when there is one; skip when absent.
+    worktree = None
+    if data.get("worktree"):
+        worktree = (WORKTREE_ROOT / f"job-{job_id}").resolve()
+        if Path(data["worktree"]).resolve() != worktree:
+            fail(f"unexpected worktree path: {Path(data['worktree']).resolve()}")
     branch = safe_branch(job_id, data)
 
     # An exhausted or stale job may have no live integration worktree.
@@ -313,8 +319,10 @@ def reject(job_id):
                check=False).returncode == 0:
             git("branch", "-D", integration_branch)
 
-    git("worktree", "remove", "--force", str(worktree))
-    git("branch", "-D", branch)
+    if worktree is not None and worktree.exists():
+        git("worktree", "remove", "--force", str(worktree))
+    if git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
+        git("branch", "-D", branch)
 
     r.hset(
         key,
@@ -346,13 +354,27 @@ def extend(job_id, extra=1):
     data = job_record(job_id)
     if data.get("status") not in EXHAUSTED:
         fail(f"job status is {data.get('status')!r}; expected one of {sorted(EXHAUSTED)}")
+    if not 1 <= extra <= 5:
+        fail("extra attempts must be between 1 and 5")
+    if data.get("needs_human_kind") == "build":
+        # The build itself kept failing: allow more rebuilds from main. The
+        # orchestrator retries a failed build while attempts remain.
+        attempts = int(data.get("build_attempt", "1") or "1")
+        limit = attempts + extra
+        r.hset(key, mapping={
+            "status": data.get("failed_status") or "failed",
+            "max_build_attempts": str(limit),
+            "needs_human_reason": "",
+            "needs_human_kind": "",
+            "updated_at": str(time.time()),
+        })
+        print(f"EXTENDED: {job_id} may be rebuilt {extra} more time(s) (limit {limit})")
+        return
     if not (data.get("review_status") == "complete"
             and data.get("review_verdict") == "changes_required"
             and data.get("review_job_id")):
         fail("job has no current CHANGES_REQUIRED review to repair; "
              "use 'reintegrate' to get a fresh review of its candidate")
-    if not 1 <= extra <= 5:
-        fail("extra attempts must be between 1 and 5")
     attempts = int(data.get("repair_attempts", "0") or "0")
     limit = attempts + extra
     r.hset(key, mapping={
@@ -412,7 +434,11 @@ def reintegrate(job_id):
         "status": "awaiting_review",
         "source_candidate_commits": json.dumps(sources, separators=(",", ":")),
         "last_integrate_job_id": integrate_id,
+        # A human-requested reintegration gets a fresh automatic
+        # review-recovery budget in the orchestrator.
+        "review_recoveries": "0",
         "needs_human_reason": "",
+        "needs_human_kind": "",
         "updated_at": now,
     }
     # Repair attempts are preserved, so an exhausted job whose fresh review

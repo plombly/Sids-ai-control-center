@@ -72,6 +72,12 @@ def efficiency_prefix(role):
 
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
 
+# The job this process is working on, published in every heartbeat. The
+# orchestrator treats work as in flight only while a live worker holds it
+# (or it is still queued), which is how it detects jobs orphaned by a
+# worker restart or crash.
+CURRENT_JOB_ID = ""
+
 
 def worker_key():
     return f"sid:workers:{WORKER_ID}"
@@ -101,6 +107,7 @@ def heartbeat(status="idle"):
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "status": status,
+            "job_id": CURRENT_JOB_ID,
             "last_seen": str(time.time()),
         },
     )
@@ -282,8 +289,15 @@ def create_worktree(job_id):
     branch = f"sid/job-{job_id}"
     path = WORKTREE_ROOT / f"job-{job_id}"
 
+    # A retried or orphaned build leaves this job's own worktree and branch
+    # behind. Once the job is claimed again they are stale by definition.
+    run_git("worktree", "prune", check=False)
     if path.exists():
-        raise RuntimeError(f"Worktree already exists: {path}")
+        run_git("worktree", "remove", "--force", str(path), check=False)
+        if path.exists():
+            raise RuntimeError(f"Stale worktree could not be removed: {path}")
+    if run_git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
+        run_git("branch", "-D", branch)
 
     run_git("worktree", "add", "-b", branch, str(path), "main")
     return branch, path
@@ -889,6 +903,24 @@ def process_review_job(job, key, log_path):
 
 
 
+def restore_candidate(worktree, candidate):
+    """Return a builder worktree to its committed candidate.
+
+    A failed or interrupted repair leaves uncommitted edits (or, if the agent
+    committed despite instructions, extra commits) in the builder worktree.
+    Without this, every later repair refuses to start on the dirty tree and
+    the remaining attempts are burnt without a real try. Only moves HEAD back
+    along its own history; the committed candidate itself is never changed.
+    """
+    head = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+    if head != candidate and run_git(
+        "merge-base", "--is-ancestor", candidate, head, cwd=worktree, check=False
+    ).returncode != 0:
+        raise RuntimeError("Repair worktree HEAD does not match reviewed candidate")
+    run_git("reset", "--hard", candidate, cwd=worktree)
+    run_git("clean", "-fd", cwd=worktree)
+
+
 def process_repair_job(job, key, log_path, test_log):
     job_id = str(job["id"])
     builder_job_id = str(job.get("target_builder_id", ""))
@@ -931,14 +963,11 @@ def process_repair_job(job, key, log_path, test_log):
         raise RuntimeError("Repair target has no candidate commit")
 
     head = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
-
-    if head != candidate_before:
-        raise RuntimeError(
-            "Repair worktree HEAD does not match reviewed candidate"
-        )
-
-    if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
-        raise RuntimeError("Repair worktree is dirty before repair")
+    if head != candidate_before or run_git(
+        "status", "--porcelain", cwd=worktree
+    ).stdout.strip():
+        # Leftovers of an earlier failed or interrupted repair.
+        restore_candidate(worktree, candidate_before)
 
     redis.hset(
         key,
@@ -967,92 +996,101 @@ def process_repair_job(job, key, log_path, test_log):
         },
     )
 
-    returncode, duration = run_codex(job, worktree, log_path)
-    session_id, usage = parse_codex_log(log_path)
+    try:
+        returncode, duration = run_codex(job, worktree, log_path)
+        session_id, usage = parse_codex_log(log_path)
 
-    common = {
-        "codex_exit_code": str(returncode),
-        "duration_seconds": f"{duration:.2f}",
-        "session_id": session_id,
-        "tokens": usage["total_tokens"],
-        "input_tokens": usage["input_tokens"],
-        "cached_input_tokens": usage["cached_input_tokens"],
-        "output_tokens": usage["output_tokens"],
-        "reasoning_tokens": usage["reasoning_tokens"],
-        "uncached_input_tokens": usage["uncached_input_tokens"],
-        "effective_tokens": usage["effective_tokens"],
-        "command_count": usage["command_count"],
-        "updated_at": str(time.time()),
-    }
+        common = {
+            "codex_exit_code": str(returncode),
+            "duration_seconds": f"{duration:.2f}",
+            "session_id": session_id,
+            "tokens": usage["total_tokens"],
+            "input_tokens": usage["input_tokens"],
+            "cached_input_tokens": usage["cached_input_tokens"],
+            "output_tokens": usage["output_tokens"],
+            "reasoning_tokens": usage["reasoning_tokens"],
+            "uncached_input_tokens": usage["uncached_input_tokens"],
+            "effective_tokens": usage["effective_tokens"],
+            "command_count": usage["command_count"],
+            "updated_at": str(time.time()),
+        }
 
-    redis.hset(key, mapping=common)
+        redis.hset(key, mapping=common)
 
-    if returncode != 0:
-        raise RuntimeError(
-            f"Repair Codex exited with status {returncode}"
+        if returncode != 0:
+            raise RuntimeError(
+                f"Repair Codex exited with status {returncode}"
+            )
+
+        redis.hset(key, mapping={"status": "testing"})
+
+        tests_ok, tests_output = run_tests(worktree)
+        test_log.write_text(tests_output)
+        redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
+
+        if not tests_ok:
+            redis.hset(
+                key,
+                mapping={
+                    "status": "test_failed",
+                    "test_log": str(test_log),
+                    "updated_at": str(time.time()),
+                },
+            )
+            redis.hset(
+                builder_key,
+                mapping={
+                    "repair_status": "test_failed",
+                    "updated_at": str(time.time()),
+                },
+            )
+            restore_candidate(worktree, candidate_before)
+            return
+
+        diff = run_git("status", "--porcelain", cwd=worktree).stdout
+
+        if not diff.strip():
+            redis.hset(
+                key,
+                mapping={
+                    "status": "repair_no_changes",
+                    "test_log": str(test_log),
+                    "updated_at": str(time.time()),
+                },
+            )
+            redis.hset(
+                builder_key,
+                mapping={
+                    "repair_status": "no_changes",
+                    "updated_at": str(time.time()),
+                },
+            )
+            return
+
+        run_git("add", "-A", cwd=worktree)
+        run_git(
+            "commit",
+            "-m",
+            f"Repair SID job {builder_job_id} via {job_id}",
+            cwd=worktree,
         )
 
-    redis.hset(key, mapping={"status": "testing"})
+        candidate_after = run_git(
+            "rev-parse", "HEAD", cwd=worktree
+        ).stdout.strip()
 
-    tests_ok, tests_output = run_tests(worktree)
-    test_log.write_text(tests_output)
-    redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
+        if candidate_after == candidate_before:
+            raise RuntimeError("Repair did not create a new candidate")
 
-    if not tests_ok:
-        redis.hset(
-            key,
-            mapping={
-                "status": "test_failed",
-                "test_log": str(test_log),
-                "updated_at": str(time.time()),
-            },
-        )
-        redis.hset(
-            builder_key,
-            mapping={
-                "repair_status": "test_failed",
-                "updated_at": str(time.time()),
-            },
-        )
-        return
-
-    diff = run_git("status", "--porcelain", cwd=worktree).stdout
-
-    if not diff.strip():
-        redis.hset(
-            key,
-            mapping={
-                "status": "repair_no_changes",
-                "test_log": str(test_log),
-                "updated_at": str(time.time()),
-            },
-        )
-        redis.hset(
-            builder_key,
-            mapping={
-                "repair_status": "no_changes",
-                "updated_at": str(time.time()),
-            },
-        )
-        return
-
-    run_git("add", "-A", cwd=worktree)
-    run_git(
-        "commit",
-        "-m",
-        f"Repair SID job {builder_job_id} via {job_id}",
-        cwd=worktree,
-    )
-
-    candidate_after = run_git(
-        "rev-parse", "HEAD", cwd=worktree
-    ).stdout.strip()
-
-    if candidate_after == candidate_before:
-        raise RuntimeError("Repair did not create a new candidate")
-
-    if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
-        raise RuntimeError("Repair candidate is dirty after commit")
+        if run_git("status", "--porcelain", cwd=worktree).stdout.strip():
+            raise RuntimeError("Repair candidate is dirty after commit")
+    except Exception:
+        # Never leave a failed repair's edits for the next attempt.
+        try:
+            restore_candidate(worktree, candidate_before)
+        except Exception as restore_exc:
+            print(f"[{WORKER_ID}] repair={job_id} restore failed: {restore_exc}", flush=True)
+        raise
 
     old_review = builder.get("review_job_id", "")
 
@@ -1197,8 +1235,19 @@ def process_integrate_job(job, key):
 
 
 def process_job(raw_job):
-    with keep_alive("working"):
-        _process_job(raw_job)
+    global CURRENT_JOB_ID
+    try:
+        CURRENT_JOB_ID = str(json.loads(raw_job).get("id", ""))
+    except (ValueError, AttributeError):
+        CURRENT_JOB_ID = ""
+    try:
+        # Publish the held job before touching its state, so the
+        # orchestrator never sees it claimed by nobody.
+        heartbeat("working")
+        with keep_alive("working"):
+            _process_job(raw_job)
+    finally:
+        CURRENT_JOB_ID = ""
 
 
 def _process_job(raw_job):
@@ -1246,6 +1295,9 @@ def _process_job(raw_job):
                 "updated_at": str(time.time()),
             },
         )
+        # Marks the job as retry-eligible for the orchestrator; a retry
+        # dispatch has already set the next attempt number.
+        redis.hsetnx(key, "build_attempt", "1")
 
         branch, worktree = create_worktree(job_id)
 
@@ -1423,6 +1475,8 @@ def _process_job(raw_job):
         print(f"[{WORKER_ID}] job={job_id} FAILED: {exc}", flush=True)
 
     finally:
+        global CURRENT_JOB_ID
+        CURRENT_JOB_ID = ""
         heartbeat("idle")
 
 
