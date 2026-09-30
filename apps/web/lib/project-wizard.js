@@ -105,7 +105,17 @@ let root;
 const render = () => {
   if (!root || !state) return;
   const error = validateStep(state.step, state);
+  const focused = typeof document !== 'undefined' ? document.activeElement : null;
+  const focusName = focused && root.contains(focused) ? focused.name : '';
+  const selection = focusName ? [focused.selectionStart, focused.selectionEnd] : [];
   root.innerHTML = `<section class="panel"><p class="eyebrow">CREATE PROJECT</p><div class="wizard">${wizardStepsMarkup(state.step)}<div>${stepMarkup(state.step, state)}</div>${state.error || error ? `<div class="form-status">${esc(state.error || error)}</div>` : ''}<div class="wizard-actions"><a class="button" href="#/projects"${state.step === 1 ? '' : ' hidden'}>Cancel</a><button type="button" class="button" data-wizard-back${state.step === 1 || state.busy ? ' hidden' : ''}>Back</button><button type="button" class="button" data-wizard-next${state.busy || !!error ? ' disabled' : ''}>${state.step === 5 ? 'Create project' : 'Next'}</button></div></div></section>`;
+  if (focusName) {
+    const next = root.querySelector(`input[name="${focusName}"]`);
+    if (next) {
+      next.focus();
+      if (selection[0] != null) next.setSelectionRange(selection[0], selection[1]);
+    }
+  }
 };
 
 const updateFromInput = input => {
@@ -176,7 +186,15 @@ registerClick('wizardNext', () => {
   if (state.step === 5) create();
   else { state.step += 1; state.error = ''; render(); }
 });
-registerClick('wizardBack', () => { if (state.step > 1) { state.step -= 1; state.error = ''; render(); } });
+registerClick('wizardBack', () => {
+  if (state.result) {
+    state.result = null;
+    state.requestId = globalThis.crypto?.randomUUID?.();
+    state.step = 5;
+    render();
+    return;
+  }
+  if (state.step > 1) { state.step -= 1; state.error = ''; render(); } });
 registerClick('wizardCopyKey', button => {
   const key = button.parentElement?.querySelector('pre')?.textContent;
   globalThis.navigator?.clipboard?.writeText?.(key)?.catch?.(() => {});
