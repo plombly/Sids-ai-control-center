@@ -49,6 +49,11 @@ class ProjectRequest(BaseModel):
     request_id: str = Field(pattern=_REQUEST_ID)
 
 
+class ProjectDelete(BaseModel):
+    confirm: str = Field(max_length=40)
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
 def _text(value, default=None):
     if value is None:
         return default
@@ -277,3 +282,17 @@ def push_setup(project_id: str, payload: ProjectPushSetup):
         raise HTTPException(status_code=404, detail="Project not found")
     return _operator_request("project_push_setup", payload.request_id,
                              {"project_id": project_id, "url": payload.url})
+
+
+@router.post("/api/projects/{project_id}/delete", status_code=202)
+def delete_project(project_id: str, payload: ProjectDelete):
+    """Wipe a project from the server (host runs sid-project.py delete)."""
+    project_id = _id(project_id)
+    if project_id == "sid":
+        raise HTTPException(status_code=403, detail="SID itself cannot be deleted")
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if payload.confirm != project_id:
+        raise HTTPException(status_code=422, detail="Type the project ID exactly to confirm")
+    return _operator_request("delete_project", payload.request_id,
+                             {"project_id": project_id, "confirm": payload.confirm})

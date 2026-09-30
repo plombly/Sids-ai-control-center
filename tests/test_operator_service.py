@@ -420,6 +420,9 @@ def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
     ({"action": "create_project", "project_id": "web", "name": "Web", "source": "empty", "gate": "a\nb"}, "one line"),
     ({"action": "create_project", "project_id": "web", "name": "Web", "source": "empty", "push_remote": "/tmp/x"}, "push remote"),
     ({"action": "project_push_setup", "project_id": "web", "url": "../../x"}, "git@"),
+    ({"action": "delete_project", "project_id": "web"}, "confirm"),
+    ({"action": "delete_project", "project_id": "web", "confirm": "web2"}, "confirm"),
+    ({"action": "delete_project", "project_id": "sid", "confirm": "sid"}, "SID itself"),
 ])
 def test_project_requests_are_validated(op, fields, reason):
     with pytest.raises(op.Invalid, match=reason):
@@ -444,6 +447,7 @@ def test_project_actions_can_be_disabled(op):
     ({"action": "project_retry_clone", "project_id": "web"}, ["retry-clone", "web"]),
     ({"action": "project_push_setup", "project_id": "web", "url": "git@github.com:me/web.git"},
      ["push-setup", "web", "git@github.com:me/web.git"]),
+    ({"action": "delete_project", "project_id": "web", "confirm": "web"}, ["delete", "web", "--confirm", "web"]),
 ])
 def test_project_cli_arguments(op, request_fields, args):
     assert op.project_cli_args(request_fields) == args
@@ -470,3 +474,9 @@ def test_project_request_end_to_end_through_the_stream(op, monkeypatch):
     done = result(op, "req-project1")
     assert done["status"] == "succeeded" and done["message"] == "made web"
     assert done["project_id"] == "web" and done["action"] == "create_project"
+
+
+def test_delete_request_validates_to_its_confirmation(op):
+    request = op.validate({"action": "delete_project", "project_id": "web", "confirm": "web"},
+                          f"{int(NOW * 1000)}-0", NOW)
+    assert request["confirm"] == "web" and op.project_cli_args(request)[:2] == ["delete", "web"]

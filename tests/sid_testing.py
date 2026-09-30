@@ -38,6 +38,9 @@ class MemoryRedis:
         self.groups = {}
         self.clock = clock
 
+    def exists(self, key):
+        return int(key in self.records or key in self.values)
+
     # hashes
     def hgetall(self, key):
         return dict(self.records.get(key, {}))

@@ -1758,8 +1758,14 @@ def _process_job(raw_job):
     try:
         project = sid_projects.load(redis, sid_projects.job_project_id(redis, job))
     except Exception as exc:
-        redis.hset(key, mapping={"status": "failed", "error": f"project unavailable: {exc}",
-                                 "updated_at": str(time.time())})
+        # A deleted project's records are gone: do not recreate them.
+        if redis.exists(key):
+            redis.hset(key, mapping={"status": "failed", "error": f"project unavailable: {exc}",
+                                     "updated_at": str(time.time())})
+        return
+    if project.status == "deleting":
+        # sid-project.py delete is removing this project; its queued work is
+        # being dropped, so never start it (or create its directories).
         return
     use_project(project)
     redis.hsetnx(key, "project_id", project.id)

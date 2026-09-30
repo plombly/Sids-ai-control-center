@@ -50,7 +50,15 @@ export function projectDetailMarkup(project) {
     project.importance === 'low' ? ' selected' : ''
   }>low</option></select></label></div><div class="stack">${pill(project.status)}${retry}</div><form id="project-goal-form" class="goal-form"><textarea name="goal" placeholder="Describe work for ${esc(
     name
-  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form><form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form><div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div></section>`;
+  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form><form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form><div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${deleteProjectMarkup(id)}</section>`;
+}
+
+// Deleting wipes the project from the server; SID itself cannot be deleted.
+export function deleteProjectMarkup(id) {
+  if (!id || id === 'sid') return '';
+  return `<form id="project-delete-form" class="goal-form danger-zone"><h3>Delete project</h3><p class="subtle">Removes the project from this server: its repository, worktrees, logs, deploy key, goals and jobs. Work that is running must finish first. This cannot be undone.</p><div class="form-row"><input name="confirm" autocomplete="off" placeholder="Type ${esc(
+    id
+  )} to confirm" aria-label="Project ID to confirm"><button type="submit" class="danger-button">Delete project</button></div><span id="project-delete-status" class="form-status" role="status"></span></form>`;
 }
 
 export function publicKeyMarkup(output) {
@@ -102,6 +110,7 @@ if (typeof document !== 'undefined') {
   let activeRoute = null;
   let refreshTimer = null;
   let renderVersion = 0;
+  let busy = false; // an operator request is in flight: keep its status visible
   const root = () => document.getElementById('projects-root');
   const focusedForm = container => {
     const active = document.activeElement;
@@ -113,7 +122,7 @@ if (typeof document !== 'undefined') {
   };
   async function render(route, force = false) {
     const container = root();
-    if (!container || route.view !== 'projects' || route.create || (!force && focusedForm(container))) return;
+    if (!container || route.view !== 'projects' || route.create || busy || (!force && focusedForm(container))) return;
     const version = ++renderVersion;
     if (route.projectId === null) {
       try {
@@ -190,6 +199,20 @@ if (typeof document !== 'undefined') {
           body: JSON.stringify({ goal: values.goal?.trim(), atomic: values.atomic === 'on', request_id: requestId() })
         });
         status('project-goal-status', `Submitted goal ${response.id}`);
+      } else if (form.id === 'project-delete-form') {
+        const id = activeRoute.projectId;
+        if (text(values.confirm, '').trim() !== id) return status('project-delete-status', `Type ${id} exactly to confirm`);
+        busy = true;
+        status('project-delete-status', 'Deleting…');
+        const request_id = requestId();
+        const response = await requestJSON(`/api/projects/${encodeURIComponent(id)}/delete`, {
+          method: 'POST',
+          body: JSON.stringify({ confirm: id, request_id })
+        });
+        const result = await poll(response.request_id || request_id);
+        busy = false;
+        if (result.status === 'succeeded') location.hash = '#/projects';
+        else status('project-delete-status', resultMessage(result));
       } else if (form.id === 'project-push-form') {
         const request_id = requestId();
         const response = await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}/push-setup`, {
@@ -200,6 +223,7 @@ if (typeof document !== 'undefined') {
         status('project-push-status', resultMessage(result), result.output);
       }
     } catch (error) {
+      busy = false;
       const target = form.querySelector('.form-status');
       if (target) target.innerHTML = esc(error.message);
     }

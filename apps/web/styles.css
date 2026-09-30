@@ -643,3 +643,12 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+.danger-zone {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.danger-zone h3 {
+  color: var(--red);
+}

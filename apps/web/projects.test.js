@@ -5,7 +5,8 @@ import {
   projectDetailMarkup,
   publicKeyMarkup,
   buildProjectRequest,
-  validateProjectValues
+  validateProjectValues,
+  deleteProjectMarkup
 } from './lib/projects.js';
 
 test('project list markup renders projects and empty state', () => {
@@ -72,4 +73,13 @@ test('list shows the counts the API actually returns (jobs_* keys)', async () =>
     counts: { jobs_queued: 2, jobs_running: 1, jobs_awaiting_approval: 3, jobs_needs_human: 0, jobs_merged: 42 },
     stats: { remaining_effort: 5 } }]);
   assert.match(html, /queued 2 · running 1 · awaiting approval 3 · needs human 0 · merged 42/);
+});
+
+test('delete section on every project page except SID itself', () => {
+  assert.match(deleteProjectMarkup('web-shop'), /id="project-delete-form"/);
+  assert.match(deleteProjectMarkup('web-shop'), /placeholder="Type web-shop to confirm"/);
+  assert.match(deleteProjectMarkup('web-shop'), /class="danger-button"/);
+  assert.equal(deleteProjectMarkup('sid'), '');
+  assert.match(projectDetailMarkup({ id: 'web-shop', status: 'active' }), /project-delete-form/);
+  assert.doesNotMatch(projectDetailMarkup({ id: 'sid', status: 'active' }), /project-delete-form/);
 });

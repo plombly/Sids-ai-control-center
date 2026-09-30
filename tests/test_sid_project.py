@@ -130,3 +130,110 @@ def test_package_gate_beats_tests(tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "package.json").write_text('{"scripts":{"test":"x"}}')
     assert sid_project.detect_gate(tmp_path) == "npm test"
+
+
+# --- delete ------------------------------------------------------------------------
+
+class DeleteRedis(FakeRedis):
+    """FakeRedis plus the list/scan/delete calls delete() uses."""
+
+    def __init__(self):
+        super().__init__()
+        self.lists, self.strings = {}, {}
+
+    def type(self, key):
+        return "hash" if key in self.hashes else "string" if key in self.strings else "none"
+
+    def scan_iter(self, pattern):
+        prefix = pattern.rstrip("*")
+        return iter(sorted(k for k in [*self.hashes, *self.strings] if k.startswith(prefix)))
+
+    def exists(self, key): return key in self.hashes or key in self.strings
+    def delete(self, key): self.hashes.pop(key, None); self.strings.pop(key, None); self.lists.pop(key, None)
+    def srem(self, key, value): self.sets.get(key, set()).discard(value)
+    def lrange(self, key, start, end): return list(self.lists.get(key, []))
+
+    def lrem(self, key, count, value):
+        items = self.lists.get(key, [])
+        self.lists[key] = [item for item in items if item != value]
+
+
+@pytest.fixture
+def deletable(monkeypatch, tmp_path):
+    fake = DeleteRedis()
+    monkeypatch.setattr(sid_project, "get_redis", lambda: fake)
+    base = tmp_path / "projects"
+    monkeypatch.setattr(sid_project, "PROJECTS_BASE", base)
+    root = base / "shop"
+    for sub in ("repo", "worktrees", "logs"):
+        (root / sub).mkdir(parents=True)
+    (root / "deploy_key").write_text("secret")
+    fake.hashes["sid:projects:shop"] = {"id": "shop", "root": str(root), "repo": str(root / "repo"),
+                                        "worktrees": str(root / "worktrees"), "logs": str(root / "logs"),
+                                        "status": "active", "push_remote": "git@github.com:me/shop.git"}
+    fake.sets["sid:projects"] = {"shop", "other"}
+    fake.hashes["sid:projects:other"] = {"id": "other", "status": "active"}
+    fake.hashes["sid:jobs:b1"] = {"id": "b1", "project_id": "shop", "status": "queued"}
+    fake.hashes["sid:jobs:rv1"] = {"id": "rv1", "builder_job_id": "b1", "status": "queued"}
+    fake.hashes["sid:jobs:x1"] = {"id": "x1", "project_id": "other", "status": "queued"}
+    fake.hashes["sid:jobs:s1"] = {"id": "s1", "status": "queued"}  # SID
+    fake.hashes["sid:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "running"}
+    fake.hashes["sid:goals:g2"] = {"id": "g2", "project_id": "other"}
+    fake.hashes["sid:project-stats:shop"] = {"remaining_effort": "3"}
+    fake.lists["sid:jobs"] = [json.dumps({"id": "b1", "project_id": "shop"}), json.dumps({"id": "rv1"}),
+                              json.dumps({"id": "x1", "project_id": "other"}), json.dumps({"id": "s1"})]
+    fake.lists["sid:goals"] = [json.dumps({"id": "g1", "project_id": "shop"}), json.dumps({"id": "g2", "project_id": "other"})]
+    return fake, root
+
+
+def test_delete_wipes_the_project_and_only_the_project(deletable, capsys):
+    fake, root = deletable
+    code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    assert code == 0 and out["status"] == "deleted"
+    assert (out["jobs_removed"], out["goals_removed"]) == (2, 1)
+    assert not root.exists() and out["removed_path"] == str(root)
+    assert "deploy key" in out["note"]
+    assert "sid:projects:shop" not in fake.hashes and "shop" not in fake.sets["sid:projects"]
+    assert not {"sid:jobs:b1", "sid:jobs:rv1", "sid:goals:g1", "sid:project-stats:shop"} & set(fake.hashes)
+    assert [json.loads(x)["id"] for x in fake.lists["sid:jobs"]] == ["x1", "s1"]
+    assert [json.loads(x)["id"] for x in fake.lists["sid:goals"]] == ["g2"]
+    assert {"sid:jobs:x1", "sid:jobs:s1", "sid:goals:g2", "sid:projects:other"} <= set(fake.hashes)
+
+
+def test_delete_refuses_sid_bad_confirmation_and_running_work(deletable, capsys):
+    fake, root = deletable
+    fake.hashes["sid:projects:sid"] = {"id": "sid"}
+    assert invoke(["delete", "sid", "--confirm", "sid"], capsys)[0] == 1
+    code, captured, _ = invoke(["delete", "shop", "--confirm", "shp"], capsys)
+    assert code == 1 and "confirmation" in captured.err
+    fake.hashes["sid:workers:sid-worker-03"] = {"job_id": "b1", "status": "working"}
+    code, captured, _ = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    assert code == 1 and "job b1" in captured.err and "Nothing was deleted" in captured.err
+    assert root.exists() and fake.hashes["sid:projects:shop"]["status"] == "active"
+    del fake.hashes["sid:workers:sid-worker-03"]
+    fake.strings["sid:goals:g1:planning"] = "planner"
+    code, captured, _ = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    assert code == 1 and "goal g1" in captured.err and root.exists()
+
+
+def test_delete_never_removes_directories_it_did_not_create(deletable, capsys, tmp_path):
+    fake, root = deletable
+    outside = tmp_path / "my-checkout"
+    (outside / "repo").mkdir(parents=True)
+    fake.hashes["sid:projects:shop"].update(root=str(tmp_path), repo=str(outside / "repo"))
+    code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    assert code == 0 and "removed_path" not in out
+    assert outside.exists() and tmp_path.exists() and root.exists()
+    assert str(outside / "repo") in out["kept_paths"]
+
+
+def test_delete_ignores_a_symlinked_project_root(deletable, capsys, tmp_path):
+    fake, root = deletable
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    (target / "keep.txt").write_text("x")
+    link = root.parent / "linked"
+    link.symlink_to(target)
+    fake.hashes["sid:projects:linked"] = {"id": "linked", "root": str(link), "repo": str(link / "repo"), "status": "active"}
+    code, _, out = invoke(["delete", "linked", "--confirm", "linked"], capsys)
+    assert code == 0 and "removed_path" not in out and (target / "keep.txt").exists()

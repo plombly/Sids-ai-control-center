@@ -106,7 +106,7 @@ def test_project_validation_and_protected_fields(client):
 
 # --- host-side project management through the operator service ----------------------
 
-def _operator_ready(fake, allowed="create_project,project_retry_clone,project_push_setup"):
+def _operator_ready(fake, allowed="create_project,project_retry_clone,project_push_setup,delete_project"):
     fake.hashes["sid:operator-service:op"] = {"id": "op", "allowed_actions": allowed}
     fake.stream = []
 
@@ -200,3 +200,16 @@ def test_same_prompt_in_two_projects_is_two_goals(client):
     assert first["id"] != second["id"] and not second.get("duplicate")
     again = test_client.post("/api/projects/other/goals", json={"goal": "add a readme"}).json()
     assert again["id"] == second["id"] and again.get("duplicate")
+
+
+def test_delete_project_needs_the_typed_id_and_never_sid(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    url = "/api/projects/alpha/delete"
+    assert test_client.post(url, json={"confirm": "alph", "request_id": "req-del-0001"}).status_code == 422
+    assert test_client.post("/api/projects/sid/delete", json={"confirm": "sid", "request_id": "req-del-0002"}).status_code == 403
+    assert test_client.post("/api/projects/ghost/delete", json={"confirm": "ghost", "request_id": "req-del-0003"}).status_code == 404
+    assert fake.stream == []
+    ok = test_client.post(url, json={"confirm": "alpha", "request_id": "req-del-0004"})
+    assert ok.status_code == 202
+    assert fake.stream[-1][1]["action"] == "delete_project" and fake.stream[-1][1]["confirm"] == "alpha"

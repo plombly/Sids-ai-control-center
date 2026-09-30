@@ -56,10 +56,10 @@ READ_BLOCK_MS = 5000
 OUTPUT_LIMIT = 8000
 
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
-           "create_project", "project_retry_clone", "project_push_setup")
+           "create_project", "project_retry_clone", "project_push_setup", "delete_project")
 # Project-level actions run scripts/sid-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
-PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup")
+PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project")
 # Actions that carry the exact integrated candidate the human confirmed.
 CANDIDATE_ACTIONS = ("approve", "queue_approve")
 DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
@@ -67,7 +67,7 @@ FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
-    "project_id", "name", "importance", "source", "url", "gate",
+    "project_id", "name", "importance", "source", "url", "gate", "confirm",
 )
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 # Web-requested clones and push remotes: network git URLs only (never a host
@@ -193,6 +193,12 @@ def validate_project_request(action, fields):
             raise Invalid("gate command must be one line of at most 200 characters")
         request.update(name=name, importance=importance, source=source, url=url,
                        push_remote=push_remote, gate=gate)
+    elif action == "delete_project":
+        if project_id == "sid":
+            raise Invalid("SID itself cannot be deleted")
+        if fields.get("confirm", "") != project_id:
+            raise Invalid("type the project id to confirm deletion")
+        request["confirm"] = project_id
     elif action == "project_push_setup":
         if not GIT_URL.fullmatch(url):
             raise Invalid("push setup needs a git@..., ssh:// or https:// URL")
@@ -213,6 +219,8 @@ def project_cli_args(request):
         return args
     if action == "project_retry_clone":
         return ["retry-clone", project_id]
+    if action == "delete_project":
+        return ["delete", project_id, "--confirm", request["confirm"]]
     return ["push-setup", project_id, request["url"]]
 
 

@@ -291,3 +291,15 @@ def test_gate_environment_disables_python_caches(worker, monkeypatch):
     env = worker.gate_env()
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert env["PYTEST_ADDOPTS"] == "-q -p no:cacheprovider"
+
+
+def test_deleted_or_deleting_projects_never_start_work(worker, tmp_path):
+    # Deleted: the job record is gone and must not be recreated.
+    worker._process_job(json.dumps({"id": "gone1", "role": "builder", "project_id": "ghost", "prompt": "x"}))
+    assert "sid:jobs:gone1" not in worker.redis.records
+    # Being deleted: dropped before any path is touched.
+    register(worker.redis, "web-shop", tmp_path / "shop", status="deleting")
+    worker.redis.records["sid:jobs:b8"] = {"id": "b8", "project_id": "web-shop", "status": "queued"}
+    worker._process_job(json.dumps({"id": "b8", "role": "builder", "project_id": "web-shop", "prompt": "x"}))
+    assert worker.redis.records["sid:jobs:b8"]["status"] == "queued"
+    assert not (tmp_path / "shop").exists()

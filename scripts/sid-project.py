@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from pathlib import Path
 
 
 PROJECT_SET = "sid:projects"
+# Directories under this base are the only ones delete ever removes.
+PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -222,6 +225,105 @@ def register_existing(args):
     return record
 
 
+def _json(raw):
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _hash_keys(redis_client, pattern):
+    """Hash keys only: sid:goals:<id>:planning is a string lock."""
+    return [key for key in redis_client.scan_iter(pattern)
+            if key.count(":") == 2 and redis_client.type(key) == "hash"]
+
+
+def project_work(redis_client, project_id):
+    """(job ids, goal ids) belonging to a project. Reviews, repairs and
+    integrations may lack project_id and belong to their builder's project."""
+    jobs = {key.split(":")[2]: redis_client.hgetall(key) for key in _hash_keys(redis_client, "sid:jobs:*")}
+    owned = {jid for jid, job in jobs.items() if job.get("project_id") == project_id}
+    for jid, job in jobs.items():
+        if not job.get("project_id") and (job.get("builder_job_id") in owned or job.get("target_builder_id") in owned):
+            owned.add(jid)
+    goals = {key.split(":")[2] for key in _hash_keys(redis_client, "sid:goals:*")
+             if redis_client.hget(key, "project_id") == project_id}
+    return owned, goals
+
+
+def busy_work(redis_client, project_id, job_ids, goal_ids):
+    """Work of this project that is running right now and cannot be dropped."""
+    busy = []
+    for key in redis_client.scan_iter("sid:workers:*"):
+        if redis_client.type(key) == "hash":
+            held = redis_client.hget(key, "job_id")
+            if held and held in job_ids:
+                busy.append(f"job {held} (running on {key.split(':', 2)[2]})")
+    for goal_id in sorted(goal_ids):
+        if redis_client.exists(f"sid:goals:{goal_id}:planning"):
+            busy.append(f"goal {goal_id} (being planned)")
+    return busy
+
+
+def owned_root(record):
+    """The project's directory if SID created it (exactly <PROJECTS_BASE>/<id>,
+    a real directory, not a symlink), else None. Registered existing
+    checkouts live elsewhere and are never deleted."""
+    root = Path(record.get("root") or "")
+    expected = PROJECTS_BASE / record["id"]
+    if str(root) != str(expected) or root.is_symlink() or not root.is_dir():
+        return None
+    if root.resolve() != expected.resolve() or expected.resolve().parent != PROJECTS_BASE.resolve():
+        return None
+    return root
+
+
+def delete(args):
+    """Remove a project from the server: its queued work, job/goal records,
+    Redis keys and (only if SID created it) its directory with repo,
+    worktrees, logs and deploy key. Refuses while its work is running."""
+    validate_id(args.id)
+    if args.id == "sid":
+        raise ProjectError("SID itself cannot be deleted")
+    if args.confirm != args.id:
+        raise ProjectError("confirmation does not match the project id")
+    r = get_redis()
+    record = project(r, args.id)
+    previous = record.get("status") or "active"
+    # Stop new work first: workers drop jobs of a deleting project.
+    r.hset(key_for(args.id), mapping={"status": "deleting", "updated_at": now()})
+    job_ids, goal_ids = project_work(r, args.id)
+    busy = busy_work(r, args.id, job_ids, goal_ids)
+    if busy:
+        r.hset(key_for(args.id), mapping={"status": previous, "updated_at": now()})
+        raise ProjectError("still running: " + ", ".join(busy) + ". Nothing was deleted; try again when it finishes")
+
+    for queue, owned in (("sid:jobs", job_ids), ("sid:goals", goal_ids)):
+        for raw in r.lrange(queue, 0, -1):
+            payload = _json(raw)
+            if payload.get("id") in owned or payload.get("project_id") == args.id:
+                r.lrem(queue, 0, raw)
+    keys = [f"sid:jobs:{jid}" for jid in job_ids] + [f"sid:integration-lock:{jid}" for jid in job_ids]
+    keys += [f"sid:goals:{gid}" for gid in goal_ids]
+    keys += [key_for(args.id), f"sid:project-stats:{args.id}", f"sid:merge-queue:{args.id}",
+             f"sid:main-head:{args.id}", f"sid:approval-lock:{args.id}"]
+    for key in keys:
+        r.delete(key)
+    r.srem(PROJECT_SET, args.id)
+
+    result = {"id": args.id, "status": "deleted", "jobs_removed": len(job_ids), "goals_removed": len(goal_ids)}
+    root = owned_root(record)
+    if root is not None:
+        shutil.rmtree(root)
+        result["removed_path"] = str(root)
+    else:
+        result["kept_paths"] = sorted({record.get(k, "") for k in ("repo", "worktrees", "logs") if record.get(k)})
+    if record.get("push_remote"):
+        result["note"] = "Remove the project's deploy key from the GitHub repository settings"
+    return result
+
+
 def retry_clone(args):
     validate_id(args.id)
     redis_client = get_redis(); record = project(redis_client, args.id)
@@ -256,6 +358,7 @@ def main(argv=None):
     p = sub.add_parser("push-setup"); p.add_argument("id"); p.add_argument("url")
     p = sub.add_parser("set-importance"); p.add_argument("id"); p.add_argument("level")
     p = sub.add_parser("archive"); p.add_argument("id")
+    p = sub.add_parser("delete"); p.add_argument("id"); p.add_argument("--confirm", required=True, help="the project id again")
     p = sub.add_parser("show"); p.add_argument("id")
     sub.add_parser("list")
     args = parser.parse_args(argv)
@@ -269,6 +372,8 @@ def main(argv=None):
             validate_id(args.id); validate_importance(args.level); r = get_redis(); record = project(r, args.id); record["importance"] = args.level; record["updated_at"] = now(); r.hset(key_for(args.id), mapping=record); result = record
         elif args.command == "archive":
             validate_id(args.id); r = get_redis(); record = project(r, args.id); record["status"] = "archived"; record["updated_at"] = now(); r.hset(key_for(args.id), mapping=record); result = record
+        elif args.command == "delete":
+            result = delete(args)
         elif args.command == "show":
             validate_id(args.id); result = project(get_redis(), args.id)
         else:
