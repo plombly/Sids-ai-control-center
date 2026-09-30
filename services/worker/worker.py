@@ -422,7 +422,7 @@ def run_codex(job, worktree, log_path):
     ]
 
     env = os.environ.copy()
-    env["HOME"] = "/root"
+    env["HOME"] = os.environ.get("HOME") or "/root"
 
     started = time.time()
 
