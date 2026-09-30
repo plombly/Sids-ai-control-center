@@ -1,0 +1,193 @@
+import json
+import re
+import time
+from typing import Literal, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
+
+
+router = APIRouter()
+_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+_IMPORTANCE = {"high": 0, "medium": 1, "low": 2}
+_GOAL_KEY = re.compile(r"^sid:goals:([a-z0-9][a-z0-9-]{0,39})$")
+_JOB_KEY = re.compile(r"^sid:jobs:([a-z0-9][a-z0-9-]{0,39})$")
+
+
+class ProjectGoal(BaseModel):
+    goal: str = Field(min_length=1, max_length=100_000)
+    atomic: bool = False
+    request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+
+class ProjectPatch(BaseModel):
+    importance: Literal["high", "medium", "low"]
+
+
+def _text(value, default=None):
+    if value is None:
+        return default
+    value = str(value).strip()
+    return value or default
+
+
+def _clean(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return value
+
+
+def _data(value):
+    return {_clean(k): _clean(v) for k, v in (value or {}).items()}
+
+
+def _id(value):
+    if not _ID.fullmatch(value or ""):
+        raise HTTPException(status_code=422, detail="Invalid project id")
+    return value
+
+
+def _redis():
+    import main
+    return main
+
+
+def _members(main):
+    return {_text(_clean(value)) for value in (main.redis.smembers("sid:projects") or set())}
+
+
+def _project_data(project_id):
+    main = _redis()
+    data = _data(main.redis.hgetall(f"sid:projects:{project_id}"))
+    if project_id == "sid" and not data:
+        data = {"id": "sid", "name": "SID AI Command Center", "importance": "medium", "status": "active"}
+    return data
+
+
+def _numeric(value):
+    try:
+        number = float(value)
+        if number != number or number in (float("inf"), float("-inf")):
+            return None
+        return int(number) if number.is_integer() else number
+    except (TypeError, ValueError):
+        return None
+
+
+def _scan_hashes(main, pattern, matcher):
+    for raw_key in main.redis.scan_iter(pattern):
+        key = _text(_clean(raw_key), "")
+        match = matcher.fullmatch(key)
+        if match:
+            data = _data(main.redis.hgetall(key))
+            if data:
+                yield key, data
+
+
+def _counts(project_id):
+    main = _redis()
+    counts = {"goals_active": 0, "jobs_queued": 0, "jobs_running": 0,
+              "jobs_awaiting_approval": 0, "jobs_needs_human": 0, "jobs_merged": 0}
+    for _, data in _scan_hashes(main, "sid:goals:*", _GOAL_KEY):
+        if _text(data.get("project_id"), "sid") == project_id and data.get("status") in {"queued", "planning", "running"}:
+            counts["goals_active"] += 1
+    for _, data in _scan_hashes(main, "sid:jobs:*", _JOB_KEY):
+        role = _text(data.get("job_role", data.get("role")))
+        if role and role != "builder":
+            continue
+        if _text(data.get("project_id"), "sid") != project_id:
+            continue
+        status = _text(data.get("status"))
+        if status in {"queued", "blocked"}:
+            counts["jobs_queued"] += 1
+        elif status in {"claimed", "running", "testing"}:
+            counts["jobs_running"] += 1
+        elif status == "awaiting_review" and _text(data.get("review_verdict")) == "pass":
+            counts["jobs_awaiting_approval"] += 1
+        elif status == "needs_human":
+            counts["jobs_needs_human"] += 1
+        elif status == "merged":
+            counts["jobs_merged"] += 1
+    return counts
+
+
+def _item(project_id, data=None):
+    main = _redis()
+    data = data if data is not None else _project_data(project_id)
+    stats = _data(main.redis.hgetall(f"sid:project-stats:{project_id}"))
+    return {
+        "id": project_id,
+        "name": _text(data.get("name"), "SID AI Command Center" if project_id == "sid" else project_id),
+        "importance": _text(data.get("importance"), "medium"),
+        "status": _text(data.get("status"), "active"),
+        "gate_command": _text(data.get("gate_command")),
+        "push_remote": _text(data.get("push_remote")),
+        "created_at": _numeric(data.get("created_at")) or 0,
+        "counts": _counts(project_id),
+        "stats": {key: _numeric(stats.get(key)) for key in ("remaining_effort", "waiting_jobs", "running_jobs")},
+    }
+
+
+def _known(project_id):
+    if project_id == "sid":
+        return True
+    return project_id in _members(_redis())
+
+
+@router.get("/api/projects")
+def list_projects(include_archived: bool = False):
+    main = _redis()
+    ids = _members(main) | {"sid"}
+    result = []
+    for project_id in ids:
+        item = _item(project_id)
+        if item["status"] != "archived" or include_archived:
+            result.append(item)
+    return sorted(result, key=lambda item: (_IMPORTANCE.get(item["importance"], 1), item["name"]))
+
+
+@router.get("/api/projects/{project_id}")
+def get_project(project_id: str, limit: int = Query(25, ge=1, le=100)):
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    main = _redis()
+    item = _item(project_id)
+    goals = [(key, data) for key, data in _scan_hashes(main, "sid:goals:*", _GOAL_KEY)
+             if _text(data.get("project_id"), "sid") == project_id]
+    jobs = [(key, data) for key, data in _scan_hashes(main, "sid:jobs:*", _JOB_KEY)
+            if _text(data.get("project_id"), "sid") == project_id
+            and (not _text(data.get("job_role", data.get("role")))
+                 or _text(data.get("job_role", data.get("role"))) == "builder")]
+    goals.sort(key=lambda pair: (-(_numeric(pair[1].get("updated_at")) or 0), pair[0]))
+    jobs.sort(key=lambda pair: (-(_numeric(pair[1].get("updated_at")) or 0), pair[0]))
+    item["goals"] = [main._goal(key, data) for key, data in goals[:limit]]
+    item["jobs"] = [main._job(key, data) for key, data in jobs[:limit]]
+    return item
+
+
+@router.post("/api/projects/{project_id}/goals", status_code=202)
+def submit_project_goal(project_id: str, payload: ProjectGoal):
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    status = _project_data(project_id).get("status", "active")
+    if status in {"archived", "pending_key"}:
+        raise HTTPException(status_code=409, detail="Project is not accepting goals")
+    main = _redis()
+    result = main._submit_goal(payload, project_id=project_id)
+    result["project_id"] = project_id
+    return result
+
+
+@router.patch("/api/projects/{project_id}")
+def patch_project(project_id: str, payload: ProjectPatch):
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    main = _redis()
+    key = f"sid:projects:{project_id}"
+    if project_id == "sid" and not main.redis.hgetall(key):
+        main.redis.hset(key, mapping={"id": "sid", "name": "SID AI Command Center", "status": "active"})
+    main.redis.hset(key, mapping={"importance": payload.importance, "updated_at": str(time.time())})
+    return _item(project_id)

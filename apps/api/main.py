@@ -153,6 +153,7 @@ def _job(key, data):
     data = data if isinstance(data, dict) else {}
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
+        "project_id": _text(data.get("project_id"), "sid"),
         "goal_id": _text(data.get("goal_id")),
         "status": _text(data.get("status"), "unknown"),
         "role": _text(data.get("job_role", data.get("role"))),
@@ -224,6 +225,7 @@ def _goal(key, data):
     counts = dict(sorted(counts.items()))
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
+        "project_id": _text(data.get("project_id"), "sid"),
         "status": _text(data.get("status"), "unknown"),
         "summary": _bounded_summary(data.get("summary", data.get("text", data.get("goal")))),
         "prompt": _bounded_summary(data.get("goal", data.get("prompt", data.get("text")))),
@@ -576,7 +578,7 @@ def _job_record(job_id):
     return key, data
 
 
-def _submit_goal(payload):
+def _submit_goal(payload, project_id=None):
     goal = " ".join(payload.goal.split())
     if not goal:
         raise HTTPException(status_code=422, detail="Goal cannot be blank")
@@ -627,9 +629,14 @@ def _submit_goal(payload):
         "status": "queued", "atomic": str(bool(payload.atomic)).lower(),
         "created_at": str(time.time()), "updated_at": str(time.time()),
     }
+    if project_id is not None:
+        record["project_id"] = project_id
     redis.hset(f"sid:goals:{goal_id}", mapping=record)
     try:
-        redis.rpush(os.getenv("GOAL_QUEUE", "sid:goals"), json.dumps({"id": goal_id, "goal": goal, "atomic": payload.atomic}))
+        queued = {"id": goal_id, "goal": goal, "atomic": payload.atomic}
+        if project_id is not None:
+            queued["project_id"] = project_id
+        redis.rpush(os.getenv("GOAL_QUEUE", "sid:goals"), json.dumps(queued))
     except Exception:
         redis.hset(f"sid:goals:{goal_id}", mapping={"status": "queue_failed", "updated_at": str(time.time())})
         if request_id:
@@ -645,7 +652,10 @@ def _submit_goal(payload):
             redis.set(f"sid:goal-requests:{request_id}", goal_id, ex=86400)
         except Exception:
             pass
-    return {"id": goal_id, "status": "accepted", "atomic": bool(payload.atomic)}
+    result = {"id": goal_id, "status": "accepted", "atomic": bool(payload.atomic)}
+    if project_id is not None:
+        result["project_id"] = project_id
+    return result
 
 
 @app.post("/api/goals", response_model=GoalAccepted, status_code=202)
@@ -1135,5 +1145,7 @@ def project_tasks(project_id: int, db: Session = Depends(get_db)):
 
 # Provider inspection and persistent agent definitions (execution is internal only).
 from agent_routes import router as agent_router
+from project_routes import router as project_router
 
 app.include_router(agent_router)
+app.include_router(project_router)
