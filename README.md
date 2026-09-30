@@ -132,9 +132,9 @@ Tests use isolated in-memory SQLite and fake CLI executables. They do not read
 `.env`, call a paid model, or connect to PostgreSQL/Redis:
 
 ```sh
-python3 -m venv /tmp/sid-agent-venv
-/tmp/sid-agent-venv/bin/pip install -r apps/api/requirements-dev.txt
-/tmp/sid-agent-venv/bin/python -m pytest apps/api/tests -q
+python3 -m venv /opt/sid-venv
+/opt/sid-venv/bin/pip install -r apps/api/requirements-dev.txt
+/opt/sid-venv/bin/python -m pytest apps/api/tests -q
 python3 -m compileall -q apps/api
 ```
 
@@ -143,3 +143,31 @@ failures/timeouts/output limits, unavailable providers, registration, execution
 gates, legacy-agent schema compatibility, new routes, and Project/Task regression.
 An authenticated live Codex run and PostgreSQL deployment smoke test remain
 separate integration checks.
+
+## Review, repair and operator workflow
+
+Reviewers are shown the complete integrated change
+(`integration_base_commit..integrated_candidate_commit`), the deterministic
+gate result, and any previous findings. They do not run tests (their sandbox
+is read-only) and block only on correctness, requirement, regression, or
+security defects in changed code. `VERDICT: PASS_WITH_NOTES` counts as a pass;
+notes are stored in `review_findings`.
+
+When a job still requires changes after its repair allowance
+(`MAX_REPAIR_ATTEMPTS`, default 2), it becomes `needs_human` instead of
+failing. Dependents keep waiting and the goal stays open. On the host:
+
+```sh
+python3 scripts/job-review.py approve JOB_ID
+python3 scripts/job-review.py reject JOB_ID        # also works for needs_human
+python3 scripts/job-review.py extend JOB_ID [N]    # grant N more repairs (default 1)
+python3 scripts/job-review.py reintegrate JOB_ID   # fresh integration on current main + fresh review
+python3 scripts/job-review.py reopen JOB_ID        # un-block a job whose failed dependency recovered
+```
+
+`reintegrate` is also the recovery path for stale candidates (main moved after
+integration). It preserves the ordered source commits and never touches main.
+
+Workers honor `sid:worker-control:<WORKER_ID> = disabled` (set by the Web/API
+Stop button): the current job finishes, then no new jobs are claimed until
+Start clears it. Test gates use `SID_PYTHON`, defaulting to `/opt/sid-venv`.

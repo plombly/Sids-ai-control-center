@@ -50,7 +50,7 @@ class FakeRedis:
 
     def scan_iter(self, pattern):
         prefix = pattern.removesuffix("*")
-        return (key for key in self.hashes if key.startswith(prefix))
+        return (key for key in list(self.hashes) if key.startswith(prefix))
 
     def set(self, key, value, nx=False, ex=None):
         if nx and key in self.hashes:
@@ -137,3 +137,58 @@ def test_duplicate_dispatch_is_suppressed(monkeypatch):
     assert orchestrator.dispatch_job_once(job, payload)
     assert not orchestrator.dispatch_job_once(job, payload)
     assert len(fake.queues[orchestrator.JOB_QUEUE]) == 1
+
+
+def exhausted_builder(**extra):
+    record = {
+        "id": "b1", "role": "builder", "status": "awaiting_review",
+        "review_status": "complete", "review_verdict": "changes_required",
+        "review_job_id": "rv1", "repair_attempts": "2",
+    }
+    record.update(extra)
+    return record
+
+
+def test_repair_exhaustion_hands_off_to_human(monkeypatch):
+    fake = install_redis(monkeypatch)
+    fake.hashes["sid:jobs:b1"] = exhausted_builder()
+    fake.hashes["sid:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
+    orchestrator.queue_repairs()
+    builder = fake.hashes["sid:jobs:b1"]
+    assert builder["status"] == "needs_human"
+    assert builder["repair_status"] == "exhausted"
+    assert fake.queues.get(orchestrator.JOB_QUEUE, []) == []
+    # needs_human is not a dependency failure: children keep waiting.
+    fake.hashes["sid:jobs:child"] = {
+        "id": "child", "status": "blocked",
+        "dependencies": json.dumps(["b1"]), "prompt": "c", "created_at": "1",
+    }
+    orchestrator.release_dependencies()
+    assert fake.hget("sid:jobs:child", "status") == "blocked"
+
+
+def test_extended_repair_limit_dispatches_another_repair(monkeypatch):
+    fake = install_redis(monkeypatch)
+    fake.hashes["sid:jobs:b1"] = exhausted_builder(max_repair_attempts="3")
+    fake.hashes["sid:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
+    orchestrator.queue_repairs()
+    builder = fake.hashes["sid:jobs:b1"]
+    assert builder["status"] == "awaiting_review"
+    assert builder["repair_attempts"] == "3"
+    queued = [json.loads(item) for item in fake.queues[orchestrator.JOB_QUEUE]]
+    assert [item["role"] for item in queued] == ["repair"]
+    assert "3 of 3" in queued[0]["prompt"]
+
+
+def test_dependency_failure_cascades_to_grandchildren(monkeypatch):
+    fake = install_redis(monkeypatch)
+    fake.hashes.update({
+        "sid:jobs:parent": {"id": "parent", "status": "blocked_failed_dependency"},
+        "sid:jobs:grandchild": {
+            "id": "grandchild", "status": "blocked",
+            "dependencies": json.dumps(["parent"]),
+            "prompt": "g", "created_at": "1",
+        },
+    })
+    orchestrator.release_dependencies()
+    assert fake.hget("sid:jobs:grandchild", "status") == "blocked_failed_dependency"

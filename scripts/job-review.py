@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import subprocess
 import sys
@@ -17,6 +18,8 @@ REPO_ROOT = Path(
 WORKTREE_ROOT = Path(
     os.getenv("WORKTREE_ROOT", "/opt/sid-worktrees")
 ).resolve()
+
+JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
 
 r = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -211,14 +214,10 @@ def _approve_unlocked(job_id):
 
     now = str(time.time())
 
-    git("worktree", "remove", str(worktree))
-    git("branch", "-d", branch)
-
-    builder_worktree = safe_worktree(job_id, data)
-    builder_branch = safe_branch(job_id, data)
-    git("worktree", "remove", "--force", str(builder_worktree))
-    git("branch", "-D", builder_branch)
-
+    # Record the merge immediately after main advances. Cleanup happens
+    # afterwards and is best-effort: if it failed first, main would have
+    # moved while the job still looked unmerged, and every retry would then
+    # be refused as "stale main", stranding the job and its dependents.
     r.hset(
         key,
         mapping={
@@ -231,28 +230,70 @@ def _approve_unlocked(job_id):
         },
     )
 
+    cleanup_after_merge(job_id, data, worktree, branch)
+
     print()
     print(f"APPROVED + INTEGRATED: {job_id}")
     print(f"Merge commit: {commit_sha}")
+
+
+def cleanup_after_merge(job_id, data, worktree, branch):
+    """Best-effort removal of merged worktrees/branches. Never fails."""
+    steps = [
+        ("worktree", "remove", str(worktree)),
+        ("branch", "-d", branch),
+    ]
+    try:
+        builder_worktree = safe_worktree(job_id, data)
+        builder_branch = safe_branch(job_id, data)
+        steps += [
+            ("worktree", "remove", "--force", str(builder_worktree)),
+            ("branch", "-D", builder_branch),
+        ]
+    except SystemExit:
+        print("WARNING: builder worktree/branch not found; skipped its cleanup",
+              file=sys.stderr)
+    for step in steps:
+        result = git(*step, check=False)
+        if result.returncode != 0:
+            print(
+                f"WARNING: cleanup step failed (merge is recorded): git {' '.join(step)}: "
+                f"{(result.stderr or result.stdout).strip()}",
+                file=sys.stderr,
+            )
+
+
+REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted"}
 
 
 def reject(job_id):
     key = f"sid:jobs:{job_id}"
     data = job_record(job_id)
 
-    if data.get("status") != "awaiting_review":
+    if data.get("status") not in REJECTABLE:
         fail(
             f"job status is {data.get('status')!r}; "
-            "expected 'awaiting_review'"
+            f"expected one of {sorted(REJECTABLE)}"
         )
 
     worktree = safe_worktree(job_id, data)
     branch = safe_branch(job_id, data)
-    integration_worktree = safe_integration_worktree(job_id, data)
-    integration_branch = safe_integration_branch(job_id, data)
 
-    git("worktree", "remove", "--force", str(integration_worktree))
-    git("branch", "-D", integration_branch)
+    # An exhausted or stale job may have no live integration worktree.
+    # Validate the recorded path when there is one; skip when absent.
+    if data.get("integration_worktree"):
+        integration_worktree = (
+            WORKTREE_ROOT / f"job-{job_id}-integration"
+        ).resolve()
+        if Path(data["integration_worktree"]).resolve() != integration_worktree:
+            fail(f"unexpected integration worktree: {data['integration_worktree']}")
+        if integration_worktree.exists():
+            git("worktree", "remove", "--force", str(integration_worktree))
+        integration_branch = f"sid/integration-{job_id}"
+        if git("show-ref", "--verify", f"refs/heads/{integration_branch}",
+               check=False).returncode == 0:
+            git("branch", "-D", integration_branch)
+
     git("worktree", "remove", "--force", str(worktree))
     git("branch", "-D", branch)
 
@@ -268,12 +309,161 @@ def reject(job_id):
     print(f"REJECTED: {job_id}")
 
 
+EXHAUSTED = {"needs_human", "repair_exhausted"}
+
+# Derived state that a fresh integration + review must rebuild. Source
+# candidates, repair attempts, findings history and audit fields are kept.
+DERIVED_REVIEW_FIELDS = (
+    "review_job_id", "review_status", "review_verdict", "reviewed_commit",
+    "review_error", "review_findings",
+    "integration_status", "integration_base_commit",
+    "integrated_candidate_commit", "integration_result", "integration_error",
+)
+
+
+def extend(job_id, extra=1):
+    """Grant more repair attempts to a job that exhausted them."""
+    key = f"sid:jobs:{job_id}"
+    data = job_record(job_id)
+    if data.get("status") not in EXHAUSTED:
+        fail(f"job status is {data.get('status')!r}; expected one of {sorted(EXHAUSTED)}")
+    if not (data.get("review_status") == "complete"
+            and data.get("review_verdict") == "changes_required"
+            and data.get("review_job_id")):
+        fail("job has no current CHANGES_REQUIRED review to repair; "
+             "use 'reintegrate' to get a fresh review of its candidate")
+    if not 1 <= extra <= 5:
+        fail("extra attempts must be between 1 and 5")
+    attempts = int(data.get("repair_attempts", "0") or "0")
+    limit = attempts + extra
+    r.hset(key, mapping={
+        "status": "awaiting_review",
+        "max_repair_attempts": str(limit),
+        "repair_status": "extended",
+        "needs_human_reason": "",
+        "updated_at": str(time.time()),
+    })
+    print(f"EXTENDED: {job_id} may use {extra} more repair attempt(s) (limit {limit})")
+
+
+def legacy_sources(data):
+    """Ordered source commits for jobs created before integration existed."""
+    candidate = data.get("candidate_commit", "")
+    if not candidate:
+        fail("job has no candidate commit")
+    base = git("merge-base", "main", candidate).stdout.strip()
+    commits = git("rev-list", "--reverse", f"{base}..{candidate}").stdout.split()
+    if not commits:
+        fail("candidate has no commits beyond main; nothing to integrate")
+    return commits
+
+
+def reintegrate(job_id):
+    """Queue a fresh isolated integration against current main + fresh review.
+
+    For stale candidates (main moved) and for exhausted jobs whose latest
+    candidate should be reviewed again. Never touches main.
+    """
+    key = f"sid:jobs:{job_id}"
+    data = job_record(job_id)
+    allowed = {"awaiting_review"} | EXHAUSTED
+    if data.get("status") not in allowed:
+        fail(f"job status is {data.get('status')!r}; expected one of {sorted(allowed)}")
+    if data.get("role", "builder") not in {"", "builder"}:
+        fail("only builder jobs can be reintegrated")
+    if data.get("review_status") in {"queued", "running"}:
+        fail("a review is already queued or running for this job")
+    if data.get("repair_status") in {"queued", "running"}:
+        fail("a repair is queued or running for this job")
+    safe_worktree(job_id, data)
+    safe_branch(job_id, data)
+
+    raw = data.get("source_candidate_commits", "")
+    try:
+        sources = json.loads(raw) if raw else []
+    except ValueError:
+        sources = []
+    if not isinstance(sources, list) or not sources:
+        sources = legacy_sources(data)
+
+    integrate_id = uuid.uuid4().hex[:8]
+    now = str(time.time())
+    r.hdel(key, *DERIVED_REVIEW_FIELDS)
+    update = {
+        "status": "awaiting_review",
+        "source_candidate_commits": json.dumps(sources, separators=(",", ":")),
+        "last_integrate_job_id": integrate_id,
+        "needs_human_reason": "",
+        "updated_at": now,
+    }
+    # Repair attempts are preserved, so an exhausted job whose fresh review
+    # still requires changes returns to needs_human instead of re-repairing.
+    r.hset(key, mapping=update)
+    r.hset(f"sid:jobs:{integrate_id}", mapping={
+        "id": integrate_id,
+        "status": "queued",
+        "role": "integrate",
+        "target_builder_id": job_id,
+        "goal_id": data.get("goal_id", ""),
+        "created_at": now,
+        "updated_at": now,
+    })
+    r.rpush(JOB_QUEUE, json.dumps({
+        "id": integrate_id,
+        "role": "integrate",
+        "target_builder_id": job_id,
+        "created_at": now,
+    }))
+    print(f"REINTEGRATE QUEUED: {job_id} via {integrate_id} "
+          f"({len(sources)} source commit(s)); a fresh review follows automatically")
+
+
+FAILED_DEPENDENCY_STATES = {
+    "failed", "test_failed", "integration_failed", "rejected",
+    "repair_exhausted", "blocked_failed_dependency",
+}
+
+
+def reopen(job_id):
+    """Re-open a job blocked by a dependency that has since recovered."""
+    key = f"sid:jobs:{job_id}"
+    data = job_record(job_id)
+    if data.get("status") != "blocked_failed_dependency":
+        fail(f"job status is {data.get('status')!r}; expected 'blocked_failed_dependency'")
+    try:
+        deps = json.loads(data.get("dependencies") or "[]")
+    except ValueError:
+        fail("job has unreadable dependencies")
+    still_failed = [
+        f"{dep} ({r.hget(f'sid:jobs:{dep}', 'status')})" for dep in deps
+        if r.hget(f"sid:jobs:{dep}", "status") in FAILED_DEPENDENCY_STATES
+    ]
+    if still_failed:
+        fail("dependencies are still failed: " + ", ".join(still_failed))
+    r.hset(key, mapping={"status": "blocked", "updated_at": str(time.time())})
+    goal_id = data.get("goal_id")
+    if goal_id and r.hget(f"sid:goals:{goal_id}", "status") == "failed":
+        r.hset(f"sid:goals:{goal_id}", mapping={
+            "status": "running", "error": "", "updated_at": str(time.time()),
+        })
+    print(f"REOPENED: {job_id}; the orchestrator dispatches it once all "
+          "dependencies are merged")
+
+
+USAGE = """Usage:
+  job-review.py approve JOB_ID
+  job-review.py reject JOB_ID
+  job-review.py extend JOB_ID [EXTRA_ATTEMPTS]   grant more repairs (default 1)
+  job-review.py reintegrate JOB_ID               fresh integration on current main + fresh review
+  job-review.py reopen JOB_ID                    un-block a job whose failed dependency recovered"""
+
+
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in {"approve", "reject"}:
-        print(
-            "Usage: job-review.py approve|reject JOB_ID",
-            file=sys.stderr,
-        )
+    actions = {"approve", "reject", "extend", "reintegrate", "reopen"}
+    if len(sys.argv) < 3 or sys.argv[1] not in actions or (
+        len(sys.argv) > 3 and sys.argv[1] != "extend"
+    ) or len(sys.argv) > 4:
+        print(USAGE, file=sys.stderr)
         raise SystemExit(2)
 
     action = sys.argv[1]
@@ -284,8 +474,18 @@ def main():
 
     if action == "approve":
         approve(job_id)
-    else:
+    elif action == "reject":
         reject(job_id)
+    elif action == "extend":
+        try:
+            extra = int(sys.argv[3]) if len(sys.argv) == 4 else 1
+        except ValueError:
+            fail("EXTRA_ATTEMPTS must be a number")
+        extend(job_id, extra)
+    elif action == "reintegrate":
+        reintegrate(job_id)
+    else:
+        reopen(job_id)
 
 
 if __name__ == "__main__":

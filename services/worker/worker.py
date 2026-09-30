@@ -4,8 +4,10 @@ import re
 import signal
 import socket
 import subprocess
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from redis import Redis
@@ -26,6 +28,29 @@ ROLE_RUNTIME_DEFAULTS = {"builder": 600, "reviewer": 240, "repair": 360}
 ROLE_TOKEN_DEFAULTS = {"builder": 100000, "reviewer": 75000, "repair": 100000}
 ROLE_ENFORCEMENT_DEFAULTS = {"builder": 100000, "reviewer": 60000, "repair": 80000}
 POLL_SECONDS = int(os.environ.get("CODEX_POLL_SECONDS", "2"))
+HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "10"))
+REVIEW_DIFF_CHARS = int(os.environ.get("REVIEW_DIFF_CHARS", "60000"))
+REVIEW_GATE_CHARS = int(os.environ.get("REVIEW_GATE_CHARS", "3000"))
+REVIEW_PRIOR_CHARS = int(os.environ.get("REVIEW_PRIOR_CHARS", "4000"))
+FINDINGS_CHARS = 6000
+
+
+def resolve_sid_python():
+    """Python used for SID test gates.
+
+    /tmp is cleared on reboot, so the durable default is /opt/sid-venv.
+    The legacy /tmp location is only used when nothing else is configured.
+    """
+    configured = os.environ.get("SID_PYTHON")
+    if configured:
+        return configured
+    durable = Path("/opt/sid-venv/bin/python")
+    if durable.exists():
+        return str(durable)
+    return "/tmp/sid-agent-venv/bin/python"
+
+
+SID_PYTHON = resolve_sid_python()
 
 
 def role_limit(role, kind, defaults):
@@ -39,7 +64,7 @@ def efficiency_prefix(role):
 - Start with git status/diff and targeted rg/sed reads of likely files only.
 - Expand scope only when a concrete dependency requires it.
 - Do not run broad test suites; SID runs deterministic gates after builders/repairs.
-- For focused Python tests, use /tmp/sid-agent-venv/bin/python -m pytest; do not probe python/pytest executables.
+- For focused Python tests, use {SID_PYTHON} -m pytest; do not probe python/pytest executables.
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
 
@@ -52,7 +77,22 @@ def worker_key():
     return f"sid:workers:{WORKER_ID}"
 
 
+def control_key(worker_id=None):
+    # Operator control lives outside the heartbeat hash so that heartbeats
+    # can never overwrite a stop request.
+    return f"sid:worker-control:{worker_id or WORKER_ID}"
+
+
+def worker_disabled():
+    try:
+        return redis.get(control_key()) == "disabled"
+    except Exception:
+        return False
+
+
 def heartbeat(status="idle"):
+    if status == "idle" and worker_disabled():
+        status = "disabled"
     redis.hset(
         worker_key(),
         mapping={
@@ -65,6 +105,31 @@ def heartbeat(status="idle"):
         },
     )
     redis.expire(worker_key(), 30)
+
+
+@contextmanager
+def keep_alive(status="working"):
+    """Heartbeat in the background during long steps (tests, integration).
+
+    Without this the 30s heartbeat key expires while a busy worker runs its
+    test gate, and the worker vanishes from every dashboard.
+    """
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(HEARTBEAT_SECONDS):
+            try:
+                heartbeat(status)
+            except Exception as exc:
+                print(f"[{WORKER_ID}] heartbeat warning: {exc}", flush=True)
+
+    thread = threading.Thread(target=beat, name="sid-heartbeat", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=HEARTBEAT_SECONDS + 1)
 
 
 def run_git(*args, cwd=REPO_ROOT, check=True):
@@ -399,14 +464,14 @@ def run_codex(job, worktree, log_path):
 def run_tests(worktree):
     commands = [
         [
-            "/tmp/sid-agent-venv/bin/python",
+            SID_PYTHON,
             "-m",
             "pytest",
             "apps/api/tests",
             "-q",
         ],
         [
-            "/tmp/sid-agent-venv/bin/python",
+            SID_PYTHON,
             "-m",
             "compileall",
             "-q",
@@ -437,6 +502,100 @@ def run_tests(worktree):
     return True, "\n".join(output)
 
 
+def review_diff_packet(builder, candidate_commit, worktree):
+    """Return the complete candidate change for review.
+
+    The review range starts at the integration base, so a candidate built
+    from several source commits (builder + repairs) is reviewed as a whole
+    rather than as its last commit only. Files are included whole-file-first
+    until the budget is spent, and any omitted file is named explicitly.
+    """
+    base = builder.get("integration_base_commit") or f"{candidate_commit}^"
+    stat = run_git(
+        "diff", "--stat=200", base, candidate_commit,
+        cwd=worktree, check=False,
+    ).stdout.strip() or "(no file changes reported)"
+    names = [
+        name for name in run_git(
+            "diff", "--name-only", base, candidate_commit,
+            cwd=worktree, check=False,
+        ).stdout.splitlines() if name.strip()
+    ]
+    chunks, used, omitted = [], 0, []
+    for name in names:
+        piece = run_git(
+            "diff", "--no-ext-diff", "--unified=20", base, candidate_commit,
+            "--", name, cwd=worktree, check=False,
+        ).stdout or ""
+        if used + len(piece) > REVIEW_DIFF_CHARS:
+            omitted.append(name)
+            continue
+        chunks.append(piece)
+        used += len(piece)
+    diff = "".join(chunks) or "(empty diff)"
+    if omitted:
+        diff += (
+            "\n[SID: diff budget reached; these changed files were not "
+            "inlined. Read them from the worktree if they matter: "
+            + ", ".join(omitted) + "]"
+        )
+    return diff, stat, base
+
+
+def integration_gate_summary(builder):
+    raw = builder.get("integration_result", "")
+    try:
+        result = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        result = {}
+    if not result:
+        return "(no integration gate result recorded)"
+    code = result.get("returncode")
+    status = "PASSED" if code == 0 else f"FAILED (exit {code})"
+    output = (result.get("stdout") or "")[-REVIEW_GATE_CHARS:]
+    return f"Gate status: {status}\n{output}".rstrip()
+
+
+def prior_findings_packet(builder):
+    try:
+        history = json.loads(builder.get("review_findings_history") or "[]")
+    except (TypeError, ValueError):
+        history = []
+    if not isinstance(history, list) or not history:
+        return ""
+    parts = []
+    for item in history[-2:]:
+        if isinstance(item, dict):
+            parts.append(
+                f"Review {item.get('review_job_id', '?')} of "
+                f"{str(item.get('candidate', ''))[:12]}:\n"
+                f"{item.get('findings', '')}"
+            )
+    body = "\n\n".join(parts)[-REVIEW_PRIOR_CHARS:]
+    return (
+        "Previous review findings for this job (the repair was meant to "
+        f"address these):\n{body}\n\n"
+    )
+
+
+def parse_review_verdict(messages):
+    """Return (verdict, findings) from reviewer agent messages.
+
+    PASS_WITH_NOTES is recorded as verdict "pass": notes never block and the
+    approval contract (review_verdict == "pass") is unchanged.
+    """
+    verdict = "unknown"
+    for text in messages:
+        for message_line in str(text).splitlines():
+            normalized = message_line.strip()
+            if normalized in ("VERDICT: PASS", "VERDICT: PASS_WITH_NOTES"):
+                verdict = "pass"
+            elif normalized == "VERDICT: CHANGES_REQUIRED":
+                verdict = "changes_required"
+    findings = str(messages[-1]).strip()[-FINDINGS_CHARS:] if messages else ""
+    return verdict, findings
+
+
 def queue_review_job(builder_job_id):
     builder_key = f"sid:jobs:{builder_job_id}"
     builder = redis.hgetall(builder_key)
@@ -465,56 +624,68 @@ def queue_review_job(builder_job_id):
     if not redis.hsetnx(builder_key, "review_job_id", review_job_id):
         return builder.get("review_job_id", ""), False
 
-    diff_result = run_git(
-        "diff", "--no-ext-diff", "--unified=60",
-        f"{candidate_commit}^", candidate_commit,
-        cwd=Path(worktree), check=False,
+    candidate_diff, diff_stat, review_base = review_diff_packet(
+        builder, candidate_commit, Path(worktree)
     )
-    candidate_diff = (diff_result.stdout or "")[:12000]
-    if len(diff_result.stdout or "") > 12000:
-        candidate_diff += "\n... [diff truncated by SID at 12000 chars]"
+    gate_summary = integration_gate_summary(builder)
+    prior_findings = prior_findings_packet(builder)
 
     prompt = f"""You are the review agent for SID's AI Command Center.
 
 Review builder job {builder_job_id}.
 Review immutable integrated candidate commit {candidate_commit}.
+The change under review is everything from {review_base} to {candidate_commit}.
 
 Original task:
 {builder.get("prompt", "")}
 
-SID candidate diff (inspect this first; it is the primary review context):
+Files changed by this candidate (git diff --stat {review_base} {candidate_commit}):
+{diff_stat}
+
+SID candidate diff (the complete change under review; inspect this first):
 {candidate_diff}
 
-You are operating inside the builder's completed worktree.
+SID deterministic integration gate result (already executed by SID on this exact candidate):
+{gate_summary}
 
-Review the implementation for:
-- correctness
-- missed requirements
-- regressions
-- integration problems
-- security or unsafe behavior
-- maintainability issues
+{prior_findings}
+You are operating inside the integrated candidate worktree.
 
-Use the SID-provided candidate diff above first. Do not rerun broad repository
-discovery merely to reconstruct it. Read surrounding code only when needed to
-validate a concrete concern. Keep the review focused on the requested task.
+Do NOT run tests. Your sandbox is read-only and has no writable temporary
+directory, so pytest and similar tools will fail there. SID already ran the
+deterministic gate on this exact candidate; its result is above.
 
-The builder's deterministic test gate has already run. Do not broadly rerun
-the entire repository test suite merely to repeat that gate. If a focused
-Python test is necessary, use SID's existing environment explicitly:
+Decide the verdict using this bar:
 
-/tmp/sid-agent-venv/bin/python -m pytest <focused-test-path> -q
+BLOCKING (verdict CHANGES_REQUIRED) only for defects in code this candidate
+adds or changes:
+- incorrect behavior or a crash on realistic input
+- a stated requirement of the original task that is not met
+- a regression of existing behavior
+- a security or safety problem
 
-Do not modify any files.
-Do not commit anything.
+NON-BLOCKING (report as notes, never a reason for CHANGES_REQUIRED):
+- style, naming, refactoring, or maintainability preferences
+- speculative or extreme edge cases (for example terminals under 20 columns)
+- pre-existing issues in code this candidate did not change
+- test coverage suggestions when the gate passed
+
+If previous findings are listed above, first confirm whether each one is now
+resolved. Do not invent new blocking findings in areas that previous reviews
+already examined unless the latest change introduced them.
+
+Read surrounding code only to validate a concrete concern. Do not modify any
+files. Do not commit anything.
 
 End your response with exactly one verdict line:
 VERDICT: PASS
 or
+VERDICT: PASS_WITH_NOTES
+or
 VERDICT: CHANGES_REQUIRED
 
-Before the verdict, provide concise actionable findings. If there are no
-material findings, explicitly say so.
+Before the verdict, list findings with each marked BLOCKING or NOTE. If there
+are no material findings, explicitly say so.
 """
 
     created_at = time.time()
@@ -642,31 +813,23 @@ def process_review_job(job, key, log_path):
     if head_after != candidate_commit or dirty_after:
         raise RuntimeError("Candidate changed during read-only review")
 
-    verdict = "unknown"
-
+    messages = []
     for line in log_path.read_text(errors="replace").splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-
         if event.get("type") != "item.completed":
             continue
-
         item = event.get("item", {})
-        if item.get("type") != "agent_message":
-            continue
+        if item.get("type") == "agent_message":
+            messages.append(item.get("text", ""))
 
-        for message_line in item.get("text", "").splitlines():
-            normalized = message_line.strip()
-
-            if normalized == "VERDICT: PASS":
-                verdict = "pass"
-            elif normalized == "VERDICT: CHANGES_REQUIRED":
-                verdict = "changes_required"
+    verdict, findings = parse_review_verdict(messages)
 
     common = {
         "review_verdict": verdict,
+        "review_findings": findings,
         "reviewed_commit": candidate_commit,
         "codex_exit_code": str(returncode),
         "duration_seconds": f"{duration:.2f}",
@@ -698,17 +861,31 @@ def process_review_job(job, key, log_path):
         raise RuntimeError(f"Reviewer Codex exited with status {returncode}")
 
     redis.hset(key, mapping={"status": "review_complete", **common})
-    redis.hset(
-        f"sid:jobs:{builder_job_id}",
-        mapping={
+    builder_update = {
+        "review_job_id": job_id,
+        "review_status": "complete",
+        "review_verdict": verdict,
+        "review_findings": findings,
+        "reviewed_commit": candidate_commit,
+        "review_log": str(log_path),
+        "updated_at": str(time.time()),
+    }
+    if verdict == "changes_required":
+        # Persist findings across repairs so the next independent reviewer
+        # can verify them instead of starting over with new nitpicks.
+        try:
+            history = json.loads(builder.get("review_findings_history") or "[]")
+        except (TypeError, ValueError):
+            history = []
+        if not isinstance(history, list):
+            history = []
+        history.append({
             "review_job_id": job_id,
-            "review_status": "complete",
-            "review_verdict": verdict,
-            "reviewed_commit": candidate_commit,
-            "review_log": str(log_path),
-            "updated_at": str(time.time()),
-        },
-    )
+            "candidate": candidate_commit,
+            "findings": findings[-3000:],
+        })
+        builder_update["review_findings_history"] = json.dumps(history[-5:])
+    redis.hset(f"sid:jobs:{builder_job_id}", mapping=builder_update)
 
 
 
@@ -819,6 +996,7 @@ def process_repair_job(job, key, log_path, test_log):
 
     tests_ok, tests_output = run_tests(worktree)
     test_log.write_text(tests_output)
+    redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
 
     if not tests_ok:
         redis.hset(
@@ -974,7 +1152,56 @@ def process_repair_job(job, key, log_path, test_log):
         flush=True,
     )
 
+def process_integrate_job(job, key):
+    """Operator-requested (re)integration of an existing builder candidate.
+
+    Used for stale candidates (main moved after integration) and for
+    re-reviewing jobs that exhausted repairs. The ordered source commits are
+    preserved; only derived integration/review state was cleared by the
+    host-side request. Main is never modified here.
+    """
+    builder_job_id = str(job.get("target_builder_id", ""))
+    if not builder_job_id:
+        raise RuntimeError("Integrate job missing target_builder_id")
+    redis.hset(key, mapping={
+        "status": "integrating",
+        "worker_id": WORKER_ID,
+        "job_role": "integrate",
+        "target_builder_id": builder_job_id,
+        "updated_at": str(time.time()),
+    })
+    builder = redis.hgetall(f"sid:jobs:{builder_job_id}")
+    if builder.get("status") != "awaiting_review":
+        raise RuntimeError(
+            f"Integrate target status is {builder.get('status')!r}; expected 'awaiting_review'"
+        )
+    if not prepare_integration(builder_job_id):
+        current = redis.hgetall(f"sid:jobs:{builder_job_id}")
+        redis.hset(key, mapping={
+            "status": "integration_failed",
+            "error": current.get("integration_error", "integration did not pass or is already running"),
+            "updated_at": str(time.time()),
+        })
+        return
+    review_job_id, queued = queue_review_job(builder_job_id)
+    redis.hset(key, mapping={
+        "status": "integrate_complete",
+        "review_job_id": review_job_id,
+        "updated_at": str(time.time()),
+    })
+    print(
+        f"[{WORKER_ID}] reintegrated builder={builder_job_id} "
+        f"review={review_job_id} {'queued' if queued else 'already queued'}",
+        flush=True,
+    )
+
+
 def process_job(raw_job):
+    with keep_alive("working"):
+        _process_job(raw_job)
+
+
+def _process_job(raw_job):
     job = json.loads(raw_job)
     job_id = str(job["id"])
     key = f"sid:jobs:{job_id}"
@@ -988,6 +1215,10 @@ def process_job(raw_job):
 
         if job.get("role", "builder") == "reviewer":
             process_review_job(job, key, log_path)
+            return
+
+        if job.get("role") == "integrate":
+            process_integrate_job(job, key)
             return
 
         if job.get("role") == "repair":
@@ -1057,6 +1288,7 @@ def process_job(raw_job):
 
         tests_ok, tests_output = run_tests(worktree)
         test_log.write_text(tests_output)
+        redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
 
         if not tests_ok:
             redis.hset(
@@ -1111,6 +1343,7 @@ def process_job(raw_job):
                 "status": "awaiting_review",
                 "test_log": str(test_log),
                 "changes": diff,
+                "files_changed": str(len([x for x in diff.splitlines() if x.strip()])),
                 "candidate_commit": candidate_commit,
                 "source_candidate_commits": json.dumps([candidate_commit], separators=(",", ":")),
                 "updated_at": str(time.time()),
@@ -1206,6 +1439,12 @@ def main():
     while True:
         try:
             heartbeat()
+
+            # An operator stop takes effect between jobs: the current job
+            # always finishes, and no new job is claimed while disabled.
+            if worker_disabled():
+                time.sleep(5)
+                continue
 
             item = redis.blpop(QUEUE_NAME, timeout=5)
 

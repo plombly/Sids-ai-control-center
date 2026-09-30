@@ -518,6 +518,12 @@ def queue_repairs():
             continue
 
         attempts = int(builder.get("repair_attempts", "0") or "0")
+        # A human may grant more attempts per job (scripts/job-review.py
+        # extend); otherwise the global default applies.
+        try:
+            repair_limit = int(builder.get("max_repair_attempts") or MAX_REPAIR_ATTEMPTS)
+        except ValueError:
+            repair_limit = MAX_REPAIR_ATTEMPTS
 
         # A dispatched repair must be allowed to finish before deciding that
         # the builder has exhausted its repair allowance. In particular, the
@@ -534,16 +540,25 @@ def queue_repairs():
             }:
                 continue
 
-        if attempts >= MAX_REPAIR_ATTEMPTS:
-            if builder.get("repair_status") != "exhausted":
-                r.hset(
-                    key,
-                    mapping={
-                        "status": "repair_exhausted",
-                        "repair_status": "exhausted",
-                        "updated_at": now(),
-                    },
-                )
+        if attempts >= repair_limit:
+            # Exhaustion hands the job to a human instead of failing it.
+            # "needs_human" is not a failure state, so dependents keep
+            # waiting and the goal stays open. The operator can extend
+            # repairs, reintegrate for a fresh review, or reject. Written
+            # once: the job leaves "awaiting_review", so this loop no longer
+            # selects it and updated_at does not churn.
+            r.hset(
+                key,
+                mapping={
+                    "status": "needs_human",
+                    "repair_status": "exhausted",
+                    "needs_human_reason": (
+                        f"review still requires changes after {attempts} "
+                        "repair attempt(s)"
+                    ),
+                    "updated_at": now(),
+                },
+            )
             continue
 
         if existing:
@@ -586,7 +601,7 @@ Reviewer findings:
 {findings}
 
 Repair attempt:
-{next_attempt} of {MAX_REPAIR_ATTEMPTS}
+{next_attempt} of {repair_limit}
 
 Work ONLY on the concrete reviewer findings necessary to satisfy the original
 task. Preserve correct existing work. Do not broaden the scope, redesign
@@ -650,7 +665,7 @@ after you finish.
             print(
                 f"[{ORCHESTRATOR_ID}] repair={repair_job_id} "
                 f"builder={builder.get('id')} "
-                f"attempt={next_attempt}/{MAX_REPAIR_ATTEMPTS}",
+                f"attempt={next_attempt}/{repair_limit}",
                 flush=True,
             )
 
@@ -680,12 +695,15 @@ def release_dependencies():
             for dep in deps
         ]
 
+        # blocked_failed_dependency is itself a failure for grandchildren;
+        # without it, jobs two levels below a failure stay "blocked" forever.
         failed_states = {
             "failed",
             "test_failed",
             "integration_failed",
             "rejected",
             "repair_exhausted",
+            "blocked_failed_dependency",
         }
 
         if any(state in failed_states for state in dep_states):

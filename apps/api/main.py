@@ -582,7 +582,14 @@ def get_goal_detail(goal_id: str):
 @app.get("/api/jobs/{job_id}")
 def get_job_detail(job_id: str):
     key, data = _job_record(job_id)
-    return _job(key, data)
+    result = _job(key, data)
+    # Detail-only fields: bounded text that is too large for list views.
+    for field in ("review_findings", "needs_human_reason", "repair_status",
+                  "integration_error", "title"):
+        result[field] = _text(data.get(field))
+    for field in ("repair_attempts", "max_repair_attempts"):
+        result[field] = _number(data.get(field))
+    return _redact(result)
 
 
 @app.get("/api/action-required")
@@ -591,7 +598,7 @@ def api_action_required(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_L
     jobs = _all_jobs()
     items = [job for job in jobs if (
         job["status"] in FAILURE_STATUSES or
-        job["status"] == "awaiting_review" or
+        job["status"] in {"awaiting_review", "needs_human"} or
         job["review_status"] in {"changes_required", "failed"}
     )]
     return items[:_limit(limit)]
@@ -619,8 +626,11 @@ def stop_worker(worker_id: str, action: WorkerAction | None = None):
     active = [job for job in jobs if job["worker"] == worker_id and job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
     if active:
         raise HTTPException(status_code=409, detail="Worker is busy; it cannot be stopped")
-    redis.hset(key, mapping={"status": "stopped", "stop_reason": _text(action.reason if action else None, "requested"), "updated_at": str(time.time())})
-    return _worker(key, {**data, "status": "stopped"}, jobs)
+    # The worker process reads this control key between jobs; writing the
+    # heartbeat hash alone was overwritten by the next heartbeat.
+    redis.set(f"sid:worker-control:{worker_id}", "disabled")
+    redis.hset(key, mapping={"status": "disabled", "stop_reason": _text(action.reason if action else None, "requested"), "updated_at": str(time.time())})
+    return _worker(key, {**data, "status": "disabled"}, jobs)
 
 
 @app.delete("/api/workers/{worker_id}")
@@ -639,8 +649,9 @@ def start_worker(worker_id: str):
     key, data = _worker_record(worker_id)
     if _text(data.get("status")).lower() in _BUSY_WORKER_STATUSES:
         raise HTTPException(status_code=409, detail="Worker is already active")
-    redis.hset(key, mapping={"status": "ready", "updated_at": str(time.time())})
-    return _worker(key, {**data, "status": "ready"}, _all_jobs())
+    redis.delete(f"sid:worker-control:{worker_id}")
+    redis.hset(key, mapping={"status": "idle", "updated_at": str(time.time())})
+    return _worker(key, {**data, "status": "idle"}, _all_jobs())
 
 
 def _redact(value, key=""):

@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -9,7 +10,13 @@ from pathlib import Path
 
 
 REPO = Path(os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")).resolve()
-PYTHON = Path(os.getenv("SID_PYTHON", "/tmp/sid-agent-venv/bin/python"))
+def _default_python():
+    durable = Path("/opt/sid-venv/bin/python")
+    return str(durable) if durable.exists() else "/tmp/sid-agent-venv/bin/python"
+
+
+PYTHON = Path(os.getenv("SID_PYTHON") or _default_python())
+NODE = shutil.which("node")
 RESULT_DIR = Path(os.getenv("INTEGRATION_RESULT_DIR", "/var/log/sid-ai/integration"))
 
 
@@ -57,6 +64,11 @@ CHECKS = [
     (
         "local-diagnostic",
         [str(PYTHON), "scripts/local-diagnostic.py"],
+    ),
+    (
+        "web-tests",
+        [NODE, "apps/web/app.test.js"] if NODE
+        else [str(PYTHON), "-c", "print('SKIP: node not installed; web tests not run')"],
     ),
     (
         "git-diff-check",

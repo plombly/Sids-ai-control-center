@@ -202,6 +202,17 @@ class MemoryRedis:
     def get(self, key):
         return self.values.get(key)
 
+    def hget(self, key, field):
+        return self.records.get(key, {}).get(field)
+
+    def expire(self, key, seconds):
+        return True
+
+    def rpush(self, key, value):
+        self.values.setdefault(key, [])
+        self.values[key].append(value)
+        return len(self.values[key])
+
     def eval(self, script, count, key, owner):
         if self.values.get(key) == owner:
             del self.values[key]
@@ -541,6 +552,181 @@ def test_global_approval_lock_contract():
     )
 
 
+def test_review_packet_covers_full_integrated_change():
+    """Re-reviews must see base..candidate, not only the last repair commit."""
+    module = load_worker_for_behavior("sid_worker_review_packet")
+    calls = []
+
+    def fake_git(*args, cwd=None, check=True):
+        calls.append(args)
+        if args[:2] == ("diff", "--stat=200"):
+            return Result(" a.py | 2 +-\n big.py | 900 +++\n")
+        if args[:2] == ("diff", "--name-only"):
+            return Result("a.py\nbig.py\n")
+        if args[-1] == "a.py":
+            return Result("diff --git a/a.py b/a.py\n+fixed\n")
+        if args[-1] == "big.py":
+            return Result("x" * 500)
+        raise AssertionError(f"unexpected git call: {args}")
+
+    module.run_git = fake_git
+    module.REVIEW_DIFF_CHARS = 100
+    builder = {"integration_base_commit": "base1"}
+    diff, stat, base = module.review_diff_packet(builder, "cand1", Path("/tmp"))
+
+    assert base == "base1"
+    assert all("base1" in a and "cand1" in a for a in calls)
+    assert not any("cand1^" in a for a in calls)
+    assert "+fixed" in diff and "big.py" in stat
+    assert "not inlined" in diff and "big.py" in diff.split("not inlined")[1]
+
+    # Legacy candidates without integration metadata fall back safely.
+    calls.clear()
+    _, _, legacy_base = module.review_diff_packet({}, "cand2", Path("/tmp"))
+    assert legacy_base == "cand2^"
+
+
+def test_review_verdict_parsing():
+    module = load_worker_for_behavior("sid_worker_verdicts")
+    parse = module.parse_review_verdict
+    assert parse(["notes\nVERDICT: PASS"])[0] == "pass"
+    verdict, findings = parse(["NOTE: tidy naming\nVERDICT: PASS_WITH_NOTES"])
+    assert verdict == "pass" and "tidy naming" in findings
+    assert parse(["BLOCKING: crash\nVERDICT: CHANGES_REQUIRED"])[0] == "changes_required"
+    assert parse(["no verdict line"])[0] == "unknown"
+    assert parse([]) == ("unknown", "")
+
+
+def test_reviewer_prompt_forbids_sandboxed_tests_and_carries_context():
+    source = (ROOT / "services/worker/worker.py").read_text()
+    start = source.index("def queue_review_job(builder_job_id):")
+    body = source[start:source.index("def process_review_job", start)]
+    assert "Do NOT run tests" in body
+    assert "{gate_summary}" in body and "{prior_findings}" in body
+    assert "VERDICT: PASS_WITH_NOTES" in body
+    assert "12000" not in body
+
+
+def test_worker_stop_flag_survives_heartbeat():
+    module = load_worker_for_behavior("sid_worker_control")
+    fake = MemoryRedis({})
+    module.redis = fake
+    module.heartbeat()
+    assert fake.records[module.worker_key()]["status"] == "idle"
+    fake.values[module.control_key()] = "disabled"
+    module.heartbeat()
+    assert fake.records[module.worker_key()]["status"] == "disabled"
+    assert module.worker_disabled()
+    # A busy worker still reports working while finishing its job.
+    module.heartbeat("working")
+    assert fake.records[module.worker_key()]["status"] == "working"
+
+
+def test_merge_recorded_even_when_cleanup_fails():
+    td, module, builder, reviewer, calls = approval_fixture("sid_approval_cleanup")
+    original = module.git
+
+    def flaky_git(*args, cwd=module.REPO_ROOT, check=True):
+        if args[:2] == ("worktree", "remove"):
+            calls.append((args, Path(cwd)))
+            return Result("", "worktree is locked", 1)
+        return original(*args, cwd=cwd, check=check)
+
+    module.git = flaky_git
+    try:
+        module._approve_unlocked("builder123")
+        record = module.r.records["sid:jobs:builder123"]
+        assert record["status"] == "merged"
+        assert record["integrated_candidate_commit"] == "integrated1"
+    finally:
+        td.cleanup()
+
+
+def operator_fixture(name, builder):
+    module = load(name, ROOT / "scripts/job-review.py")
+    td = tempfile.TemporaryDirectory()
+    root = Path(td.name)
+    module.WORKTREE_ROOT = root
+    (root / "job-b1").mkdir()
+    builder.setdefault("worktree", str(root / "job-b1"))
+    builder.setdefault("branch", "sid/job-b1")
+    fake = MemoryRedis({"sid:jobs:b1": builder})
+    module.r = fake
+    module.job_record = lambda job_id: fake.records.get(f"sid:jobs:{job_id}") or module.fail("missing")
+    return td, module, fake
+
+
+def test_extend_grants_repairs_to_exhausted_job():
+    builder = {
+        "status": "needs_human", "review_status": "complete",
+        "review_verdict": "changes_required", "review_job_id": "rv1",
+        "repair_attempts": "2", "repair_status": "exhausted",
+    }
+    td, module, fake = operator_fixture("sid_extend", builder)
+    try:
+        module.extend("b1", 2)
+        record = fake.records["sid:jobs:b1"]
+        assert record["status"] == "awaiting_review"
+        assert record["max_repair_attempts"] == "4"
+        fake.records["sid:jobs:b1"]["status"] = "merged"
+        expect_exit(lambda: module.extend("b1"), "status")
+    finally:
+        td.cleanup()
+
+
+def test_reintegrate_preserves_sources_and_clears_derived_state():
+    builder = {
+        "status": "needs_human", "role": "builder",
+        "source_candidate_commits": json.dumps(["s1", "s2"]),
+        "review_job_id": "rv1", "review_status": "complete",
+        "review_verdict": "changes_required", "reviewed_commit": "old",
+        "integration_status": "passed", "integration_base_commit": "oldbase",
+        "integrated_candidate_commit": "old", "repair_attempts": "2",
+        "integration_worktree": "/opt/sid-worktrees/job-b1-integration",
+        "review_findings_history": "[]",
+    }
+    td, module, fake = operator_fixture("sid_reintegrate", builder)
+    try:
+        module.reintegrate("b1")
+        record = fake.records["sid:jobs:b1"]
+        assert record["status"] == "awaiting_review"
+        assert json.loads(record["source_candidate_commits"]) == ["s1", "s2"]
+        for field in ("review_job_id", "review_verdict", "reviewed_commit",
+                      "integration_status", "integration_base_commit",
+                      "integrated_candidate_commit"):
+            assert field not in record, field
+        # Kept for audit and for safe cleanup of the old integration worktree.
+        assert record["repair_attempts"] == "2"
+        assert "integration_worktree" in record
+        assert "review_findings_history" in record
+        queued = [json.loads(x) for x in fake.values["sid:jobs"]]
+        assert queued[0]["role"] == "integrate"
+        assert queued[0]["target_builder_id"] == "b1"
+
+        record["review_status"] = "queued"
+        expect_exit(lambda: module.reintegrate("b1"), "already")
+    finally:
+        td.cleanup()
+
+
+def test_reopen_only_when_dependencies_recovered():
+    builder = {
+        "status": "blocked_failed_dependency", "goal_id": "g1",
+        "dependencies": json.dumps(["dep1"]),
+    }
+    td, module, fake = operator_fixture("sid_reopen", builder)
+    fake.records["sid:jobs:dep1"] = {"status": "repair_exhausted"}
+    fake.records["sid:goals:g1"] = {"status": "failed"}
+    try:
+        expect_exit(lambda: module.reopen("b1"), "still failed")
+        fake.records["sid:jobs:dep1"]["status"] = "merged"
+        module.reopen("b1")
+        assert fake.records["sid:jobs:b1"]["status"] == "blocked"
+        assert fake.records["sid:goals:g1"]["status"] == "running"
+    finally:
+        td.cleanup()
+
+
 def main():
     tests = [
         test_approval_review_gate,
@@ -557,6 +743,14 @@ def main():
         test_stale_main_refusal_behavior,
         test_exact_approval_behavior,
         test_global_approval_lock_contract,
+        test_review_packet_covers_full_integrated_change,
+        test_review_verdict_parsing,
+        test_reviewer_prompt_forbids_sandboxed_tests_and_carries_context,
+        test_worker_stop_flag_survives_heartbeat,
+        test_merge_recorded_even_when_cleanup_fails,
+        test_extend_grants_repairs_to_exhausted_job,
+        test_reintegrate_preserves_sources_and_clears_derived_state,
+        test_reopen_only_when_dependencies_recovered,
     ]
     for test in tests:
         test()
