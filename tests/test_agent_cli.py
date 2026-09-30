@@ -589,3 +589,36 @@ def test_atomic_goals_plan_on_sonnet(orch, fake_claude, monkeypatch):
     assert flag(fake_claude()[-1]["argv"], "--model") == "sonnet" and info["model"] == "sonnet"
     orch.run_planner("many things", atomic=False, info=info)
     assert flag(fake_claude()[-1]["argv"], "--model") == "opus"
+
+
+# --- documentation reviews converge ----------------------------------------------------
+
+def test_docs_only_changes_get_the_documentation_bar(worker, tmp_path):
+    import subprocess as sp
+    repo = tmp_path / "d"
+    repo.mkdir()
+    g = lambda *a: sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo,
+                          check=True, capture_output=True, text=True).stdout.strip()
+    g("init", "-q", "-b", "main")
+    (repo / "README.md").write_text("a\n")
+    (repo / "app.py").write_text("x = 1\n")
+    g("add", "."); g("commit", "-qm", "base")
+    base = g("rev-parse", "HEAD")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "setup.md").write_text("guide\n")
+    (repo / "README.md").write_text("b\n")
+    g("add", "."); g("commit", "-qm", "docs")
+    docs = g("rev-parse", "HEAD")
+    (repo / "app.py").write_text("x = 2\n")
+    g("commit", "-qam", "code")
+    code = g("rev-parse", "HEAD")
+    worker.run_git = lambda *a, cwd=None, check=True: sp.run(["git", *a], cwd=cwd, capture_output=True, text=True)
+    assert worker.is_docs_only(base, docs, repo) is True
+    assert worker.is_docs_only(base, code, repo) is False, "any code file means the code bar"
+    assert worker.is_docs_only(docs, docs, repo) is False, "empty change is not docs-only"
+    assert "BLOCKING only for statements that are factually wrong" in worker.DOCS_REVIEW_BAR
+
+
+def test_review_prompt_appends_docs_bar_only_for_docs():
+    source = (ROOT / "services/worker/worker.py").read_text()
+    assert "    if docs_only:\n        prompt += DOCS_REVIEW_BAR" in source

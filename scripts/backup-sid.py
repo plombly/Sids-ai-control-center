@@ -38,6 +38,10 @@ KEEP = int(os.getenv("BACKUP_KEEP", "14"))
 REDIS_CONTAINER = os.getenv("REDIS_CONTAINER", "sid-ai-redis")
 POSTGRES_CONTAINER = os.getenv("POSTGRES_CONTAINER", "sid-ai-postgres")
 BACKUP_REMOTE = os.getenv("BACKUP_REMOTE", "")
+# Off-host copy of the code: push these branches to this git remote (e.g.
+# "origin", a private GitHub repo). Fast-forward only; never force.
+BACKUP_GIT_REMOTE = os.getenv("BACKUP_GIT_REMOTE", "")
+BACKUP_GIT_BRANCHES = os.getenv("BACKUP_GIT_BRANCHES", "main").split(",")
 CONFIG_PATHS = [
     Path("/etc/sid-ai"),
     Path("/etc/systemd/system/sid-ai-orchestrator.service"),
@@ -108,6 +112,14 @@ def backup_config(dest):
     return {"bytes": target.stat().st_size, "paths": included}
 
 
+def push_git_remote():
+    branches = [b.strip() for b in BACKUP_GIT_BRANCHES if b.strip()]
+    result = run(["git", "-C", str(REPO_ROOT), "push", BACKUP_GIT_REMOTE, *branches])
+    if result.returncode != 0:
+        raise RuntimeError(f"git push {BACKUP_GIT_REMOTE} failed: {result.stderr.strip()[-300:]}")
+    return {"remote": BACKUP_GIT_REMOTE, "branches": branches}
+
+
 def rotate(root, keep):
     """Delete this tool's oldest snapshots beyond `keep`. Only directories
     named exactly like its own snapshots are ever considered: anything else
@@ -139,6 +151,11 @@ def main():
             manifest["parts"][name] = step(dest)
         except Exception as exc:
             manifest["errors"][name] = str(exc)
+    if BACKUP_GIT_REMOTE:
+        try:
+            manifest["parts"]["git_remote"] = push_git_remote()
+        except Exception as exc:
+            manifest["errors"]["git_remote"] = str(exc)
     if BACKUP_REMOTE and not manifest["errors"]:
         synced = run(["rsync", "-a", f"{dest}/", f"{BACKUP_REMOTE.rstrip('/')}/{stamp}/"])
         manifest["remote"] = {"target": BACKUP_REMOTE, "ok": synced.returncode == 0,

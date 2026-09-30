@@ -819,6 +819,24 @@ def start_worker(worker_id: str):
 
 
 
+@app.get("/api/system-health")
+def api_system_health():
+    """The host watchdog's latest report (scripts/sid-watchdog.py, every 2 min)
+    plus the last backup record. Read-only; stale when the watchdog stops."""
+    def load(key):
+        try:
+            value = json.loads(redis.get(key) or "null")
+        except Exception:
+            return None
+        return value if isinstance(value, dict) else None
+
+    report = load("sid:health")
+    if report is not None:
+        checked = _number(report.get("checked_at"))
+        report["age_seconds"] = round(time.time() - checked) if checked else None
+    return {"report": report, "backup": load("sid:backup:last")}
+
+
 @app.get("/api/providers")
 def api_providers():
     """Claude capacity (shared slots, cooldown) and per-role routing as the

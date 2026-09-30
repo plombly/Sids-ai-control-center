@@ -381,3 +381,27 @@ def test_providers_capacity(client, fake, monkeypatch):
 def test_reviewer_records_specialist_verdicts():
     source = (Path(main.__file__).resolve().parents[2] / "services/worker/worker.py").read_text()
     assert '"review_aspects": review_aspects_json' in source
+
+
+def test_system_health_passes_through_the_watchdog_report(client, fake, monkeypatch):
+    import time as _time
+
+    class Health(OperatorFakeRedis):
+        def __init__(self, hashes, values):
+            super().__init__(hashes)
+            self.values = values
+
+        def get(self, key):
+            return self.values.get(key)
+
+    report = {"status": "warn", "checked_at": _time.time() - 30,
+              "checks": [{"name": "backup", "level": "warn", "detail": "no backup recorded yet"}]}
+    monkeypatch.setattr(main, "redis", Health(fake.hashes, {
+        "sid:health": json.dumps(report),
+        "sid:backup:last": json.dumps({"at": "20260930T192958Z", "ok": True})}))
+    body = client.get("/api/system-health").json()
+    assert body["report"]["status"] == "warn" and 25 <= body["report"]["age_seconds"] <= 40
+    assert body["report"]["checks"][0]["name"] == "backup"
+    assert body["backup"] == {"at": "20260930T192958Z", "ok": True}
+    monkeypatch.setattr(main, "redis", Health(fake.hashes, {"sid:health": "not json"}))
+    assert client.get("/api/system-health").json() == {"report": None, "backup": None}

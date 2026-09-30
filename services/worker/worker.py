@@ -899,6 +899,26 @@ def candidate_patch_id(base, candidate, worktree):
         return ""
 
 
+DOC_SUFFIXES = (".md", ".rst", ".txt")
+
+
+def is_docs_only(base, candidate, worktree):
+    """True when every file the change touches is documentation."""
+    names = run_git("diff", "--name-only", base, candidate, cwd=worktree, check=False).stdout.split()
+    return bool(names) and all(n.startswith("docs/") or n.endswith(DOC_SUFFIXES) for n in names)
+
+
+DOCS_REVIEW_BAR = """
+THIS CHANGE IS DOCUMENTATION ONLY. Use this bar instead of the code bar above:
+- BLOCKING only for statements that are factually wrong about this repository,
+  or instructions/commands that would fail or cause harm if followed as written.
+- NOTE (never blocking): missing detail, extra coverage beyond what the task
+  explicitly asked for, wording, structure, or style.
+- Do not raise new BLOCKING findings about sections that earlier reviews already
+  examined and accepted; verify their earlier findings instead.
+"""
+
+
 REBASE_CHECK_NOTE = (
     "\n\nREBASE CHECK: this exact change (identical patch) was already reviewed and "
     "passed against an older main; it has been re-integrated onto the current main. "
@@ -942,6 +962,7 @@ def queue_review_job(builder_job_id):
     # main (merge queue): still a fresh review of this exact candidate, but a
     # single cheap rebase check instead of the full specialist set.
     patch_id = candidate_patch_id(review_base, candidate_commit, Path(worktree))
+    docs_only = is_docs_only(review_base, candidate_commit, Path(worktree))
     rebase_check = bool(patch_id) and patch_id == builder.get("reviewed_patch_id")
     gate_summary = integration_gate_summary(builder)
     prior_findings = prior_findings_packet(builder)
@@ -1003,6 +1024,8 @@ VERDICT: CHANGES_REQUIRED
 Before the verdict, list findings with each marked BLOCKING or NOTE. If there
 are no material findings, explicitly say so.
 """
+    if docs_only:
+        prompt += DOCS_REVIEW_BAR
 
     created_at = time.time()
 

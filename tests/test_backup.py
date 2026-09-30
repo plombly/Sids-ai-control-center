@@ -100,3 +100,21 @@ def test_rotation_never_touches_directories_it_did_not_create(bk, tmp_path):
 def test_default_location_is_a_dedicated_directory(bk):
     module = load_module(ROOT / "scripts/backup-sid.py")
     assert str(module.BACKUP_ROOT).endswith("/sid-ai/snapshots")
+
+
+def test_git_remote_push_is_part_of_the_backup(bk, monkeypatch):
+    fake_steps(bk)
+    bk.BACKUP_GIT_REMOTE = "origin"
+    calls = []
+    monkeypatch.setattr(bk, "run", lambda cmd, **k: calls.append(cmd) or SimpleNamespace(returncode=0, stderr="", stdout=""))
+    assert bk.main() == 0
+    assert calls[0][-3:] == ["push", "origin", "main"]
+    assert "--force" not in calls[0] and "-f" not in calls[0]
+
+
+def test_git_remote_push_failure_fails_the_backup(bk, monkeypatch):
+    fake_steps(bk)
+    bk.BACKUP_GIT_REMOTE = "origin"
+    monkeypatch.setattr(bk, "run", lambda cmd, **k: SimpleNamespace(returncode=1, stderr="rejected (non-fast-forward)", stdout=""))
+    assert bk.main() == 1
+    assert "non-fast-forward" in bk.recorded[-1]["errors"]["git_remote"]

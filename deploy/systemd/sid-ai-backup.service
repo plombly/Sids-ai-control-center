@@ -7,5 +7,7 @@ Type=oneshot
 Environment=REPO_ROOT=/opt/sids-ai-command-center
 Environment=BACKUP_ROOT=/var/backups/sid-ai/snapshots
 Environment=BACKUP_KEEP=14
+Environment=BACKUP_GIT_REMOTE=origin
+Environment=BACKUP_GIT_BRANCHES=main
 # Environment=BACKUP_REMOTE=user@host:/path   (off-host copy; recommended)
 ExecStart=/usr/bin/python3 /opt/sids-ai-command-center/scripts/backup-sid.py
