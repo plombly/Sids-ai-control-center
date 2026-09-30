@@ -83,9 +83,10 @@ def load(redis_client, project_id):
             raise
     if project_id == SID_PROJECT:
         merged = sid_defaults()
-        # Only descriptive fields may be overridden for SID; its paths stay
-        # the configured ones so a registry typo cannot move the control plane.
-        for key in ("name", "importance", "gate_command", "status"):
+        # Only descriptive fields may be overridden for SID; its paths and its
+        # gate (scripts/integration-check.py) stay the configured ones so a
+        # registry entry cannot move or weaken the control plane.
+        for key in ("name", "importance", "status"):  # never paths or the gate
             if fields.get(key):
                 merged[key] = fields[key]
         return Project(merged)

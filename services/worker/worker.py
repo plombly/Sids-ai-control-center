@@ -113,6 +113,7 @@ def heartbeat(status="idle"):
         mapping={
             "id": WORKER_ID,
             "role": CURRENT_JOB_ROLE or "any",
+            "worker_class": WORKER_CLASS,
             "provider": CURRENT_AGENT.get("provider") or "per role",
             "model": CURRENT_AGENT.get("model") or agent_cli.routing_summary(DEFAULT_MODEL),
             "status": status,
@@ -1596,6 +1597,87 @@ def process_integrate_job(job, key):
     )
 
 
+# --- scheduling -----------------------------------------------------------------
+#
+# Workers no longer take the oldest job. Each pick ranks every ready job:
+#   1. importance tier of its project. General workers: high, medium, low.
+#      Support workers (WORKER_CLASS=support): medium, low, then high, so low
+#      and medium work keeps moving while high work dominates the pool.
+#   2. work already in flight (review, repair, integrate) before new builds;
+#   3. least remaining effort of the project (sid:project-stats, published
+#      by the orchestrator), minus an aging bonus so a big project that has
+#      waited long enough is not starved by a stream of small ones;
+#   4. oldest first.
+# The ranking is recomputed on every pick, so importance changes and new
+# prompts take effect immediately; running jobs are never preempted. A job is
+# claimed with LREM (atomic): losing a race just moves on to the next one.
+
+WORKER_CLASS = os.environ.get("WORKER_CLASS", "general")
+PICK_IDLE_SECONDS = float(os.environ.get("PICK_IDLE_SECONDS", "2"))
+AGING_POINTS_PER_MINUTE = float(os.environ.get("AGING_POINTS_PER_MINUTE", "0.5"))
+TIER_ORDER = {
+    "general": {"high": 0, "medium": 1, "low": 2},
+    "support": {"medium": 0, "low": 1, "high": 2},
+}
+IN_FLIGHT_ROLES = {"reviewer", "repair", "integrate"}
+
+
+def rank_key(payload, project_info, now, worker_class=None):
+    """Sort key for one ready job (lower runs first)."""
+    tiers = TIER_ORDER.get(worker_class or WORKER_CLASS, TIER_ORDER["general"])
+    importance, remaining = project_info
+    try:
+        created = float(payload.get("created_at") or now)
+    except (TypeError, ValueError):
+        created = now
+    waited_minutes = max(0.0, (now - created) / 60)
+    effort = (remaining if remaining is not None else 0.0) - AGING_POINTS_PER_MINUTE * waited_minutes
+    return (
+        tiers.get(importance, tiers["medium"]),
+        0 if payload.get("role") in IN_FLIGHT_ROLES else 1,
+        effort,
+        created,
+    )
+
+
+def project_info_for(payload, cache):
+    """(importance, remaining_effort) of a ready job's project, cached per pick."""
+    project_id = sid_projects.job_project_id(redis, payload)
+    if project_id not in cache:
+        try:
+            importance = sid_projects.load(redis, project_id).importance
+        except Exception:
+            importance = "medium"
+        try:
+            remaining = float(redis.hget(f"sid:project-stats:{project_id}", "remaining_effort") or 0)
+        except (TypeError, ValueError):
+            remaining = 0.0
+        cache[project_id] = (importance, remaining)
+    return cache[project_id]
+
+
+def pick_job(now=None):
+    """Claim the best ready job (raw payload) or None."""
+    now = time.time() if now is None else now
+    raw_items = redis.lrange(QUEUE_NAME, 0, -1)
+    if not raw_items:
+        return None
+    cache, ranked = {}, []
+    for raw in raw_items:
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        ranked.append((rank_key(payload, project_info_for(payload, cache), now), raw))
+    ranked.sort(key=lambda item: item[0])
+    for _, raw in ranked:
+        if redis.lrem(QUEUE_NAME, 1, raw) == 1:
+            return raw
+    return None
+
+
 def process_job(raw_job):
     global CURRENT_JOB_ID, CURRENT_JOB_ROLE
     try:
@@ -1881,11 +1963,12 @@ def main():
                 time.sleep(5)
                 continue
 
-            item = redis.blpop(QUEUE_NAME, timeout=5)
+            raw_job = pick_job()
 
-            if item:
-                _, raw_job = item
+            if raw_job:
                 process_job(raw_job)
+            else:
+                time.sleep(PICK_IDLE_SECONDS)
 
         except KeyboardInterrupt:
             break

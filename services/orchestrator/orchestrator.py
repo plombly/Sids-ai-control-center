@@ -140,6 +140,9 @@ Rules:
 {sid_rules}- Files currently being changed by other in-flight jobs (work touching them
   will wait until they finish):
 {busy_files_summary(project.id)}
+- "size" is your effort estimate for the job: S (a small, local change),
+  M (a normal feature or fix), L (large or cross-cutting). SID schedules by
+  remaining effort, so estimate honestly.
 - Dependencies must reference job numbers from this plan.
 - Every job must be independently testable.
 - Existing SID review and human approval gates will handle merging.
@@ -158,6 +161,7 @@ Return ONLY valid JSON using this exact shape:
       "title": "short title",
       "task": "complete implementation instructions",
       "scope": ["exact/file/it/will/change.py"],
+      "size": "S|M|L",
       "depends_on": []
     }}
   ]
@@ -316,6 +320,8 @@ def validate_plan(plan, atomic=False):
             raise ValueError(f"job {number} scope must be a list of paths")
         if len(scope) > 12:
             raise ValueError(f"job {number} scope is too broad")
+        if job.get("size", "M") not in SIZE_POINTS:
+            job["size"] = "M"  # an estimate, not a contract: never reject a plan over it
 
         deps = job.get("depends_on", [])
 
@@ -520,6 +526,7 @@ def process_goal(raw):
             "prompt_chars": str(len(scoped_builder_prompt(item, project.repo))),
             "project_id": project.id,
             "scope": json.dumps(item.get("scope", [])),
+            "size": item.get("size", "M"),
         }
 
         # Files another in-flight job is changing: wait instead of building
@@ -1268,6 +1275,51 @@ def scope_conflict(job):
     return None
 
 
+# --- project statistics for the scheduler ------------------------------------------
+
+SIZE_POINTS = {"S": 1, "M": 3, "L": 8}
+UNPLANNED_GOAL_POINTS = SIZE_POINTS["M"]
+REMAINING_STATES = {"queued", "blocked", "claimed", "running", "testing", "awaiting_review"}
+FINAL_GOAL_STATES = {"completed", "failed", "planning_failed", "queue_failed"}
+
+
+def publish_project_stats(now_ts=None):
+    """Per project: estimated remaining effort (planner sizes; unplanned goals
+    count as M), waiting and running builder jobs. Workers rank by it."""
+    stats = {}
+
+    def bucket(project_id):
+        return stats.setdefault(project_id or sid_projects.SID_PROJECT,
+                                {"remaining_effort": 0, "waiting_jobs": 0, "running_jobs": 0})
+
+    for key in r.scan_iter("sid:jobs:*"):
+        job = r.hgetall(key)
+        if not is_builder(job):
+            continue
+        status = job.get("status")
+        if status not in REMAINING_STATES and not build_retry_pending(job):
+            continue
+        entry = bucket(job.get("project_id"))
+        entry["remaining_effort"] += SIZE_POINTS.get(job.get("size", "M"), SIZE_POINTS["M"])
+        if status in ("queued", "blocked"):
+            entry["waiting_jobs"] += 1
+        elif status in ("claimed", "running", "testing"):
+            entry["running_jobs"] += 1
+    for key in r.scan_iter("sid:goals:*"):
+        if key.endswith(":planning"):
+            continue
+        goal = r.hgetall(key)
+        if goal.get("status") in ("queued", "planning") and not goal.get("jobs"):
+            bucket(goal.get("project_id"))["remaining_effort"] += UNPLANNED_GOAL_POINTS
+    for project in sid_projects.all_projects(r):
+        bucket(project.id)
+    stamp = str(time.time() if now_ts is None else now_ts)
+    for project_id, entry in stats.items():
+        r.hset(f"sid:project-stats:{project_id}",
+               mapping={**{k: str(v) for k, v in entry.items()}, "updated_at": stamp})
+    return stats
+
+
 def update_goals():
     for key in r.scan_iter("sid:goals:*"):
         # Planning reservations share the sid:goals:* namespace but are
@@ -1398,6 +1450,7 @@ def main():
                 retry_failed_builds()
                 recover_stalled_reviews()
                 refresh_queued_candidates()
+                publish_project_stats()
                 queue_repairs()
                 release_dependencies()
                 update_goals()
