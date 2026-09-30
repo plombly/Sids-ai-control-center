@@ -379,3 +379,74 @@ def test_orchestrator_heartbeat_and_goal_record_the_planner(orch, fake_claude, m
     info = {}
     orch.run_planner("goal", info=info)
     assert info["provider"] == "codex" and "session limit" in info["fallback"]
+
+
+# --- concurrency cap on Claude ------------------------------------------------------
+
+def test_slots_are_capped_leased_and_released(agent_cli, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "2")
+    fake = MemoryRedis()
+    assert agent_cli.acquire_claude_slot(fake, "a", 100, now=1000)
+    assert agent_cli.acquire_claude_slot(fake, "b", 100, now=1000)
+    assert not agent_cli.acquire_claude_slot(fake, "c", 100, now=1000), "cap reached"
+    assert agent_cli.acquire_claude_slot(fake, "a", 100, now=1000), "re-acquire by holder is fine"
+    agent_cli.release_claude_slot(fake, "a")
+    assert agent_cli.acquire_claude_slot(fake, "c", 100, now=1000)
+    # b's lease expires (its worker died): the slot comes back by itself
+    assert agent_cli.acquire_claude_slot(fake, "d", 100, now=1101)
+    assert fake.get(agent_cli.SLOT_LIMIT_KEY) == "2"
+
+
+def test_wait_for_slot_gives_up_after_max_wait(agent_cli, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
+    fake = MemoryRedis()
+    agent_cli.acquire_claude_slot(fake, "busy", 1000)
+    ticks = []
+    assert not agent_cli.wait_for_claude_slot(fake, "me", 100, 0, tick=lambda: ticks.append(1),
+                                              sleep=lambda s: None)
+    agent_cli.release_claude_slot(fake, "busy")
+    assert agent_cli.wait_for_claude_slot(fake, "me", 100, 0, sleep=lambda s: None)
+
+
+def test_job_waits_for_a_slot_then_runs_on_claude_and_frees_it(worker, tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
+    worker.agent_cli.acquire_claude_slot(worker.redis, "job:other", 1000)
+    freed = []
+
+    def free_after_first_tick():
+        if not freed:
+            worker.agent_cli.release_claude_slot(worker.redis, "job:other")
+            freed.append(1)
+
+    worker.heartbeat = lambda status="idle": free_after_first_tick()
+    worker.agent_cli.POLL_SECONDS = 0.01
+    worker.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
+    assert worker.redis.records["sid:jobs:reviewer1"]["provider"] == "claude"
+    assert worker.redis.zsets[worker.agent_cli.SLOTS_KEY] == {}, "slot released after the run"
+
+
+def test_job_falls_back_to_codex_when_claude_stays_at_capacity(worker, tmp_path, monkeypatch, fake_claude):
+    monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
+    monkeypatch.setenv("CLAUDE_SLOT_WAIT_SECONDS", "0")
+    worker.agent_cli.acquire_claude_slot(worker.redis, "job:other", 1000)
+    worker.run_agent(job("repair"), tmp_path, tmp_path / "r.json")
+    record = worker.redis.records["sid:jobs:repair1"]
+    assert record["provider"] == "codex" and "at capacity" in record["provider_fallback"]
+    assert fake_claude() == []
+
+
+def test_slot_released_even_when_claude_fails(worker, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "budget")
+    with pytest.raises(RuntimeError):
+        worker.run_agent(job("repair"), tmp_path, tmp_path / "r.json")
+    assert worker.redis.zsets[worker.agent_cli.SLOTS_KEY] == {}
+
+
+def test_planner_shares_the_cap(orch, monkeypatch, fake_claude):
+    monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
+    monkeypatch.setenv("PLANNER_SLOT_WAIT_SECONDS", "0")
+    orch.agent_cli.acquire_claude_slot(orch.r, "job:busy", 1000)
+    orch.run_codex_planner = lambda goal, atomic=False: {"jobs": ["codex"]}
+    info = {}
+    assert orch.run_planner("g", info=info) == {"jobs": ["codex"]}
+    assert "at capacity" in info["fallback"] and fake_claude() == []

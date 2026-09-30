@@ -267,6 +267,60 @@ def agent_messages(log_path):
     return messages
 
 
+# Concurrency cap: every pipeline process shares these slots, so a large
+# batch cannot run more than CLAUDE_MAX_CONCURRENT Claude calls at once and
+# drain the operator's plan in minutes. A lease expires if its holder dies.
+SLOTS_KEY = "sid:provider-slots:claude"
+SLOT_LIMIT_KEY = "sid:provider-limit:claude"
+_ACQUIRE = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZSCORE', KEYS[1], ARGV[3]) or redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[4]) then
+  redis.call('ZADD', KEYS[1], ARGV[2], ARGV[3])
+  return 1
+end
+return 0
+"""
+
+
+def claude_slot_limit():
+    return max(1, int(os.getenv("CLAUDE_MAX_CONCURRENT", "2")))
+
+
+def acquire_claude_slot(redis_client, holder, lease_seconds, now=None):
+    now = time.time() if now is None else now
+    limit = claude_slot_limit()
+    try:
+        redis_client.set(SLOT_LIMIT_KEY, str(limit))
+        return bool(redis_client.eval(_ACQUIRE, 1, SLOTS_KEY, str(now), str(now + lease_seconds),
+                                      holder, str(limit)))
+    except Exception:
+        return True  # never let slot bookkeeping stop the pipeline
+
+
+def release_claude_slot(redis_client, holder):
+    try:
+        redis_client.zrem(SLOTS_KEY, holder)
+    except Exception:
+        pass
+
+
+def wait_for_claude_slot(redis_client, holder, lease_seconds, max_wait, tick=None, sleep=time.sleep):
+    """True once a slot is held (release it with release_claude_slot), or
+    False after max_wait seconds: the caller should use another provider."""
+    deadline = time.time() + max_wait
+    while True:
+        if acquire_claude_slot(redis_client, holder, lease_seconds):
+            return True
+        if time.time() >= deadline:
+            return False
+        if tick:
+            try:
+                tick()
+            except Exception:
+                pass
+        sleep(POLL_SECONDS * 2)
+
+
 def claude_cooling_down(redis_client):
     try:
         return bool(redis_client.get(COOLDOWN_KEY))

@@ -513,34 +513,48 @@ def run_agent(job, worktree, log_path):
     if provider == "claude" and agent_cli.claude_cooling_down(redis):
         provider, fallback = "codex", "claude cooling down after an unavailable response"
 
+    slot = f"job:{job['id']}"
     if provider == "claude":
-        model = agent_cli.claude_model(role)
         timeout = int(job.get("timeout_seconds") or role_limit(
             role, "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
-        redis.hset(key, mapping={"provider": "claude", "model": model,
+        redis.hset(key, mapping={"provider_wait": "waiting for a claude slot",
                                  "updated_at": str(time.time())})
-        CURRENT_AGENT.update(provider="claude", model=model)
-        heartbeat("working")
-        run = agent_cli.run_claude(
-            role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
-            model=model,
-            allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
-            tick=lambda: heartbeat("working"),
-        )
-        if run.unavailable:
-            fallback = f"claude unavailable: {run.describe_error()}"
-            agent_cli.start_cooldown(redis, fallback)
-            print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
-        elif run.timed_out:
-            raise RuntimeError(f"Claude exceeded {timeout} second {role} timeout")
-        elif not run.ok:
-            raise RuntimeError(f"Claude {role} failed: {run.describe_error()}")
-        else:
-            redis.hset(key, mapping={
-                "cost_usd": agent_cli.claude_usage(run.result)["cost_usd"],
-                "updated_at": str(time.time()),
-            })
-            return 0, run.duration
+        if not agent_cli.wait_for_claude_slot(
+                redis, slot, timeout + 120,
+                int(os.environ.get("CLAUDE_SLOT_WAIT_SECONDS", "900")),
+                tick=lambda: heartbeat("working")):
+            provider, fallback = "codex", "claude at capacity (CLAUDE_MAX_CONCURRENT)"
+        redis.hset(key, "provider_wait", "")
+
+    if provider == "claude":
+        try:
+            model = agent_cli.claude_model(role)
+            redis.hset(key, mapping={"provider": "claude", "model": model,
+                                     "updated_at": str(time.time())})
+            CURRENT_AGENT.update(provider="claude", model=model)
+            heartbeat("working")
+            run = agent_cli.run_claude(
+                role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
+                model=model,
+                allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
+                tick=lambda: heartbeat("working"),
+            )
+            if run.unavailable:
+                fallback = f"claude unavailable: {run.describe_error()}"
+                agent_cli.start_cooldown(redis, fallback)
+                print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
+            elif run.timed_out:
+                raise RuntimeError(f"Claude exceeded {timeout} second {role} timeout")
+            elif not run.ok:
+                raise RuntimeError(f"Claude {role} failed: {run.describe_error()}")
+            else:
+                redis.hset(key, mapping={
+                    "cost_usd": agent_cli.claude_usage(run.result)["cost_usd"],
+                    "updated_at": str(time.time()),
+                })
+                return 0, run.duration
+        finally:
+            agent_cli.release_claude_slot(redis, slot)
 
     model = job.get("model", DEFAULT_MODEL)
     redis.hset(key, mapping={"provider": "codex", "model": model,

@@ -184,8 +184,17 @@ def run_planner(goal, atomic=False, info=None):
     info = {} if info is None else info
     if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
-        run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
-                                   REPO_ROOT, log_path, PLAN_TIMEOUT)
+        slot = f"planner:{log_path.stem}"
+        if not agent_cli.wait_for_claude_slot(
+                r, slot, PLAN_TIMEOUT + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300"))):
+            info["fallback"] = "claude at capacity (CLAUDE_MAX_CONCURRENT)"
+            info.update(provider="codex", model=DEFAULT_MODEL)
+            return run_codex_planner(goal, atomic)
+        try:
+            run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
+                                       REPO_ROOT, log_path, PLAN_TIMEOUT)
+        finally:
+            agent_cli.release_claude_slot(r, slot)
         if run.ok:
             info.update(provider="claude", model=agent_cli.claude_model("planner"),
                         cost_usd=agent_cli.claude_usage(run.result)["cost_usd"])

@@ -34,6 +34,7 @@ class MemoryRedis:
         self.values = {}
         self.ttls = {}
         self.streams = {}
+        self.zsets = {}
         self.groups = {}
         self.clock = clock
 
@@ -92,12 +93,25 @@ class MemoryRedis:
         prefix = pattern.removesuffix("*")
         return iter(sorted(k for k in [*self.records, *self.values] if k.startswith(prefix)))
 
-    def eval(self, script, count, key, owner):
-        # Only the compare-and-delete lock release is used.
-        if self.values.get(key) == owner:
+    def eval(self, script, count, key, *args):
+        if "ZREMRANGEBYSCORE" in script:  # agent_cli claude slot acquire
+            now, expiry, holder, limit = float(args[0]), float(args[1]), args[2], int(args[3])
+            zset = self.zsets.setdefault(key, {})
+            for member in [m for m, score in zset.items() if score <= now]:
+                del zset[member]
+            if holder in zset or len(zset) < limit:
+                zset[holder] = expiry
+                return 1
+            return 0
+        # compare-and-delete lock release
+        if self.values.get(key) == args[0]:
             del self.values[key]
             return 1
         return 0
+
+    def zrem(self, key, *members):
+        zset = self.zsets.setdefault(key, {})
+        return sum(1 for m in members if zset.pop(m, None) is not None)
 
     def expire(self, key, seconds):
         self.ttls[key] = seconds
