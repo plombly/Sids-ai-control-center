@@ -737,9 +737,17 @@ def release_dependencies():
 
 def update_goals():
     for key in r.scan_iter("sid:goals:*"):
+        # Planning reservations share the sid:goals:* namespace but are
+        # string keys, not goal hashes. Never issue hash commands against
+        # those transient lock keys.
+        if key.endswith(":planning"):
+            continue
+
         goal = r.hgetall(key)
 
-        if goal.get("status") not in {"running", "planning"}:
+        # Failed goals are also revisited because a child may later recover
+        # through repair, reintegration, review, or human approval.
+        if goal.get("status") not in {"running", "planning", "failed"}:
             continue
 
         try:
@@ -774,6 +782,7 @@ def update_goals():
                 key,
                 mapping={
                     "status": "completed",
+                    "error": "",
                     "updated_at": now(),
                 },
             )
