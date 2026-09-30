@@ -434,11 +434,17 @@ def _submit_goal(payload):
         except Exception:
             pass
 
-    # A small duplicate guard for clients that omit request_id.
+    # A small duplicate guard for clients that omit request_id. Atomic and
+    # non-atomic submissions are intentionally distinct workflows.
     for key in _keys("sid:goals:*"):
         old = _hash(key)
-        if old.get("goal") == goal and old.get("status") in {"queued", "planning", "running"}:
-            return {"id": _text(old.get("id"), _key_suffix(key)), "status": old.get("status"), "atomic": old.get("atomic") == "true", "duplicate": True}
+        old_atomic = str(old.get("atomic", "false")).lower() in {"1", "true", "yes"}
+        if (
+            old.get("goal") == goal
+            and old.get("status") in {"queued", "planning", "running"}
+            and old_atomic == bool(payload.atomic)
+        ):
+            return {"id": _text(old.get("id"), _key_suffix(key)), "status": old.get("status"), "atomic": old_atomic, "duplicate": True}
 
     goal_id = uuid.uuid4().hex[:12]
     record = {
@@ -451,6 +457,13 @@ def _submit_goal(payload):
         redis.rpush(os.getenv("GOAL_QUEUE", "sid:goals"), json.dumps({"id": goal_id, "goal": goal, "atomic": payload.atomic}))
     except Exception:
         redis.hset(f"sid:goals:{goal_id}", mapping={"status": "queue_failed", "updated_at": str(time.time())})
+        if request_id:
+            try:
+                marker = f"sid:goal-requests:{request_id}"
+                if redis.get(marker) == "reserved":
+                    redis.delete(marker)
+            except Exception:
+                pass
         raise HTTPException(status_code=503, detail="Goal queue is unavailable")
     if request_id:
         try:

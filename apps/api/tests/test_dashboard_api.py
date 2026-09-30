@@ -107,3 +107,74 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
     bad = next(item for item in malformed if item["id"] == "bad")
     assert bad["effective_tokens"] is None
     assert client.get("/api/goals?limit=0").json() == []
+
+
+class WritableFakeRedis(FakeRedis):
+    def __init__(self, hashes=None, queue_depth=0):
+        super().__init__(hashes or {}, queue_depth)
+        self.values = {}
+        self.queues = {}
+        self.fail_rpush = False
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.values:
+            return False
+        self.values[key] = value
+        return True
+
+    def get(self, key):
+        return self.values.get(key)
+
+    def delete(self, key):
+        self.values.pop(key, None)
+        self.hashes.pop(key, None)
+
+    def hset(self, key, mapping=None, **kwargs):
+        self.hashes.setdefault(key, {}).update(mapping or {})
+
+    def rpush(self, key, value):
+        if self.fail_rpush:
+            raise RuntimeError("queue unavailable")
+        self.queues.setdefault(key, []).append(value)
+        return len(self.queues[key])
+
+
+def test_goal_duplicate_guard_distinguishes_atomic_mode(client, monkeypatch):
+    fake = WritableFakeRedis({
+        "sid:goals:existing": {
+            "id": "existing",
+            "goal": "same work",
+            "status": "queued",
+            "atomic": "false",
+        }
+    })
+    monkeypatch.setattr(main, "redis", fake)
+
+    response = client.post(
+        "/api/goals",
+        json={"goal": "same work", "atomic": True},
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["id"] != "existing"
+    assert body["atomic"] is True
+    assert len(fake.queues["sid:goals"]) == 1
+
+
+def test_failed_queue_releases_request_id_reservation(client, monkeypatch):
+    fake = WritableFakeRedis()
+    fake.fail_rpush = True
+    monkeypatch.setattr(main, "redis", fake)
+
+    response = client.post(
+        "/api/goals",
+        json={
+            "goal": "retryable work",
+            "atomic": True,
+            "request_id": "retry-me",
+        },
+    )
+
+    assert response.status_code == 503
+    assert fake.get("sid:goal-requests:retry-me") is None
