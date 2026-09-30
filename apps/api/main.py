@@ -137,6 +137,12 @@ def _job(key, data):
         "review_status": _text(data.get("review_status")),
         "review_verdict": _text(data.get("review_verdict")),
         "review_job_id": _text(data.get("review_job_id")),
+        "integration_status": _text(data.get("integration_status")),
+        "integration_base_commit": _text(data.get("integration_base_commit")),
+        "integrated_candidate_commit": _text(data.get("integrated_candidate_commit")),
+        "reviewed_commit": _text(data.get("reviewed_commit")),
+        "integration_worktree": _text(data.get("integration_worktree")),
+        "integration_branch": _text(data.get("integration_branch")),
         "input_tokens": _number(data.get("input_tokens")),
         "effective_tokens": _effective_tokens(data),
         "cached_input_tokens": _number(data.get("cached_input_tokens", data.get("cached_tokens"))),
@@ -146,8 +152,8 @@ def _job(key, data):
         "total_tokens": _number(data.get("total_tokens", data.get("tokens"))),
         "duration": _duration(data),
         "branch": _text(data.get("branch")),
-        "base": _text(data.get("base", data.get("base_commit"))),
-        "candidate": _text(data.get("candidate", data.get("candidate_commit"))),
+        "base": _text(data.get("integration_base_commit", data.get("base", data.get("base_commit")))),
+        "candidate": _text(data.get("integrated_candidate_commit", data.get("candidate", data.get("candidate_commit")))),
         "files": _number(data.get("files_changed", data.get("file_count"))),
         "tests": _text(data.get("test_status", data.get("tests"))),
         "error": _text(data.get("error", data.get("failure", data.get("failure_reason")))),
@@ -310,7 +316,7 @@ def api_status():
         "heartbeat": {"workers": workers, "orchestrators": orchestrators},
         "goals": {"recent": goals[:API_DEFAULT_LIMIT]},
         "jobs": {"recent": jobs[:API_DEFAULT_LIMIT], "failures": [job for job in jobs if job["status"] in FAILURE_STATUSES][:API_DEFAULT_LIMIT]},
-        "pending_human_approvals": [job for job in jobs if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"][:API_DEFAULT_LIMIT],
+        "pending_human_approvals": [job for job in jobs if _approval_ready(job)][:API_DEFAULT_LIMIT],
     }
 
 
@@ -369,9 +375,71 @@ def api_recent_jobs(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT
     return api_jobs(limit)
 
 
+def _approval_ready(job):
+    if (
+        job.get("status") != "awaiting_review"
+        or job.get("review_status") != "complete"
+        or job.get("review_verdict") != "pass"
+        or job.get("integration_status") != "passed"
+    ):
+        return False
+
+    review_job_id = job.get("review_job_id")
+    integrated_commit = job.get("integrated_candidate_commit")
+    base_commit = job.get("integration_base_commit")
+
+    if not all((
+        review_job_id,
+        integrated_commit,
+        base_commit,
+        job.get("integration_worktree"),
+        job.get("integration_branch"),
+    )):
+        return False
+
+    if job.get("reviewed_commit") != integrated_commit:
+        return False
+
+    review = _hash(f"sid:jobs:{review_job_id}")
+    if (
+        not review
+        or review.get("role") != "reviewer"
+        or review.get("builder_job_id") != job.get("id")
+        or review.get("status") != "review_complete"
+        or review.get("review_verdict") != "pass"
+        or review.get("candidate_commit") != integrated_commit
+        or review.get("reviewed_commit") != integrated_commit
+    ):
+        return False
+
+    # Mirror the immutable metadata enforced by job-review.py.
+    expected_worktree = f"/opt/sid-worktrees/job-{job.get('id')}-integration"
+    expected_branch = f"sid/integration-{job.get('id')}"
+
+    if job.get("integration_worktree") != expected_worktree:
+        return False
+    if job.get("integration_branch") != expected_branch:
+        return False
+
+    # Stale-main candidates are not actionable approvals.
+    try:
+        current_main = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return False
+
+    if current_main != base_commit:
+        return False
+
+    return True
+
+
 @app.get("/api/approvals")
 def api_approvals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    approvals = [job for job in _all_jobs() if job["status"] == "awaiting_review" and job["review_status"] == "complete" and job["review_verdict"] == "pass"]
+    approvals = [job for job in _all_jobs() if _approval_ready(job)]
     return approvals[:_limit(limit)]
 
 

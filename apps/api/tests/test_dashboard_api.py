@@ -59,8 +59,23 @@ def dashboard_redis(monkeypatch):
         },
         "sid:jobs:j1": {
             "id": "j1", "status": "awaiting_review", "role": "builder", "worker_id": "w1",
-            "review_status": "complete", "review_verdict": "pass", "input_tokens": "100",
-            "cached_input_tokens": "25", "output_tokens": "30", "updated_at": "10",
+            "review_status": "complete", "review_verdict": "pass",
+            "review_job_id": "review-j1", "integration_status": "passed",
+            "integration_base_commit": main.subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], text=True
+            ).strip(),
+            "integrated_candidate_commit": "candidate-j1",
+            "reviewed_commit": "candidate-j1",
+            "integration_worktree": "/opt/sid-worktrees/job-j1-integration",
+            "integration_branch": "sid/integration-j1",
+            "input_tokens": "100", "cached_input_tokens": "25",
+            "output_tokens": "30", "updated_at": "10",
+        },
+        "sid:jobs:review-j1": {
+            "id": "review-j1", "role": "reviewer",
+            "builder_job_id": "j1", "status": "review_complete",
+            "review_verdict": "pass", "candidate_commit": "candidate-j1",
+            "reviewed_commit": "candidate-j1", "updated_at": "9",
         },
         "sid:jobs:bad": {"status": "failed", "input_tokens": "not-a-number", "updated_at": "30"},
         "sid:jobs:missing": None,
@@ -96,7 +111,30 @@ def test_dashboard_endpoints_and_bounded_normalization(client, monkeypatch):
 def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
     fake.hashes["sid:jobs:approval"] = {
-        "id": "approval", "status": "awaiting_review", "review_status": "complete", "review_verdict": "pass", "updated_at": "1",
+        "id": "approval",
+        "status": "awaiting_review",
+        "review_status": "complete",
+        "review_verdict": "pass",
+        "review_job_id": "review-approval",
+        "integration_status": "passed",
+        "integration_base_commit": main.subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip(),
+        "integrated_candidate_commit": "candidate-approval",
+        "reviewed_commit": "candidate-approval",
+        "integration_worktree": "/opt/sid-worktrees/job-approval-integration",
+        "integration_branch": "sid/integration-approval",
+        "updated_at": "1",
+    }
+    fake.hashes["sid:jobs:review-approval"] = {
+        "id": "review-approval",
+        "role": "reviewer",
+        "builder_job_id": "approval",
+        "status": "review_complete",
+        "review_verdict": "pass",
+        "candidate_commit": "candidate-approval",
+        "reviewed_commit": "candidate-approval",
+        "updated_at": "0",
     }
     for index in range(12):
         fake.hashes[f"sid:jobs:recent-{index}"] = {"status": "queued", "updated_at": str(100 + index)}
@@ -107,6 +145,23 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
     bad = next(item for item in malformed if item["id"] == "bad")
     assert bad["effective_tokens"] is None
     assert client.get("/api/goals?limit=0").json() == []
+
+
+
+def test_approval_requires_exact_integrated_review_metadata(client, monkeypatch):
+    fake = dashboard_redis(monkeypatch)
+
+    fake.hashes["sid:jobs:unsafe"] = {
+        "id": "unsafe",
+        "status": "awaiting_review",
+        "review_status": "complete",
+        "review_verdict": "pass",
+        "updated_at": "999",
+    }
+
+    ids = [item["id"] for item in client.get("/api/approvals").json()]
+    assert "j1" in ids
+    assert "unsafe" not in ids
 
 
 class WritableFakeRedis(FakeRedis):

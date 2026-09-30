@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {ENDPOINTS, fetchEndpoint, normalize, workerMarkup, submitGoal, workerAction, approvalMarkup} from './app.js';
 
 async function main() {
@@ -33,6 +34,11 @@ async function main() {
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>({})})), /Malformed payload/);
   const result = await fetchEndpoint('jobs', async () => ({ok:true,json:async()=>[{id:'j-1'}]}));
   assert.deepEqual(result, [{id:'j-1'}]);
+  const appSource = fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+  for (const field of ['command_count', 'j.files', 'j.base', 'j.candidate', 'j.tests', 'j.error']) {
+    assert.match(appSource, new RegExp(field.replace('.', '\\.')));
+  }
+
   console.log('frontend API normalization tests passed');
 
   for (const status of ['working', 'busy', 'claimed', 'running', 'active', 'stopping']) {
