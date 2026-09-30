@@ -858,17 +858,59 @@ def release_stale_integration_lock(builder_id):
         )
 
 
+def test_output_excerpt(output, limit=3000):
+    """The part of SID test output that explains a failure.
+
+    pytest -q prints failure details first and the warnings summary last, so
+    the tail of the log is usually only deprecation warnings. Prefer the
+    FAILURES/ERRORS section and the short summary; otherwise drop warnings.
+    """
+    def section(start_marker, end_markers):
+        start = output.find(start_marker)
+        if start < 0:
+            return ""
+        ends = [output.find(m, start + len(start_marker)) for m in end_markers]
+        ends = [e for e in ends if e >= 0]
+        return output[start:min(ends) if ends else len(output)].strip()
+
+    ends = ("warnings summary", "short test summary info")
+    details = section("= FAILURES =", ends) or section("= ERRORS =", ends)
+    summary = section("short test summary info", ("\n$ ",))
+    if details or summary:
+        return (details[:limit - 800] + "\n...\n" + summary[-800:]).strip()
+    kept, skipping = [], False
+    for line in output.splitlines():
+        if "warnings summary" in line:
+            skipping = True
+        elif skipping and (line.startswith("-- Docs:") or line.startswith("$ ")):
+            skipping = line.startswith("-- Docs:")
+            if skipping:
+                skipping = False
+                continue
+        if not skipping:
+            kept.append(line)
+    return "\n".join(kept)[-limit:]
+
+
 def failure_reason(job):
     status = job.get("status")
     if status == "test_failed":
-        tail = ""
+        output = ""
         try:
-            tail = Path(job.get("test_log", "")).read_text()[-1500:]
+            output = Path(job.get("test_log", "")).read_text()
         except OSError:
             pass
-        return "SID test gate failed:\n" + (tail or "(no test log)")
+        return "SID test gate failed:\n" + (test_output_excerpt(output) or "(no test log)")
     if status == "integration_failed":
-        return "integration onto main failed: " + (job.get("integration_error") or "unknown")
+        reason = "integration onto main failed: " + (job.get("integration_error") or "unknown")
+        try:
+            gate = json.loads(job.get("integration_result") or "{}")
+        except ValueError:
+            gate = {}
+        stdout = gate.get("stdout", "") if isinstance(gate, dict) else ""
+        if "[ FAIL ]" in stdout:
+            reason += "\n" + stdout[stdout.index("[ FAIL ]"):][-2500:]
+        return reason
     return job.get("error") or "unknown error"
 
 
@@ -915,7 +957,7 @@ def retry_failed_builds():
             continue  # legacy record: audit history, never retried
         job_id = job.get("id") or key.rsplit(":", 1)[-1]
         attempt = _int(job.get("build_attempt"), 1)
-        reason = failure_reason(job)[-2000:]
+        reason = failure_reason(job)[:3500]
 
         if attempt >= build_limit(job):
             r.hset(key, mapping={

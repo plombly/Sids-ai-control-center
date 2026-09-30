@@ -483,3 +483,45 @@ def test_repair_gate_failure_restores_candidate(worker_module, tmp_path):
 def test_builder_claim_records_first_attempt_only_if_unset():
     source = (ROOT / "services/worker/worker.py").read_text()
     assert 'redis.hsetnx(key, "build_attempt", "1")' in source
+
+
+# --- a retry is told the actual failure, not the warnings -------------------------------
+
+PYTEST_OUTPUT = """$ python -m pytest apps/api/tests -q
+..F.
+=================================== FAILURES ===================================
+_____________________________ test_thing _____________________________
+>       fake.hashes["sid:jobs:review-1"].update({})
+E       KeyError: 'sid:jobs:review-1'
+=============================== warnings summary ===============================
+""" + "DeprecationWarning: on_event is deprecated\n" * 200 + """
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED apps/api/tests/test_dashboard_api.py::test_thing
+1 failed, 3 passed in 1.0s
+"""
+
+
+def test_retry_reason_shows_the_failure_not_the_warnings(orch):
+    excerpt = orch.test_output_excerpt(PYTEST_OUTPUT)
+    assert "KeyError: 'sid:jobs:review-1'" in excerpt
+    assert "FAILED apps/api/tests/test_dashboard_api.py::test_thing" in excerpt
+    assert "DeprecationWarning" not in excerpt
+    assert len(excerpt) <= 3000
+
+
+def test_excerpt_without_pytest_sections_drops_warnings(orch):
+    output = "$ compileall\nSyntaxError: bad thing\n=== warnings summary ===\nnoise\n-- Docs: x\ntrailer\n"
+    excerpt = orch.test_output_excerpt(output)
+    assert "SyntaxError: bad thing" in excerpt
+    assert "noise" not in excerpt
+
+
+def test_integration_gate_failure_names_the_failing_check(orch):
+    failed_builder(orch, "integration_failed",
+                   integration_error="deterministic integration gate failed",
+                   integration_result=json.dumps({"returncode": 1, "stdout":
+                       "[ PASS ] api-tests\n[ FAIL ] web-tests\nAssertionError: expected 10"}))
+    orch.retry_failed_builds()
+    prompt = job(orch, "b1")["prompt"]
+    assert "[ FAIL ] web-tests" in prompt and "AssertionError: expected 10" in prompt
