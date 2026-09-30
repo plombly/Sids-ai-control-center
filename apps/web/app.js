@@ -71,6 +71,8 @@ export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   if (!response.ok) throw new Error(body.detail || body.message || `HTTP ${response.status}`);
   return body;
 }
+export const fetchJobDetail = (jobId, fetchImpl = fetch) =>
+  requestJSON(`/api/jobs/${encodeURIComponent(jobId)}`, {}, fetchImpl);
 export const submitGoal = (goal, atomic = false, request_id = '', fetchImpl = fetch) =>
   requestJSON(
     '/api/prompts',
@@ -152,7 +154,35 @@ export const jobActionsMarkup = job => {
     .join('');
 };
 export const approvalMarkup = j =>
-  `<div class="item approval-item"><div class="item-head"><span class="item-title">${esc(j.id)}</span>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
+  `<div class="item approval-item"><div class="item-head"><button class="item-title detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
+
+const detailValue = value => `<span>${esc(value)}</span>`;
+const detailRows = (job, fields) =>
+  fields
+    .map(([label, field]) => `<div class="detail-row"><b>${esc(label)}</b>${detailValue(job[field])}</div>`)
+    .join('');
+const detailSection = (title, content) =>
+  `<section class="detail-block"><h3>${esc(title)}</h3>${content}</section>`;
+export const jobDetailMarkup = job => {
+  const lineage = asObject(job.lineage) || {},
+    reviewHistory = Array.isArray(lineage.review_findings_history) ? lineage.review_findings_history : [],
+    sourceCommits = Array.isArray(lineage.source_candidate_commits) ? lineage.source_candidate_commits : [],
+    related = Array.isArray(job.related) ? job.related : [],
+    historyMarkup = reviewHistory.length
+      ? `<ol>${reviewHistory.map(item => `<li>${detailRows(item, [['Review job', 'review_job_id'], ['Candidate', 'candidate'], ['Findings', 'findings']])}</li>`).join('')}</ol>`
+      : detailValue(null),
+    sourceMarkup = sourceCommits.length
+      ? `<ol>${sourceCommits.map(commit => `<li>${detailValue(commit)}</li>`).join('')}</ol>`
+      : detailValue(null),
+    gate = asObject(job.gate),
+    gateMarkup = gate
+      ? detailRows(gate, [['Return code', 'returncode'], ['Summary', 'summary']])
+      : '<p>No gate result</p>',
+    relatedMarkup = related.length
+      ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
+      : detailValue(null);
+  return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div>${detailSection('Summary', detailRows(job, [['ID', 'id'], ['Title', 'title'], ['Status', 'status'], ['Role', 'role'], ['Worker', 'worker'], ['Provider', 'provider'], ['Model', 'model'], ['Review status', 'review_status'], ['Review verdict', 'review_verdict'], ['Integration status', 'integration_status'], ['Duration', 'duration'], ['Effective tokens', 'effective_tokens'], ['Cached input tokens', 'cached_input_tokens'], ['Output tokens', 'output_tokens'], ['Command count', 'command_count'], ['Files', 'files'], ['Tests', 'tests'], ['Error', 'error']]))}${detailSection('Candidate', detailRows(job, [['Goal ID', 'goal_id'], ['Branch', 'branch'], ['Base', 'base'], ['Candidate', 'candidate'], ['Integration base commit', 'integration_base_commit'], ['Integrated candidate commit', 'integrated_candidate_commit'], ['Reviewed commit', 'reviewed_commit'], ['Integration worktree', 'integration_worktree'], ['Integration branch', 'integration_branch']]))}${detailSection('Attempts', detailRows({ ...job, ...lineage }, [['Build attempt', 'build_attempt'], ['Max build attempts', 'max_build_attempts'], ['Review recoveries', 'review_recoveries'], ['Retry reason', 'retry_reason'], ['Repair status', 'repair_status'], ['Repair attempts', 'repair_attempts'], ['Max repair attempts', 'max_repair_attempts'], ['Needs human kind', 'needs_human_kind'], ['Repair job ID', 'repair_job_id'], ['Last repair job ID', 'last_repair_job_id'], ['Last integrate job ID', 'last_integrate_job_id'], ['Needs human reason', 'needs_human_reason']]))}${detailSection('Review', detailRows(job, [['Review job ID', 'review_job_id'], ['Review findings', 'review_findings']]) + `<h4>Source candidate commits</h4>${sourceMarkup}<h4>Review history</h4>${historyMarkup}`)}${detailSection('Gate', gateMarkup)}${detailSection('Related jobs', relatedMarkup)}`;
+};
 export function render() {
   const get = k => state[k].data,
     status = asObject(get('status')) || {},
@@ -233,7 +263,7 @@ export function render() {
   );
   const table = items =>
     items.length
-      ? `<table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Tokens</th><th>Duration</th><th>Telemetry</th><th>Execution</th><th>Commits / Tests</th><th>Failure</th><th>Actions</th></tr></thead><tbody>${items.map(j => `<tr><td>${esc(j.id)}</td><td>${pill(j.status)}</td><td>${esc(j.review_status || '—')}</td><td>${number(j.effective_tokens)}</td><td>${duration(j.duration)}</td><td>${esc(j.provider || '—')} · ${esc(j.model || '—')} · ${esc(j.worker || '—')}</td><td>commands ${number(j.command_count)} · files ${number(j.files)}</td><td>base ${esc(j.base || '—')}<br>candidate ${esc(j.candidate || '—')}<br>tests ${esc(j.tests || '—')}</td><td>${esc(j.error || '—')}</td><td>${jobActionsMarkup(j)}</td></tr>`).join('')}</tbody></table>`
+      ? `<table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Tokens</th><th>Duration</th><th>Telemetry</th><th>Execution</th><th>Commits / Tests</th><th>Failure</th><th>Actions</th></tr></thead><tbody>${items.map(j => `<tr><td><button class="detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button></td><td>${pill(j.status)}</td><td>${esc(j.review_status || '—')}</td><td>${number(j.effective_tokens)}</td><td>${duration(j.duration)}</td><td>${esc(j.provider || '—')} · ${esc(j.model || '—')} · ${esc(j.worker || '—')}</td><td>commands ${number(j.command_count)} · files ${number(j.files)}</td><td>base ${esc(j.base || '—')}<br>candidate ${esc(j.candidate || '—')}<br>tests ${esc(j.tests || '—')}</td><td>${esc(j.error || '—')}</td><td>${jobActionsMarkup(j)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">No jobs found</div>';
   document.getElementById('jobs').innerHTML = table(actionJobs);
   document.getElementById('history').innerHTML = table(history);
@@ -372,6 +402,25 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
+    if (button.dataset.detailClose) {
+      document.getElementById('job-detail').hidden = true;
+      return;
+    }
+    if (button.dataset.detail) {
+      fetchJobDetail(button.dataset.detail)
+        .then(job => {
+          const section = document.getElementById('job-detail');
+          document.getElementById('job-detail-content').innerHTML = jobDetailMarkup(job);
+          section.hidden = false;
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        })
+        .catch(error => {
+          const banner = document.getElementById('banner');
+          banner.hidden = false;
+          banner.textContent = error.message || 'Unable to load job detail';
+        });
+      return;
+    }
     if (button.dataset.dismiss) {
       state.dismissed.add(button.dataset.dismiss);
       render();

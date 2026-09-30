@@ -86,6 +86,51 @@ h2 {
   margin-bottom: 18px;
   font-size: 0.82rem;
 }
+.job-detail {
+  margin-bottom: 12px;
+}
+.detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.detail-title h2 {
+  font-size: 1.1rem;
+}
+.detail-block {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.detail-block h3 {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+}
+.detail-block h4 {
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin: 14px 0 7px;
+  text-transform: uppercase;
+}
+.detail-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.35fr) 1fr;
+  gap: 10px;
+  border-top: 1px solid #17202d;
+  padding: 6px 0;
+  font-size: 0.75rem;
+}
+.detail-row b {
+  color: var(--muted);
+}
+.detail-block ol {
+  margin: 0;
+  padding-left: 24px;
+}
+.detail-button {
+  padding: 2px 5px;
+  font-size: inherit;
+}
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

@@ -11,7 +11,9 @@ import {
   jobAction,
   operatorRequest,
   jobActionsMarkup,
-  approvalMarkup
+  approvalMarkup,
+  fetchJobDetail,
+  jobDetailMarkup
 } from './app.js';
 
 async function main() {
@@ -84,6 +86,46 @@ async function main() {
   assert.deepEqual(await fetchHistoryPage(25, historyFetch), [{id:'j-1'}]);
   assert.equal(historyPaths[0], '/api/jobs?limit=25&offset=25');
   await assert.rejects(fetchHistoryPage(0, async () => ({ok:true,json:async()=>({})})), /Malformed payload/);
+  const detailPaths = [];
+  const detail = {id: '<job>&', status: 'complete'};
+  assert.deepEqual(
+    await fetchJobDetail('job/one & two', async path => {
+      detailPaths.push(path);
+      return {ok:true, json:async()=>detail};
+    }),
+    detail
+  );
+  assert.equal(detailPaths[0], '/api/jobs/job%2Fone%20%26%20two');
+  const detailMarkup = jobDetailMarkup({
+    id: '<j1>', title: '<title>', status: 'needs_human', role: 'builder', worker: 'w1',
+    provider: 'openai', model: 'm&1', review_status: 'complete', review_verdict: 'pass',
+    integration_status: 'ready', goal_id: 'g1', branch: 'feature', base: 'base', candidate: 'candidate',
+    integration_base_commit: 'base-2', integrated_candidate_commit: 'candidate-2', reviewed_commit: 'reviewed',
+    integration_worktree: 'worktree', integration_branch: 'main', duration: 12, effective_tokens: 42,
+    cached_input_tokens: 3, output_tokens: 4, command_count: 5, files: 6, tests: 'passed', error: null,
+    repair_status: 'retry', repair_attempts: 1, max_repair_attempts: 2, needs_human_reason: '<reason>',
+    review_job_id: 'review-1', review_findings: '<findings>',
+    lineage: {
+      build_attempt: 2, max_build_attempts: 3, review_recoveries: 1, retry_reason: 'retry',
+      needs_human_kind: 'build', repair_job_id: 'repair-1', last_repair_job_id: 'repair-0',
+      last_integrate_job_id: 'integrate-1', source_candidate_commits: ['zz-first', 'aa-second'],
+      review_findings_history: [{review_job_id: 'old', candidate: 'c0', findings: 'old finding'}]
+    },
+    gate: {returncode: 1, summary: '<gate>'},
+    related: [{
+      id: 'related-1', role: 'reviewer', status: 'done', review_verdict: 'pass', duration: 1,
+      effective_tokens: 2, created_at: 3
+    }]
+  });
+  for (const value of ['&lt;j1&gt;', '&lt;title&gt;', 'zz-first', 'aa-second', '&lt;gate&gt;', 'related-1']) {
+    assert.match(detailMarkup, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.ok(detailMarkup.indexOf('zz-first') < detailMarkup.indexOf('aa-second'));
+  for (const heading of ['Summary', 'Candidate', 'Attempts', 'Review', 'Gate', 'Related jobs']) {
+    assert.match(detailMarkup, new RegExp(`<h3>${heading}</h3>`));
+  }
+  assert.match(jobDetailMarkup({id:'j2'}), /No gate result/);
+  assert.match(jobDetailMarkup({id:'j2'}), /<span>—<\/span>/);
   const appSource = fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8');
   for (const field of ['command_count', 'j.files', 'j.base', 'j.candidate', 'j.tests', 'j.error']) {
     assert.match(appSource, new RegExp(field.replace('.', '\\.')));
