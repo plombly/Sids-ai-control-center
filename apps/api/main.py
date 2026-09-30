@@ -620,6 +620,8 @@ def _submit_goal(payload, project_id=None):
             old.get("goal") == goal
             and old.get("status") in {"queued", "planning", "running"}
             and old_atomic == bool(payload.atomic)
+            # The same prompt in another project is different work.
+            and (old.get("project_id") or "sid") == (project_id or "sid")
         ):
             return {"id": _text(old.get("id"), _key_suffix(key)), "status": old.get("status"), "atomic": old_atomic, "duplicate": True}
 

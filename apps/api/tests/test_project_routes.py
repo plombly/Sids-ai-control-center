@@ -102,3 +102,101 @@ def test_project_validation_and_protected_fields(client):
     assert test_client.get("/api/projects/alpha").status_code == 200
     assert test_client.patch("/api/projects/alpha", json={"importance": "urgent"}).status_code == 422
     assert "deploy_key" not in test_client.get("/api/projects/alpha").text
+
+
+# --- host-side project management through the operator service ----------------------
+
+def _operator_ready(fake, allowed="create_project,project_retry_clone,project_push_setup"):
+    fake.hashes["sid:operator-service:op"] = {"id": "op", "allowed_actions": allowed}
+    fake.stream = []
+
+    def hsetnx(key, field, value):
+        data = fake.hashes.setdefault(key, {})
+        if field in data:
+            return 0
+        data[field] = value
+        return 1
+
+    fake.hsetnx = hsetnx
+    fake.xadd = lambda name, fields, maxlen=None, approximate=True: fake.stream.append((name, dict(fields))) or "1-0"
+
+
+def _create(test_client, **fields):
+    body = {"id": "new-app", "name": "New App", "importance": "high", "source": "empty",
+            "request_id": "req-create-01", **fields}
+    return test_client.post("/api/projects", json=body)
+
+
+def test_create_project_queues_a_host_request(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    response = _create(test_client)
+    assert response.status_code == 202 and response.json()["status"] == "pending"
+    [(stream, fields)] = fake.stream
+    assert stream == "sid:operator-requests"
+    assert (fields["action"], fields["project_id"], fields["source"], fields["importance"]) == (
+        "create_project", "new-app", "empty", "high")
+    assert fields["url"] == "" and fields["job_id"] == ""
+
+
+def test_create_project_clone_needs_a_network_git_url(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    assert _create(test_client, source="clone").status_code == 422
+    assert _create(test_client, source="clone", url="/etc", request_id="req-create-02").status_code == 422
+    ok = _create(test_client, source="clone", url="git@github.com:me/app.git", request_id="req-create-03")
+    assert ok.status_code == 202 and fake.stream[-1][1]["url"] == "git@github.com:me/app.git"
+
+
+@pytest.mark.parametrize("fields", [
+    {"id": "Bad_Id"}, {"name": ""}, {"importance": "urgent"}, {"gate": "a\nb"},
+    {"push_remote": "file:///x"}, {"request_id": "x"},
+])
+def test_create_project_validation(client, fields):
+    test_client, fake = client
+    _operator_ready(fake)
+    assert _create(test_client, **fields).status_code == 422
+    assert fake.stream == []
+
+
+def test_create_project_refuses_existing_ids_and_needs_the_operator(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    assert _create(test_client, id="sid").status_code == 409
+    del fake.hashes["sid:operator-service:op"]
+    assert _create(test_client).status_code == 503
+    _operator_ready(fake, allowed="reject")
+    assert _create(test_client).status_code == 403
+
+
+def test_retry_clone_only_for_projects_waiting_for_a_key(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    fake.hashes["sid:projects:cloned"] = {"id": "cloned", "name": "C", "status": "pending_key", "importance": "low"}
+    fake.members.add("cloned")
+    ok = test_client.post("/api/projects/cloned/retry-clone", json={"request_id": "req-retry-001"})
+    assert ok.status_code == 202 and fake.stream[-1][1]["action"] == "project_retry_clone"
+    fake.hashes["sid:projects:cloned"]["status"] = "active"
+    assert test_client.post("/api/projects/cloned/retry-clone", json={"request_id": "req-retry-002"}).status_code == 409
+
+
+def test_push_setup_request(client):
+    test_client, fake = client
+    _operator_ready(fake)
+    response = test_client.post("/api/projects/sid/push-setup",
+                                json={"url": "git@github.com:me/sid.git", "request_id": "req-push-0001"})
+    assert response.status_code == 202
+    assert fake.stream[-1][1] | {} == {**fake.stream[-1][1], "action": "project_push_setup", "url": "git@github.com:me/sid.git"}
+    assert test_client.post("/api/projects/ghost/push-setup",
+                            json={"url": "git@github.com:me/x.git", "request_id": "req-push-0002"}).status_code == 404
+
+
+def test_same_prompt_in_two_projects_is_two_goals(client):
+    test_client, fake = client
+    fake.hashes["sid:projects:other"] = {"id": "other", "name": "O", "status": "active", "importance": "low"}
+    fake.members.add("other")
+    first = test_client.post("/api/projects/sid/goals", json={"goal": "add a readme"}).json()
+    second = test_client.post("/api/projects/other/goals", json={"goal": "add a readme"}).json()
+    assert first["id"] != second["id"] and not second.get("duplicate")
+    again = test_client.post("/api/projects/other/goals", json={"goal": "add a readme"}).json()
+    assert again["id"] == second["id"] and again.get("duplicate")

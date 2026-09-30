@@ -24,6 +24,31 @@ class ProjectPatch(BaseModel):
     importance: Literal["high", "medium", "low"]
 
 
+_REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"
+# Network git URLs only; the host-side operator validates again.
+_GIT_URL = r"^(git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+|ssh://\S+|https://\S+)$"
+
+
+class ProjectCreate(BaseModel):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
+    name: str = Field(min_length=1, max_length=80)
+    importance: Literal["high", "medium", "low"] = "medium"
+    source: Literal["empty", "clone"]
+    url: Optional[str] = Field(default=None, pattern=_GIT_URL)
+    push_remote: Optional[str] = Field(default=None, pattern=_GIT_URL)
+    gate: Optional[str] = Field(default=None, max_length=200, pattern=r"^[^\r\n]*$")
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
+class ProjectPushSetup(BaseModel):
+    url: str = Field(pattern=_GIT_URL)
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
+class ProjectRequest(BaseModel):
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
 def _text(value, default=None):
     if value is None:
         return default
@@ -191,3 +216,65 @@ def patch_project(project_id: str, payload: ProjectPatch):
         main.redis.hset(key, mapping={"id": "sid", "name": "SID AI Command Center", "status": "active"})
     main.redis.hset(key, mapping={"importance": payload.importance, "updated_at": str(time.time())})
     return _item(project_id)
+
+
+# --- host-side project management (via the operator service) -------------------
+
+def _operator_request(action, request_id, fields):
+    """Queue a project action for the host operator service (the API has no
+    filesystem or git authority). Same idempotency as job actions."""
+    main = _redis()
+    service = main._operator_service()
+    if not service:
+        raise HTTPException(status_code=503, detail="Operator service is offline; use scripts/sid-project.py on the host")
+    if action not in _text(service.get("allowed_actions"), "").split(","):
+        raise HTTPException(status_code=403, detail=f"Action {action} is disabled on the host (OPERATOR_ALLOWED_ACTIONS)")
+    key = f"sid:operator-results:{request_id}"
+    fields = {"request_id": request_id, "action": action, "job_id": "", **{k: v or "" for k, v in fields.items()}}
+    existing = main._hash(key)
+    if existing:
+        if existing.get("action") != action or existing.get("project_id") != fields.get("project_id"):
+            raise HTTPException(status_code=409, detail="Request id already used for a different request")
+        return main._operator_result(existing)
+    if not main.redis.hsetnx(key, "request_id", request_id):
+        raise HTTPException(status_code=409, detail="A request with this id is already being submitted")
+    main.redis.hset(key, mapping={**fields, "status": "pending", "created_at": str(time.time())})
+    try:
+        main.redis.xadd(main.OPERATOR_STREAM, fields, maxlen=main.OPERATOR_STREAM_MAXLEN, approximate=True)
+    except Exception:
+        main.redis.hset(key, mapping={"status": "queue_failed", "message": "operator request stream is unavailable"})
+        raise HTTPException(status_code=503, detail="Operator request stream is unavailable")
+    result = main._operator_result(main._hash(key))
+    result["project_id"] = fields.get("project_id", "")
+    return result
+
+
+@router.post("/api/projects", status_code=202)
+def create_project(payload: ProjectCreate):
+    if _known(payload.id):
+        raise HTTPException(status_code=409, detail="Project already exists")
+    if payload.source == "clone" and not payload.url:
+        raise HTTPException(status_code=422, detail="A clone needs a git URL")
+    return _operator_request("create_project", payload.request_id, {
+        "project_id": payload.id, "name": payload.name, "importance": payload.importance,
+        "source": payload.source, "url": payload.url if payload.source == "clone" else "",
+        "push_remote": payload.push_remote, "gate": payload.gate})
+
+
+@router.post("/api/projects/{project_id}/retry-clone", status_code=202)
+def retry_clone(project_id: str, payload: ProjectRequest):
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if _project_data(project_id).get("status") != "pending_key":
+        raise HTTPException(status_code=409, detail="Project is not waiting for a deploy key")
+    return _operator_request("project_retry_clone", payload.request_id, {"project_id": project_id})
+
+
+@router.post("/api/projects/{project_id}/push-setup", status_code=202)
+def push_setup(project_id: str, payload: ProjectPushSetup):
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _operator_request("project_push_setup", payload.request_id,
+                             {"project_id": project_id, "url": payload.url})
