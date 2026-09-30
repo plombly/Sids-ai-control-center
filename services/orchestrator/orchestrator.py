@@ -764,7 +764,10 @@ def update_goals():
         ]
 
         if any(state in {"failed", "test_failed", "integration_failed", "rejected", "repair_exhausted", "blocked_failed_dependency"} for state in states):
-            if goal.get("status") == "failed" and goal.get("error") == "child job reached a terminal failure state":
+            # Preserve historical failed-goal metadata while its children
+            # remain terminally failed. If a child later recovers, this
+            # branch stops matching and normal reconciliation can proceed.
+            if goal.get("status") == "failed":
                 continue
             r.hset(
                 key,
