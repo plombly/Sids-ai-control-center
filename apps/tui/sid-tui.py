@@ -805,7 +805,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        print()
+        # Restore a clean terminal after q or Ctrl-C.
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
 
 
 if __name__ == "__main__":
