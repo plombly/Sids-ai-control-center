@@ -12,7 +12,7 @@ checks = {
     'effective budget headroom': 'ROLE_ENFORCEMENT_DEFAULTS' in worker and '"builder": 100000' in worker and '"reviewer": 60000' in worker,
     'narrow execution contract': 'Do not inventory or read the whole repository' in worker,
     'compact planner manifest': 'repository_manifest()' in orch and 'git", "ls-files' in orch,
-    'planner scope contract': '"scope": ["likely/relevant/path"]' in orch and 'scoped_builder_prompt' in orch,
+    'planner scope contract': '"scope": ["exact/file/it/will/change.py"]' in orch and 'SID schedules by' in orch and 'scoped_builder_prompt' in orch,
     'bounded repair findings': 'findings[-6000:]' in orch,
     'repair exhaustion hands off to a human': '"status": "needs_human"' in orch and 'max_repair_attempts' in orch,
     'final repair in-flight safety': (

@@ -124,6 +124,18 @@ Rules:
 - Prefer 1-5 coherent jobs.
 - Avoid microscopic jobs.
 - Minimize overlapping file ownership between parallel jobs.
+- "scope" must list every file the job will create or change (exact paths;
+  a directory only when the job adds new files inside it). SID schedules by
+  scope: jobs whose scopes overlap never run at the same time, so an
+  incomplete scope causes merge conflicts and an over-broad one serializes
+  work needlessly.
+- Web UI features: put new dashboard behavior in its own module under
+  apps/web/lib/ that registers itself via apps/web/lib/registry.js
+  (registerPanel / registerClick) plus one import line in
+  apps/web/lib/features.js, instead of editing apps/web/app.js.
+- Files currently being changed by other in-flight jobs (work touching them
+  will wait until they finish):
+{busy_files_summary()}
 - Dependencies must reference job numbers from this plan.
 - Every job must be independently testable.
 - Existing SID review and human approval gates will handle merging.
@@ -141,12 +153,28 @@ Return ONLY valid JSON using this exact shape:
       "number": 1,
       "title": "short title",
       "task": "complete implementation instructions",
-      "scope": ["likely/relevant/path"],
+      "scope": ["exact/file/it/will/change.py"],
       "depends_on": []
     }}
   ]
 }}
 """.strip()
+
+
+def busy_files_summary(limit=40):
+    held = sorted({
+        path
+        for key in r.scan_iter("sid:jobs:*")
+        for job in [r.hgetall(key)]
+        if holds_scope(job)
+        for path in job_scope(job)
+    })
+    if not held:
+        return "  (none)"
+    lines = [f"  - {path}" for path in held[:limit]]
+    if len(held) > limit:
+        lines.append(f"  - … and {len(held) - limit} more")
+    return "\n".join(lines)
 
 
 def run_planner(goal, atomic=False, info=None):
@@ -461,15 +489,24 @@ def process_goal(raw):
             "priority": "0",
             "dependencies": json.dumps(dependencies),
             "status": "blocked" if dependencies else "queued",
+            "build_attempt": "1",
             "created_at": now(),
             "updated_at": now(),
             "prompt_chars": str(len(scoped_builder_prompt(item))),
             "scope": json.dumps(item.get("scope", [])),
         }
 
+        # Files another in-flight job is changing: wait instead of building
+        # into a guaranteed integration conflict (release_dependencies()
+        # dispatches it once the files are free).
+        holder = None if dependencies else scope_conflict(record)
+        if holder:
+            record["status"] = "blocked"
+            record["blocked_reason"] = holder[1]
+
         r.hset(f"sid:jobs:{job_id}", mapping=record)
 
-        if not dependencies:
+        if not dependencies and not holder:
             dispatch_job_once(record, {
                     "id": job_id,
                     "goal_id": goal_id,
@@ -704,16 +741,19 @@ after you finish.
             raise
 
 def release_dependencies():
-    for key in r.scan_iter("sid:jobs:*"):
-        job = r.hgetall(key)
-
+    # Oldest first, so a job waiting for files is not overtaken forever.
+    blocked = sorted(
+        ((key, r.hgetall(key)) for key in r.scan_iter("sid:jobs:*")),
+        key=lambda item: _int(float(item[1].get("created_at") or 0) * 1000),
+    )
+    for key, job in blocked:
         if job.get("status") != "blocked":
             continue
 
-        deps = json.loads(job.get("dependencies", "[]"))
-
-        if not deps:
-            continue
+        try:
+            deps = json.loads(job.get("dependencies") or "[]")
+        except ValueError:
+            deps = []
 
         dep_jobs = [r.hgetall(f"sid:jobs:{dep}") for dep in deps]
         dep_states = [dep.get("status") for dep in dep_jobs]
@@ -739,6 +779,12 @@ def release_dependencies():
         ):
             continue
 
+        holder = scope_conflict(job)
+        if holder:
+            if job.get("blocked_reason") != holder[1]:
+                r.hset(key, mapping={"blocked_reason": holder[1], "updated_at": now()})
+            continue
+
         job_id = job["id"]
 
         payload = {
@@ -758,6 +804,7 @@ def release_dependencies():
                 key,
                 mapping={
                     "status": "queued",
+                    "blocked_reason": "",
                     "updated_at": now(),
                 },
             )
@@ -1084,6 +1131,58 @@ def recover_stalled_reviews(now_ts=None):
               f"integrate={integrate_id} ({recoveries + 1}/{MAX_REVIEW_RECOVERIES})", flush=True)
     for suspect in [s for s in _lost_suspects if s.startswith("stall:") and s not in seen]:
         del _lost_suspects[suspect]
+
+
+# A builder holds its scope from dispatch until its change is final: an
+# awaiting_review / needs_human candidate still has to integrate onto main.
+SCOPE_HOLDING_STATES = {
+    "queued", "claimed", "running", "testing", "awaiting_review", "needs_human",
+}
+
+
+def job_scope(job):
+    """Normalized scope paths of a job ('' / '.' and absolute paths dropped)."""
+    try:
+        raw = json.loads(job.get("scope") or "[]")
+    except ValueError:
+        return []
+    paths = []
+    for item in raw if isinstance(raw, list) else []:
+        path = str(item).strip().removeprefix("./").rstrip("/")
+        if path and path != "." and not path.startswith("/"):
+            paths.append(path)
+    return paths
+
+
+def paths_overlap(a, b):
+    """Same file, or one is a directory containing the other."""
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def holds_scope(job):
+    return is_builder(job) and (
+        job.get("status") in SCOPE_HOLDING_STATES or build_retry_pending(job)
+    )
+
+
+def scope_conflict(job):
+    """(holder_id, reason) if another in-flight builder holds any of this
+    job's files, else None. A job without a scope claims nothing."""
+    mine = job_scope(job)
+    if not mine:
+        return None
+    for key in r.scan_iter("sid:jobs:*"):
+        other = r.hgetall(key)
+        other_id = other.get("id") or key.rsplit(":", 1)[-1]
+        if other_id == job.get("id") or not holds_scope(other):
+            continue
+        shared = sorted({a for a in mine for b in job_scope(other) if paths_overlap(a, b)})
+        if shared:
+            return other_id, (
+                f"waiting for {', '.join(shared[:4])}{' …' if len(shared) > 4 else ''} "
+                f"held by job {other_id} ({other.get('status')})"
+            )
+    return None
 
 
 def update_goals():
