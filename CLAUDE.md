@@ -41,7 +41,7 @@ Runtime (all live, all as root):
 | Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
 | Claude CLI | `claude` 2.1.285, claude.ai subscription login (shares plan limits with interactive sessions) |
 | Role routing | `services/agent_cli.py`: planner=claude/opus, builder=codex, reviewer=claude/sonnet, repair=claude/sonnet; `ROLE_PROVIDERS`, `CLAUDE_<ROLE>_MODEL`, `CLAUDE_<ROLE>_BUDGET_USD`. Claude limit/auth errors fall back to Codex and set `sid:provider-cooldown:claude` (30 min) |
-| Write access | `SID_OPERATOR_TOKEN` in `/etc/sid-ai/operator.env` (root 600, never print it); API needs `X-SID-Token` on every non-GET; dashboard has a token field. Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
+| Write access | `SID_OPERATOR_TOKEN` in `/etc/sid-ai/operator.env` (root 600, never print it); API (:8000) needs `X-SID-Token` on every non-GET; nginx injects it for the dashboard (:8080), so the browser needs nothing (single-operator LAN, by SID's choice). Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
 
 Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
 — never hash-command it), `sid:jobs:<id>` (hash), queues `sid:goals` / `sid:jobs`
