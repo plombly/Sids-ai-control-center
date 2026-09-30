@@ -1128,8 +1128,10 @@ def process_review_job(job, key, log_path):
         )
         raise RuntimeError(f"Reviewer Codex exited with status {returncode}")
 
-    redis.hset(key, mapping={"status": "review_complete", **common})
+    review_aspects_json = json.dumps((agent_cli.read_claude_result(log_path) or {}).get("aspects") or {})
+    redis.hset(key, mapping={"status": "review_complete", "review_aspects": review_aspects_json, **common})
     builder_update = {
+        "review_aspects": review_aspects_json,
         "review_job_id": job_id,
         "review_status": "complete",
         "review_verdict": verdict,

@@ -330,3 +330,54 @@ def test_merge_queue_read_model(client, fake, monkeypatch):
     assert (first["position"], first["id"], first["state"], first["fresh"]) == (1, "b1", "waiting", True)
     assert first["approved_candidate"] == "a" * 40 and first["candidate"] == CANDIDATE
     assert (second["id"], second["status"], second["state"]) == ("gone", "unknown", "queued")
+
+
+# --- parallel-pipeline read models ------------------------------------------------------
+
+def test_job_exposes_pipeline_state(client, fake, monkeypatch):
+    fake.hashes["sid:jobs:b1"].update({
+        "blocked_reason": "waiting for apps/web/app.js held by job x (running)",
+        "build_attempt": "2", "provider_fallback": "claude at capacity", "cost_usd": "0.0421",
+        "best_of": '{"chosen": "alt"}', "review_aspects": '{"spec": "pass", "safety": "changes_required"}',
+        "merge_queue_state": "waiting", "merge_queue_reason": "stale"})
+
+    class Scan(OperatorFakeRedis):
+        def hgetall(self, key):
+            return dict(self.hashes.get(key, {}))
+
+    monkeypatch.setattr(main, "redis", Scan(fake.hashes))
+    job = next(j for j in client.get("/api/jobs?limit=100").json() if j["id"] == "b1")
+    assert job["blocked_reason"].startswith("waiting for apps/web/app.js")
+    assert (job["build_attempt"], job["cost_usd"]) == (2, 0.0421)
+    assert job["best_of"] == {"chosen": "alt"}
+    assert job["review_aspects"] == {"spec": "pass", "safety": "changes_required"}
+    assert (job["merge_queue_state"], job["provider_fallback"]) == ("waiting", "claude at capacity")
+    fake.hashes["sid:jobs:b1"]["best_of"] = "not json"
+    assert next(j for j in client.get("/api/jobs?limit=100").json() if j["id"] == "b1")["best_of"] is None
+
+
+def test_providers_capacity(client, fake, monkeypatch):
+    class Slots(OperatorFakeRedis):
+        def zrangebyscore(self, key, lo, hi, withscores=False):
+            return [("job:rv1", 9999999999.0)]
+
+        def get(self, key):
+            return {"sid:provider-limit:claude": "2",
+                    "sid:provider-cooldown:claude": "claude unavailable: limit"}.get(key)
+
+        def ttl(self, key):
+            return 1200
+
+    fake.hashes["sid:workers:w1"] = {"id": "w1", "provider": "per role",
+                                     "model": "builder codex/gpt · reviewer claude/sonnet"}
+    monkeypatch.setattr(main, "redis", Slots(fake.hashes))
+    body = client.get("/api/providers").json()
+    assert body["claude"]["limit"] == 2
+    assert body["claude"]["in_use"] == [{"holder": "job:rv1", "lease_expires": 9999999999}]
+    assert body["claude"]["cooling_down"] is True and body["claude"]["cooldown_seconds_left"] == 1200
+    assert body["routing"] == "builder codex/gpt · reviewer claude/sonnet"
+
+
+def test_reviewer_records_specialist_verdicts():
+    source = (Path(main.__file__).resolve().parents[2] / "services/worker/worker.py").read_text()
+    assert '"review_aspects": review_aspects_json' in source

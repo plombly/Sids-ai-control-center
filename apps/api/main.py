@@ -183,8 +183,27 @@ def _job(key, data):
         "files": _number(data.get("files_changed", data.get("file_count"))),
         "tests": _text(data.get("test_status", data.get("tests"))),
         "error": _text(data.get("error", data.get("failure", data.get("failure_reason")))),
+        # Parallel-pipeline state (scope waits, provider routing, best-of,
+        # specialist reviews, merge queue).
+        "blocked_reason": _text(data.get("blocked_reason")),
+        "build_attempt": _number(data.get("build_attempt")),
+        "provider_wait": _text(data.get("provider_wait")),
+        "provider_fallback": _text(data.get("provider_fallback")),
+        "cost_usd": _number(data.get("cost_usd")),
+        "best_of": _json_object(data.get("best_of")),
+        "review_aspects": _json_object(data.get("review_aspects")),
+        "merge_queue_state": _text(data.get("merge_queue_state")),
+        "merge_queue_reason": _text(data.get("merge_queue_reason")),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
+
+
+def _json_object(value):
+    try:
+        parsed = json.loads(value) if isinstance(value, str) and value else None
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _all_jobs():
@@ -781,6 +800,32 @@ def start_worker(worker_id: str):
     redis.hset(key, mapping={"status": "idle", "updated_at": str(time.time())})
     return _worker(key, {**data, "status": "idle"}, _all_jobs())
 
+
+
+@app.get("/api/providers")
+def api_providers():
+    """Claude capacity (shared slots, cooldown) and per-role routing as the
+    workers report it. Read-only; the workers own the semaphore."""
+    now_ts = time.time()
+    try:
+        slots = redis.zrangebyscore("sid:provider-slots:claude", now_ts, "+inf", withscores=True)
+        limit = redis.get("sid:provider-limit:claude")
+        cooldown = redis.get("sid:provider-cooldown:claude")
+        cooldown_ttl = redis.ttl("sid:provider-cooldown:claude") if cooldown else None
+    except Exception:
+        slots, limit, cooldown, cooldown_ttl = [], None, None, None
+    routing = next((_text(_hash(key).get("model")) for key in _keys("sid:workers:*")
+                    if _text(_hash(key).get("provider")) == "per role"), None)
+    return {
+        "claude": {
+            "limit": _number(limit),
+            "in_use": [{"holder": _text(holder), "lease_expires": _number(score)} for holder, score in slots],
+            "cooling_down": bool(cooldown),
+            "cooldown_reason": _text(cooldown),
+            "cooldown_seconds_left": cooldown_ttl if cooldown_ttl and cooldown_ttl > 0 else None,
+        },
+        "routing": routing,
+    }
 
 
 @app.get("/api/merge-queue")

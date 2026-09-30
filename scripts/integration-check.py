@@ -71,7 +71,7 @@ CHECKS = [
     ),
     (
         "web-tests",
-        [NODE, "apps/web/app.test.js"] if NODE
+        [NODE, "--test", *sorted(str(p.relative_to(REPO)) for p in (REPO / "apps/web").glob("*.test.js"))] if NODE
         else [str(PYTHON), "-c", "print('SKIP: node not installed; web tests not run')"],
     ),
     (
