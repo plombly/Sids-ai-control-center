@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import {
   ENDPOINTS,
   fetchEndpoint,
+  fetchHistoryPage,
   normalize,
   workerMarkup,
   submitGoal,
@@ -61,11 +62,28 @@ async function main() {
   const escapedActions = jobActionsMarkup({id:'<job>', status:'needs_human'});
   assert.match(escapedActions, /data-job="&lt;job&gt;"/);
   assert.doesNotMatch(escapedActions, /data-job="<job>"/);
+  const endpointPaths = [];
+  const endpointFetch = async path => {
+    endpointPaths.push(path);
+    return {ok:true,json:async()=> path === '/api/status' ? {} : [{id:'j-1'}]};
+  };
+  await fetchEndpoint('jobs', endpointFetch);
+  await fetchEndpoint('status', endpointFetch);
+  assert.equal(endpointPaths[0], '/api/jobs?limit=100');
+  assert.equal(endpointPaths[1], '/api/status');
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:false,status:503})), /HTTP 503/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>{throw new Error('bad')}})), /Malformed JSON/);
   await assert.rejects(fetchEndpoint('jobs', async () => ({ok:true,json:async()=>({})})), /Malformed payload/);
   const result = await fetchEndpoint('jobs', async () => ({ok:true,json:async()=>[{id:'j-1'}]}));
   assert.deepEqual(result, [{id:'j-1'}]);
+  const historyPaths = [];
+  const historyFetch = async path => {
+    historyPaths.push(path);
+    return {ok:true,json:async()=>[{id:'j-1'}]};
+  };
+  assert.deepEqual(await fetchHistoryPage(25, historyFetch), [{id:'j-1'}]);
+  assert.equal(historyPaths[0], '/api/jobs?limit=25&offset=25');
+  await assert.rejects(fetchHistoryPage(0, async () => ({ok:true,json:async()=>({})})), /Malformed payload/);
   const appSource = fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8');
   for (const field of ['command_count', 'j.files', 'j.base', 'j.candidate', 'j.tests', 'j.error']) {
     assert.match(appSource, new RegExp(field.replace('.', '\\.')));

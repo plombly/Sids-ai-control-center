@@ -11,11 +11,15 @@ export const ENDPOINTS = [
   'failures'
 ];
 const POLL_MS = 2000;
+const HISTORY_PAGE_SIZE = 25;
+const HISTORY_REFRESH_MS = 30000;
 const TERMINAL =
   /^(completed|completed_no_changes|merged|done|succeeded|failed|error|integration_failed|queue_failed|test_failed|rejected|repair_exhausted|blocked_failed_dependency|planning_failed)$/i;
 const initial = () => Object.fromEntries(ENDPOINTS.map(key => [key, { data: null, error: null, stale: false }]));
 export const state = { ...initial(), lastUpdated: null, polling: false, dismissed: new Set() };
 state.goalSubmission = { pending: false, requestId: null };
+state.historyOffset = 0;
+state.history = { data: null, error: null, stale: false };
 const asObject = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);
 const asArray = value => (Array.isArray(value) ? value.filter(item => asObject(item)) : []);
 const finite = value => (typeof value === 'number' && Number.isFinite(value) ? value : null);
@@ -24,7 +28,8 @@ const text = (value, fallback = '—') =>
 export const normalize = (key, value) =>
   ['repository', 'queue', 'status', 'heartbeat'].includes(key) ? asObject(value) || {} : asArray(value);
 export async function fetchEndpoint(key, fetchImpl = fetch) {
-  const response = await fetchImpl(`/api/${key}`, { headers: { accept: 'application/json' } });
+  const path = ['goals', 'jobs', 'approvals', 'failures'].includes(key) ? `/api/${key}?limit=100` : `/api/${key}`;
+  const response = await fetchImpl(path, { headers: { accept: 'application/json' } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   let body;
   try {
@@ -39,6 +44,20 @@ export async function fetchEndpoint(key, fetchImpl = fetch) {
   )
     throw new Error('Malformed payload');
   return normalize(key, body);
+}
+export async function fetchHistoryPage(offset, fetchImpl = fetch) {
+  const response = await fetchImpl(`/api/jobs?limit=${HISTORY_PAGE_SIZE}&offset=${offset}`, {
+    headers: { accept: 'application/json' }
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('Malformed JSON');
+  }
+  if (!Array.isArray(body)) throw new Error('Malformed payload');
+  return normalize('jobs', body);
 }
 export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   const response = await fetchImpl(path, {
@@ -148,7 +167,7 @@ export function render() {
     ),
     failures = asArray(get('failures')),
     actionJobs = jobs.filter(active),
-    history = jobs.filter(j => TERMINAL.test(text(j.status, '')) && !state.dismissed.has(j.id));
+    history = asArray(state.history.data).filter(j => !state.dismissed.has(j.id));
   const signals = [
       'repository',
       'queue',
@@ -218,6 +237,16 @@ export function render() {
       : '<div class="empty">No jobs found</div>';
   document.getElementById('jobs').innerHTML = table(actionJobs);
   document.getElementById('history').innerHTML = table(history);
+  const historyRange = document.getElementById('history-range'),
+    historyNewer = document.querySelector('[data-history="newer"]'),
+    historyOlder = document.querySelector('[data-history="older"]');
+  if (historyRange) {
+    const start = state.historyOffset + 1,
+      end = state.historyOffset + history.length;
+    historyRange.textContent = `jobs ${start}-${end}`;
+  }
+  if (historyNewer) historyNewer.disabled = state.historyOffset === 0;
+  if (historyOlder) historyOlder.disabled = history.length < HISTORY_PAGE_SIZE;
   const errors = ENDPOINTS.filter(k => state[k].error),
     banner = document.getElementById('banner');
   banner.hidden = !errors.length;
@@ -237,6 +266,16 @@ export async function handoffText(goalId, fetchImpl = fetch) {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const bundle = await response.json();
   return JSON.stringify(bundle, null, 2);
+}
+async function loadHistoryPage(offset = state.historyOffset) {
+  try {
+    const data = await fetchHistoryPage(offset);
+    state.historyOffset = offset;
+    state.history = { data, error: null, stale: false };
+  } catch (error) {
+    state.history = { ...state.history, error: error.message || 'Request failed', stale: state.history.data !== null };
+  }
+  render();
 }
 export async function copyHandoff(
   goalId,
@@ -327,7 +366,9 @@ async function runJobAction(button) {
 if (typeof document !== 'undefined') {
   render();
   poll();
+  loadHistoryPage();
   setInterval(() => poll(), POLL_MS);
+  setInterval(() => loadHistoryPage(), HISTORY_REFRESH_MS);
   document.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
@@ -347,6 +388,10 @@ if (typeof document !== 'undefined') {
     if (button.dataset.handoff) uiAction(() => copyHandoff(button.dataset.handoff), document.getElementById('banner'));
     if (button.dataset.download)
       uiAction(() => downloadHandoff(button.dataset.download), document.getElementById('banner'));
+    if (button.dataset.history) {
+      const offset = Math.max(0, state.historyOffset + (button.dataset.history === 'older' ? HISTORY_PAGE_SIZE : -HISTORY_PAGE_SIZE));
+      loadHistoryPage(offset);
+    }
   });
   document.getElementById('goal-form').addEventListener('submit', event => {
     event.preventDefault();
