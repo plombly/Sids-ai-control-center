@@ -263,7 +263,7 @@ def cleanup_after_merge(job_id, data, worktree, branch):
             )
 
 
-REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted"}
+REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted", "integration_failed"}
 
 
 def reject(job_id):
