@@ -21,7 +21,8 @@ def main():
     api = services["api"]
 
     require(web["build"]["context"] == "./apps/web", "web must build apps/web")
-    require(web["ports"] == ["8080:80"], "web must publish host port 8080")
+    require(web.get("network_mode") == "host" and "ports" not in web,
+            "web must use host networking (nginx must see real client addresses)")
     require(
         web["depends_on"]["api"]["condition"] == "service_healthy",
         "web must wait for a healthy api",
@@ -44,12 +45,20 @@ def main():
 
     nginx = (ROOT / "apps/web/nginx.conf").read_text(encoding="utf-8")
     require("location /api/" in nginx, "nginx must define the API route")
-    require("proxy_pass http://api:8000;" in nginx, "API traffic must use the internal api service")
+    require("listen 8080;" in nginx, "nginx must listen on host port 8080")
+    require("proxy_pass http://127.0.0.1:8000;" in nginx, "API traffic must go to the api's host port")
     require("location = /health" in nginx, "nginx must provide a health endpoint")
     require(
-        'proxy_set_header X-SID-Token "${SID_OPERATOR_TOKEN}";' in nginx,
+        "proxy_set_header X-SID-Token $sid_operator_token;" in nginx
+        and 'default "${SID_OPERATOR_TOKEN}";' in nginx,
         "API route must inject the operator token from the environment",
     )
+    require(
+        "include /etc/nginx/sid-local-addrs.conf;" in nginx and "127.0.0.0/8    1;" in nginx,
+        "requests from this server itself must not get the operator token",
+    )
+    require("docker-entrypoint.d/15-sid-local-addrs.sh" in dockerfile,
+            "the web image must list this server's addresses at start")
 
 
 if __name__ == "__main__":

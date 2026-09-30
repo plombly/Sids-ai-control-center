@@ -75,17 +75,16 @@ services:
       context: ./apps/web
     container_name: sid-ai-web
     restart: unless-stopped
-    # Same token file as the api: nginx injects it into /api requests.
+    # Same token file as the api: nginx adds it to /api requests from other
+    # machines only. Host networking lets nginx see real client addresses
+    # and this server's own ones (apps/web/nginx.conf); it listens on 8080.
     env_file:
       - path: /etc/sid-ai/operator.env
         required: false
     depends_on:
       api:
         condition: service_healthy
-    ports:
-      - "8080:80"
-    networks:
-      - sid-ai-internal
+    network_mode: host
 
 networks:
   sid-ai-internal:
