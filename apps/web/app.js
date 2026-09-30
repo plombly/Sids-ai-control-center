@@ -62,6 +62,14 @@ export const workerAction = (id, action, fetchImpl = fetch) =>
   requestJSON(`/api/workers/${encodeURIComponent(id)}/${action}`, { method: 'POST' }, fetchImpl);
 export const removeWorker = (id, fetchImpl = fetch) =>
   requestJSON(`/api/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
+export const jobAction = (jobId, body, fetchImpl = fetch) =>
+  requestJSON(
+    `/api/jobs/${encodeURIComponent(jobId)}/actions`,
+    { method: 'POST', body: JSON.stringify(body) },
+    fetchImpl
+  );
+export const operatorRequest = (requestId, fetchImpl = fetch) =>
+  requestJSON(`/api/operator-requests/${encodeURIComponent(requestId)}`, { method: 'GET' }, fetchImpl);
 export async function poll(fetchImpl = fetch) {
   if (state.polling) return state;
   state.polling = true;
@@ -111,8 +119,21 @@ export const workerMarkup = w => {
   const removeLabel = busy ? 'Remove (busy)' : 'Remove';
   return `<div class="entity"><div class="entity-head"><span class="entity-name">${esc(w.id)}</span>${pill(w.status)}</div><div class="subtle">${esc(w.provider || 'Provider unknown')} · ${esc(w.model || 'model unknown')} · ${esc(w.role || 'role unknown')}</div><div class="stats"><span>job <b>${esc(w.job_id || 'none')}</b> · effective <b>${number(w.effective_tokens)}</b> · cached <b>${number(w.cached_input_tokens)}</b></span><span>commands <b>${number(w.command_count)}</b> · duration <b>${duration(w.duration)}</b> · heartbeat <b>${esc(w.heartbeat_age == null ? '—' : `${w.heartbeat_age}s ago`)}</b></span></div><div class="actions"><button data-worker="${esc(w.id)}" data-action="start">Start</button><button data-worker="${esc(w.id)}" data-action="stop">Stop</button><button class="danger-button" data-worker="${esc(w.id)}" data-action="remove"${busy ? ' disabled title="Busy worker: stop it before removing it"' : ''}>${removeLabel}</button></div></div>`;
 };
+export const jobActionsMarkup = job => {
+  const actions = {
+    awaiting_review: [['Reject', 'reject'], ['Reintegrate', 'reintegrate']],
+    needs_human: [['Reject', 'reject'], ['Extend (+1)', 'extend'], ['Reintegrate', 'reintegrate']],
+    blocked_failed_dependency: [['Reopen', 'reopen']]
+  }[text(job.status, '')] || [];
+  return actions
+    .map(
+      ([label, operation]) =>
+        `<button data-op="${esc(operation)}" data-job="${esc(job.id)}" data-status="${esc(job.status)}">${esc(label)}</button>`
+    )
+    .join('');
+};
 export const approvalMarkup = j =>
-  `<div class="item approval-item"><div class="item-head"><span class="item-title">${esc(j.id)}</span>${pill('ready')}</div><p>Review passed · candidate ${esc(j.branch || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code><small>Approval controls are unavailable because the API does not expose a safe mutation endpoint.</small><button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
+  `<div class="item approval-item"><div class="item-head"><span class="item-title">${esc(j.id)}</span>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
 export function render() {
   const get = k => state[k].data,
     status = asObject(get('status')) || {},
@@ -193,7 +214,7 @@ export function render() {
   );
   const table = items =>
     items.length
-      ? `<table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Tokens</th><th>Duration</th><th>Telemetry</th><th>Execution</th><th>Commits / Tests</th><th>Failure</th></tr></thead><tbody>${items.map(j => `<tr><td>${esc(j.id)}</td><td>${pill(j.status)}</td><td>${esc(j.review_status || '—')}</td><td>${number(j.effective_tokens)}</td><td>${duration(j.duration)}</td><td>${esc(j.provider || '—')} · ${esc(j.model || '—')} · ${esc(j.worker || '—')}</td><td>commands ${number(j.command_count)} · files ${number(j.files)}</td><td>base ${esc(j.base || '—')}<br>candidate ${esc(j.candidate || '—')}<br>tests ${esc(j.tests || '—')}</td><td>${esc(j.error || '—')}</td></tr>`).join('')}</tbody></table>`
+      ? `<table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Tokens</th><th>Duration</th><th>Telemetry</th><th>Execution</th><th>Commits / Tests</th><th>Failure</th><th>Actions</th></tr></thead><tbody>${items.map(j => `<tr><td>${esc(j.id)}</td><td>${pill(j.status)}</td><td>${esc(j.review_status || '—')}</td><td>${number(j.effective_tokens)}</td><td>${duration(j.duration)}</td><td>${esc(j.provider || '—')} · ${esc(j.model || '—')} · ${esc(j.worker || '—')}</td><td>commands ${number(j.command_count)} · files ${number(j.files)}</td><td>base ${esc(j.base || '—')}<br>candidate ${esc(j.candidate || '—')}<br>tests ${esc(j.tests || '—')}</td><td>${esc(j.error || '—')}</td><td>${jobActionsMarkup(j)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">No jobs found</div>';
   document.getElementById('jobs').innerHTML = table(actionJobs);
   document.getElementById('history').innerHTML = table(history);
@@ -268,6 +289,41 @@ async function uiAction(fn, target) {
     return false;
   }
 }
+const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+async function runJobAction(button) {
+  const banner = document.getElementById('banner'),
+    operation = button.dataset.op,
+    jobId = button.dataset.job,
+    candidate = button.dataset.candidate;
+  if (operation === 'approve' && (!window.confirm(`Approve candidate ${candidate} for job ${jobId}?`))) return;
+  button.disabled = true;
+  const request_id = crypto.randomUUID(),
+    body = {
+      action: operation,
+      request_id,
+      expected_status: button.dataset.status,
+      ...(operation === 'approve' ? { expected_candidate: candidate } : {}),
+      ...(operation === 'extend' ? { extra: 1 } : {})
+    };
+  try {
+    await jobAction(jobId, body);
+    let result = await operatorRequest(request_id), attempts = 0;
+    while (/^(pending|running)$/i.test(text(result.status, '')) && attempts < 30) {
+      await wait(POLL_MS);
+      result = await operatorRequest(request_id);
+      attempts += 1;
+    }
+    await poll();
+    banner.hidden = false;
+    banner.textContent = `${text(result.status, 'completed')}: ${text(result.message, '')}`.replace(/: $/, '');
+  } catch (error) {
+    await poll();
+    banner.hidden = false;
+    banner.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
 if (typeof document !== 'undefined') {
   render();
   poll();
@@ -287,6 +343,7 @@ if (typeof document !== 'undefined') {
         document.getElementById('banner')
       );
     }
+    if (button.dataset.op) runJobAction(button);
     if (button.dataset.handoff) uiAction(() => copyHandoff(button.dataset.handoff), document.getElementById('banner'));
     if (button.dataset.download)
       uiAction(() => downloadHandoff(button.dataset.download), document.getElementById('banner'));
