@@ -34,7 +34,7 @@ GOAL_SUMMARY_LIMIT = 240
 JOB_TERMINAL_STATUSES = {
     "completed", "completed_no_changes", "merged", "done", "succeeded",
 }
-FAILURE_STATUSES = {"failed", "error", "integration_failed", "queue_failed"}
+FAILURE_STATUSES = {"failed", "error", "integration_failed", "queue_failed", "test_failed", "rejected", "repair_exhausted", "blocked_failed_dependency", "planning_failed"}
 
 
 def _text(value, default=None):

@@ -34,6 +34,35 @@ async function main() {
   const result = await fetchEndpoint('jobs', async () => ({ok:true,json:async()=>[{id:'j-1'}]}));
   assert.deepEqual(result, [{id:'j-1'}]);
   console.log('frontend API normalization tests passed');
+
+  for (const status of ['working', 'busy', 'claimed', 'running', 'active', 'stopping']) {
+    const markup = workerMarkup({id:`w-${status}`, status});
+    assert.match(markup, /data-action="remove" disabled/);
+    assert.match(markup, /Remove \(busy\)/);
+  }
+
+  {
+    const markup = workerMarkup({
+      id:'w-active-job',
+      status:'idle',
+      active_job_id:'j-live'
+    });
+    assert.match(markup, /data-action="remove" disabled/);
+    assert.match(markup, /Remove \(busy\)/);
+  }
+
+  for (const status of [
+    'completed',
+    'test_failed',
+    'rejected',
+    'repair_exhausted',
+    'blocked_failed_dependency',
+    'planning_failed'
+  ]) {
+    const markup = workerMarkup({id:`w-${status}`, status});
+    assert.doesNotMatch(markup, /data-action="remove" disabled/);
+  }
+
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });
