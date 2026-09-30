@@ -444,9 +444,18 @@ if (typeof document !== 'undefined') {
     }
     if (button.dataset.dismiss || button.dataset.dismissAll) {
       const panelId = button.dataset.dismissAll,
-        ids = panelId
-          ? [...document.querySelectorAll(`#${panelId} [data-dismiss]`)].map(item => item.dataset.dismiss).slice(0, 500)
-          : [button.dataset.dismiss];
+        ids =
+          panelId === 'history'
+            ? asArray(state.history.data)
+                .map(job => job.id)
+                .filter(id => id && !state.dismissed.has(id))
+                .slice(0, 500)
+            : panelId
+              ? [...document.querySelectorAll(`#${panelId} [data-dismiss]`)]
+                  .map(item => item.dataset.dismiss)
+                  .slice(0, 500)
+              : [button.dataset.dismiss];
+      if (!ids.length) return;
       button.disabled = true;
       try {
         await dismiss(ids);
