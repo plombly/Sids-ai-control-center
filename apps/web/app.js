@@ -1,129 +1,39 @@
-export const ENDPOINTS = [
-  'status',
-  'repository',
-  'queue',
-  'orchestrators',
-  'workers',
-  'heartbeat',
-  'goals',
-  'jobs',
-  'approvals',
-  'failures'
-];
+import {
+  ENDPOINTS,
+  HISTORY_PAGE_SIZE,
+  dismiss,
+  fetchEndpoint,
+  fetchHistoryPage,
+  fetchJobDetail,
+  handoffText,
+  jobAction,
+  loadDismissals,
+  operatorRequest,
+  operatorToken,
+  removeWorker,
+  requestJSON,
+  submitGoal,
+  workerAction
+} from './lib/api.js';
+import { TERMINAL, asArray, asObject, duration, esc, number, pill, text } from './lib/format.js';
+import { approvalMarkup, jobActionsMarkup, jobDetailMarkup, tokenStateText, workerMarkup } from './lib/markup.js';
+
+import { dispatchClick, renderPanels } from './lib/registry.js';
+// Feature modules register panels/click handlers (see lib/registry.js).
+import './lib/features.js';
+
+// app.js stays the public entry point: tests and callers import from here.
+export * from './lib/api.js';
+export * from './lib/markup.js';
+export * from './lib/registry.js';
+
 const POLL_MS = 2000;
-const HISTORY_PAGE_SIZE = 25;
 const HISTORY_REFRESH_MS = 30000;
-const TERMINAL =
-  /^(completed|completed_no_changes|merged|done|succeeded|failed|error|integration_failed|queue_failed|test_failed|rejected|repair_exhausted|blocked_failed_dependency|planning_failed)$/i;
 const initial = () => Object.fromEntries(ENDPOINTS.map(key => [key, { data: null, error: null, stale: false }]));
 export const state = { ...initial(), lastUpdated: null, polling: false, dismissed: new Set() };
 state.goalSubmission = { pending: false, requestId: null };
 state.historyOffset = 0;
 state.history = { data: null, error: null, stale: false };
-const asObject = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);
-const asArray = value => (Array.isArray(value) ? value.filter(item => asObject(item)) : []);
-const finite = value => (typeof value === 'number' && Number.isFinite(value) ? value : null);
-const text = (value, fallback = '—') =>
-  value === null || value === undefined || value === '' ? fallback : String(value);
-export const normalize = (key, value) =>
-  ['repository', 'queue', 'status', 'heartbeat'].includes(key) ? asObject(value) || {} : asArray(value);
-export async function fetchEndpoint(key, fetchImpl = fetch) {
-  const path = ['goals', 'jobs', 'approvals', 'failures'].includes(key) ? `/api/${key}?limit=100` : `/api/${key}`;
-  const response = await fetchImpl(path, { headers: { accept: 'application/json' } });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error('Malformed JSON');
-  }
-  const collection = !['status', 'repository', 'queue', 'heartbeat'].includes(key);
-  if (
-    (collection && !Array.isArray(body)) ||
-    (!collection && (!body || typeof body !== 'object' || Array.isArray(body)))
-  )
-    throw new Error('Malformed payload');
-  return normalize(key, body);
-}
-export async function fetchHistoryPage(offset, fetchImpl = fetch) {
-  const response = await fetchImpl(`/api/jobs?limit=${HISTORY_PAGE_SIZE}&offset=${offset}`, {
-    headers: { accept: 'application/json' }
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error('Malformed JSON');
-  }
-  if (!Array.isArray(body)) throw new Error('Malformed payload');
-  return normalize('jobs', body);
-}
-// Operator token for writes (the API requires it when SID_OPERATOR_TOKEN is
-// set). Kept in this browser only; storage can be unavailable.
-const TOKEN_KEY = 'sid-operator-token';
-export const operatorToken = {
-  get() {
-    try {
-      return globalThis.localStorage?.getItem(TOKEN_KEY) || '';
-    } catch {
-      return '';
-    }
-  },
-  set(value) {
-    try {
-      if (value) globalThis.localStorage?.setItem(TOKEN_KEY, value);
-      else globalThis.localStorage?.removeItem(TOKEN_KEY);
-    } catch {}
-  }
-};
-export const authHeaders = (token = operatorToken.get()) => (token ? { 'x-sid-token': token } : {});
-export async function requestJSON(path, options = {}, fetchImpl = fetch) {
-  const response = await fetchImpl(path, {
-    ...options,
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      ...authHeaders(),
-      ...(options.headers || {})
-    }
-  });
-  let body = {};
-  try {
-    body = await response.json();
-  } catch {}
-  if (!response.ok) throw new Error(body.detail || body.message || `HTTP ${response.status}`);
-  return body;
-}
-export const fetchJobDetail = (jobId, fetchImpl = fetch) =>
-  requestJSON(`/api/jobs/${encodeURIComponent(jobId)}`, {}, fetchImpl);
-export const submitGoal = (goal, atomic = false, request_id = '', fetchImpl = fetch) =>
-  requestJSON(
-    '/api/prompts',
-    { method: 'POST', body: JSON.stringify({ prompt: goal, atomic, request_id: request_id || undefined }) },
-    fetchImpl
-  );
-export const workerAction = (id, action, fetchImpl = fetch) =>
-  requestJSON(`/api/workers/${encodeURIComponent(id)}/${action}`, { method: 'POST' }, fetchImpl);
-export const removeWorker = (id, fetchImpl = fetch) =>
-  requestJSON(`/api/workers/${encodeURIComponent(id)}`, { method: 'DELETE' }, fetchImpl);
-export const jobAction = (jobId, body, fetchImpl = fetch) =>
-  requestJSON(
-    `/api/jobs/${encodeURIComponent(jobId)}/actions`,
-    { method: 'POST', body: JSON.stringify(body) },
-    fetchImpl
-  );
-export const operatorRequest = (requestId, fetchImpl = fetch) =>
-  requestJSON(`/api/operator-requests/${encodeURIComponent(requestId)}`, { method: 'GET' }, fetchImpl);
-// Through requestJSON so the operator token is sent like every other write.
-export const dismiss = (ids, fetchImpl = fetch) =>
-  requestJSON('/api/dismissals', { method: 'POST', body: JSON.stringify({ ids }) }, fetchImpl);
-export async function loadDismissals(fetchImpl = fetch) {
-  const response = await fetchImpl('/api/dismissals');
-  if (!response.ok) throw new Error(`Unable to load dismissals (HTTP ${response.status})`);
-  const body = await response.json();
-  return body.ids;
-}
 export async function poll(fetchImpl = fetch) {
   if (state.polling) return state;
   state.polling = true;
@@ -145,80 +55,11 @@ export async function poll(fetchImpl = fetch) {
   }
   return state;
 }
-const esc = value =>
-  text(value).replace(
-    /[&<>"']/g,
-    char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]
-  );
-const number = value => (finite(value) === null ? '—' : Number(value).toLocaleString());
-const duration = value =>
-  finite(value) === null
-    ? '—'
-    : value < 60
-      ? `${Math.round(value)}s`
-      : `${Math.floor(value / 60)}m ${Math.round(value % 60)}s`;
-const statusClass = value =>
-  /fail|error|offline/i.test(text(value, ''))
-    ? 'bad'
-    : /wait|review|pending|idle|blocked|human|disabled/i.test(text(value, ''))
-      ? 'warn'
-      : /complete|success|active|running|online|healthy|ready/i.test(text(value, ''))
-        ? 'ok'
-        : '';
-const pill = value => `<span class="pill ${statusClass(value)}">${esc(value)}</span>`;
 const list = (id, items, template, empty) => {
   const node = document.getElementById(id);
   if (node) node.innerHTML = items.length ? items.map(template).join('') : `<div class="empty">${empty}</div>`;
 };
 const active = item => !TERMINAL.test(text(item.status, '')) && !state.dismissed.has(item.id);
-export const workerMarkup = w => {
-  const busy = /^(working|busy|claimed|running|active|stopping)$/i.test(text(w.status, '')) || Boolean(w.active_job_id);
-  const removeLabel = busy ? 'Remove (busy)' : 'Remove';
-  return `<div class="entity"><div class="entity-head"><span class="entity-name">${esc(w.id)}</span>${pill(w.status)}</div><div class="subtle">${esc(w.provider || 'Provider unknown')} · ${esc(w.model || 'model unknown')} · ${esc(w.role || 'role unknown')}</div><div class="stats"><span>job <b>${esc(w.job_id || 'none')}</b> · effective <b>${number(w.effective_tokens)}</b> · cached <b>${number(w.cached_input_tokens)}</b></span><span>commands <b>${number(w.command_count)}</b> · duration <b>${duration(w.duration)}</b> · heartbeat <b>${esc(w.heartbeat_age == null ? '—' : `${w.heartbeat_age}s ago`)}</b></span></div><div class="actions"><button data-worker="${esc(w.id)}" data-action="start">Start</button><button data-worker="${esc(w.id)}" data-action="stop">Stop</button><button class="danger-button" data-worker="${esc(w.id)}" data-action="remove"${busy ? ' disabled title="Busy worker: stop it before removing it"' : ''}>${removeLabel}</button></div></div>`;
-};
-export const jobActionsMarkup = job => {
-  const actions = {
-    awaiting_review: [['Reject', 'reject'], ['Reintegrate', 'reintegrate']],
-    needs_human: [['Reject', 'reject'], ['Extend (+1)', 'extend'], ['Reintegrate', 'reintegrate']],
-    blocked_failed_dependency: [['Reopen', 'reopen']]
-  }[text(job.status, '')] || [];
-  return actions
-    .map(
-      ([label, operation]) =>
-        `<button data-op="${esc(operation)}" data-job="${esc(job.id)}" data-status="${esc(job.status)}">${esc(label)}</button>`
-    )
-    .join('');
-};
-export const approvalMarkup = j =>
-  `<div class="item approval-item"><div class="item-head"><button class="item-title detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
-
-const detailValue = value => `<span>${esc(value)}</span>`;
-const detailRows = (job, fields) =>
-  fields
-    .map(([label, field]) => `<div class="detail-row"><b>${esc(label)}</b>${detailValue(job[field])}</div>`)
-    .join('');
-const detailSection = (title, content) =>
-  `<section class="detail-block"><h3>${esc(title)}</h3>${content}</section>`;
-export const jobDetailMarkup = job => {
-  const lineage = asObject(job.lineage) || {},
-    reviewHistory = Array.isArray(lineage.review_findings_history) ? lineage.review_findings_history : [],
-    sourceCommits = Array.isArray(lineage.source_candidate_commits) ? lineage.source_candidate_commits : [],
-    related = Array.isArray(job.related) ? job.related : [],
-    historyMarkup = reviewHistory.length
-      ? `<ol>${reviewHistory.map(item => `<li>${detailRows(item, [['Review job', 'review_job_id'], ['Candidate', 'candidate'], ['Findings', 'findings']])}</li>`).join('')}</ol>`
-      : detailValue(null),
-    sourceMarkup = sourceCommits.length
-      ? `<ol>${sourceCommits.map(commit => `<li>${detailValue(commit)}</li>`).join('')}</ol>`
-      : detailValue(null),
-    gate = asObject(job.gate),
-    gateMarkup = gate
-      ? detailRows(gate, [['Return code', 'returncode'], ['Summary', 'summary']])
-      : '<p>No gate result</p>',
-    relatedMarkup = related.length
-      ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
-      : detailValue(null);
-  return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div>${detailSection('Summary', detailRows(job, [['ID', 'id'], ['Title', 'title'], ['Status', 'status'], ['Role', 'role'], ['Worker', 'worker'], ['Provider', 'provider'], ['Model', 'model'], ['Review status', 'review_status'], ['Review verdict', 'review_verdict'], ['Integration status', 'integration_status'], ['Duration', 'duration'], ['Effective tokens', 'effective_tokens'], ['Cached input tokens', 'cached_input_tokens'], ['Output tokens', 'output_tokens'], ['Command count', 'command_count'], ['Files', 'files'], ['Tests', 'tests'], ['Error', 'error']]))}${detailSection('Candidate', detailRows(job, [['Goal ID', 'goal_id'], ['Branch', 'branch'], ['Base', 'base'], ['Candidate', 'candidate'], ['Integration base commit', 'integration_base_commit'], ['Integrated candidate commit', 'integrated_candidate_commit'], ['Reviewed commit', 'reviewed_commit'], ['Integration worktree', 'integration_worktree'], ['Integration branch', 'integration_branch']]))}${detailSection('Attempts', detailRows({ ...job, ...lineage }, [['Build attempt', 'build_attempt'], ['Max build attempts', 'max_build_attempts'], ['Review recoveries', 'review_recoveries'], ['Retry reason', 'retry_reason'], ['Repair status', 'repair_status'], ['Repair attempts', 'repair_attempts'], ['Max repair attempts', 'max_repair_attempts'], ['Needs human kind', 'needs_human_kind'], ['Repair job ID', 'repair_job_id'], ['Last repair job ID', 'last_repair_job_id'], ['Last integrate job ID', 'last_integrate_job_id'], ['Needs human reason', 'needs_human_reason']]))}${detailSection('Review', detailRows(job, [['Review job ID', 'review_job_id'], ['Review findings', 'review_findings']]) + `<h4>Source candidate commits</h4>${sourceMarkup}<h4>Review history</h4>${historyMarkup}`)}${detailSection('Gate', gateMarkup)}${detailSection('Related jobs', relatedMarkup)}`;
-};
 export function render() {
   const get = k => state[k].data,
     status = asObject(get('status')) || {},
@@ -329,12 +170,7 @@ export function render() {
   document.getElementById('poll-state').textContent = errors.length
     ? `${errors.length} endpoint${errors.length === 1 ? '' : 's'} degraded`
     : 'All endpoints healthy';
-}
-export async function handoffText(goalId, fetchImpl = fetch) {
-  const response = await fetchImpl(`/api/goals/${encodeURIComponent(goalId)}/handoff-data`);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const bundle = await response.json();
-  return JSON.stringify(bundle, null, 2);
+  renderPanels(state);
 }
 async function loadHistoryPage(offset = state.historyOffset) {
   try {
@@ -403,7 +239,7 @@ async function runJobAction(button) {
     operation = button.dataset.op,
     jobId = button.dataset.job,
     candidate = button.dataset.candidate;
-  if (operation === 'approve' && (!window.confirm(`Approve candidate ${candidate} for job ${jobId}?`))) return;
+  if (operation === 'approve' && !window.confirm(`Approve candidate ${candidate} for job ${jobId}?`)) return;
   button.disabled = true;
   const request_id = crypto.randomUUID(),
     body = {
@@ -415,7 +251,8 @@ async function runJobAction(button) {
     };
   try {
     await jobAction(jobId, body);
-    let result = await operatorRequest(request_id), attempts = 0;
+    let result = await operatorRequest(request_id),
+      attempts = 0;
     while (/^(pending|running)$/i.test(text(result.status, '')) && attempts < 30) {
       await wait(POLL_MS);
       result = await operatorRequest(request_id);
@@ -432,8 +269,6 @@ async function runJobAction(button) {
     button.disabled = false;
   }
 }
-export const tokenStateText = auth =>
-  !auth?.token_required ? 'Writes open (no token set on server)' : auth.token_valid ? 'Actions enabled' : 'Token needed for actions';
 async function refreshTokenState() {
   const node = document.getElementById('token-state');
   if (!node) return;
@@ -464,6 +299,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button) return;
+    dispatchClick(button, event);
     if (button.dataset.detailClose) {
       document.getElementById('job-detail').hidden = true;
       return;
@@ -522,7 +358,10 @@ if (typeof document !== 'undefined') {
     if (button.dataset.download)
       uiAction(() => downloadHandoff(button.dataset.download), document.getElementById('banner'));
     if (button.dataset.history) {
-      const offset = Math.max(0, state.historyOffset + (button.dataset.history === 'older' ? HISTORY_PAGE_SIZE : -HISTORY_PAGE_SIZE));
+      const offset = Math.max(
+        0,
+        state.historyOffset + (button.dataset.history === 'older' ? HISTORY_PAGE_SIZE : -HISTORY_PAGE_SIZE)
+      );
       loadHistoryPage(offset);
     }
   });
