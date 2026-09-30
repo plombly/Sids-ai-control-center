@@ -605,7 +605,69 @@ def get_job_detail(job_id: str):
         result[field] = _text(data.get(field))
     for field in ("repair_attempts", "max_repair_attempts"):
         result[field] = _number(data.get(field))
+    result["lineage"] = _job_lineage(data)
+    result["gate"] = _job_gate(data)
+    result["related"] = _related_jobs(_text(data.get("id"), _key_suffix(key)))
     return _redact(result)
+
+
+def _json_value(value, expected):
+    """Parse a JSON field written by workers; None if absent or malformed."""
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, expected) else None
+
+
+def _job_lineage(data):
+    """How a job got to its current state: attempts, sources, prior findings."""
+    lineage = {field: _number(data.get(field)) for field in (
+        "build_attempt", "max_build_attempts", "review_recoveries")}
+    lineage.update({field: _text(data.get(field)) for field in (
+        "retry_reason", "needs_human_kind", "repair_job_id",
+        "last_repair_job_id", "last_integrate_job_id")})
+    # Order matters: sources are cherry-picked in this order.
+    lineage["source_candidate_commits"] = [
+        str(item).strip()
+        for item in _json_value(data.get("source_candidate_commits"), list) or []
+        if isinstance(item, str) and item.strip()
+    ]
+    lineage["review_findings_history"] = [
+        {field: _text(item.get(field)) for field in ("review_job_id", "candidate", "findings")}
+        for item in _json_value(data.get("review_findings_history"), list) or []
+        if isinstance(item, dict)
+    ]
+    return lineage
+
+
+def _job_gate(data):
+    gate = _json_value(data.get("integration_result"), dict)
+    if gate is None:
+        return None
+    return {
+        "returncode": _number(gate.get("returncode")),
+        "summary": str(gate.get("stdout") or "")[-3000:],
+    }
+
+
+def _related_jobs(job_id):
+    """Reviewer, repair and integrate jobs that acted on this job."""
+    related = []
+    for key in _keys("sid:jobs:*"):
+        data = _hash(key)
+        if job_id not in (data.get("builder_job_id"), data.get("target_builder_id")):
+            continue
+        related.append({
+            "id": _text(data.get("id"), _key_suffix(key)),
+            "role": _text(data.get("job_role", data.get("role"))),
+            "status": _text(data.get("status"), "unknown"),
+            "review_verdict": _text(data.get("review_verdict")),
+            "duration": _duration(data),
+            "effective_tokens": _effective_tokens(data),
+            "created_at": _timestamp(data.get("created_at")),
+        })
+    return sorted(related, key=lambda job: (job["created_at"], job["id"]))
 
 
 @app.get("/api/action-required")

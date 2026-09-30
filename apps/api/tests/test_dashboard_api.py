@@ -299,3 +299,61 @@ def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch)
     assert response.status_code == 202
     assert response.json()["id"] == "existing"
     assert response.json()["atomic"] is True
+
+
+def test_job_detail_lineage_gate_and_related_jobs(client, monkeypatch):
+    fake = dashboard_redis(monkeypatch)
+    fake.hashes["sid:jobs:j1"].update({
+        "build_attempt": "2", "max_build_attempts": "3", "review_recoveries": "1",
+        "retry_reason": "SID test gate failed", "needs_human_kind": "build",
+        "last_integrate_job_id": "int-1",
+        # order is cherry-pick order and must be kept
+        "source_candidate_commits": '["zz-first", "aa-second"]',
+        "review_findings_history": '[{"review_job_id":"rv0","candidate":"c0","findings":"fix it"}, 3, "x"]',
+        "integration_result": '{"returncode": 1, "stdout": "' + "x" * 3500 + 'END"}',
+    })
+    fake.hashes["sid:jobs:repair-late"] = {"id": "repair-late", "role": "repair",
+                                           "target_builder_id": "j1", "status": "repair_complete",
+                                           "created_at": "50"}
+    fake.hashes["sid:jobs:int-1"] = {"id": "int-1", "role": "integrate", "target_builder_id": "j1",
+                                     "status": "integrate_complete", "created_at": "40"}
+    fake.hashes["sid:jobs:other"] = {"id": "other", "role": "reviewer", "builder_job_id": "j9",
+                                     "created_at": "45"}
+
+    detail = client.get("/api/jobs/j1").json()
+
+    lineage = detail["lineage"]
+    assert lineage["build_attempt"] == 2 and lineage["max_build_attempts"] == 3
+    assert lineage["review_recoveries"] == 1
+    assert lineage["retry_reason"] == "SID test gate failed"
+    assert lineage["needs_human_kind"] == "build"
+    assert lineage["last_integrate_job_id"] == "int-1"
+    assert lineage["repair_job_id"] is None
+    assert lineage["source_candidate_commits"] == ["zz-first", "aa-second"]
+    assert lineage["review_findings_history"] == [
+        {"review_job_id": "rv0", "candidate": "c0", "findings": "fix it"}]
+    assert detail["gate"]["returncode"] == 1
+    assert len(detail["gate"]["summary"]) == 3000
+    assert detail["gate"]["summary"].endswith("END")
+    # review-j1 (fixture reviewer, no created_at) sorts first; "other" is unrelated.
+    assert [(j["id"], j["role"]) for j in detail["related"]] == [
+        ("review-j1", "reviewer"), ("int-1", "integrate"), ("repair-late", "repair")]
+    assert detail["related"][2]["created_at"] == 50
+    assert detail["review_status"] == "complete", "existing fields unchanged"
+
+
+def test_job_detail_lineage_tolerates_missing_and_malformed_fields(client, monkeypatch):
+    fake = dashboard_redis(monkeypatch)
+    fake.hashes["sid:jobs:j1"].update({
+        "source_candidate_commits": "not json",
+        "review_findings_history": '{"not": "a list"}',
+        "integration_result": "[1, 2]",
+    })
+    detail = client.get("/api/jobs/j1").json()
+    assert detail["lineage"]["source_candidate_commits"] == []
+    assert detail["lineage"]["review_findings_history"] == []
+    assert detail["lineage"]["build_attempt"] is None
+    assert detail["gate"] is None
+    fake.hashes["sid:jobs:j1"].pop("integration_result")
+    assert client.get("/api/jobs/j1").json()["gate"] is None
+    assert client.get("/api/jobs/nojob").status_code == 404
