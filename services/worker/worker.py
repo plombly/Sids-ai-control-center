@@ -183,7 +183,16 @@ def gate_env():
     env = os.environ.copy()
     venv_bin = str(Path(SID_PYTHON).parent)
     env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    # Keep gates from writing caches into the worktree in the first place.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " -p no:cacheprovider").strip()
     return env
+
+
+def untracked_files(worktree):
+    """Untracked, non-ignored files in a worktree (paths relative to it)."""
+    out = run_git("ls-files", "--others", "--exclude-standard", "-z", cwd=worktree, check=False).stdout
+    return {path for path in out.split("\0") if path}
 
 
 def project_gate(worktree, timeout=900):
@@ -191,11 +200,21 @@ def project_gate(worktree, timeout=900):
     command = PROJECT.gate_command if PROJECT else ""
     if not command:
         return True, f"no gate command configured for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
+    # A gate must leave the worktree as it found it: files it creates (caches,
+    # build output) would otherwise be committed into the candidate or make
+    # the integrated worktree look modified. Only files that were not there
+    # before the gate are removed, by exact path; the builder's own new files
+    # and every tracked file are never touched.
+    before = untracked_files(worktree)
     try:
         result = subprocess.run(["/bin/sh", "-c", command], cwd=worktree, text=True,
                                 capture_output=True, timeout=timeout, env=gate_env())
     except subprocess.TimeoutExpired:
         return False, f"$ {command}\ntimed out after {timeout}s\n"
+    finally:
+        created = sorted(untracked_files(worktree) - before)
+        if created:
+            run_git("clean", "-f", "-q", "--", *created, cwd=worktree, check=False)
     return result.returncode == 0, f"$ {command}\n{result.stdout}{result.stderr}"
 
 

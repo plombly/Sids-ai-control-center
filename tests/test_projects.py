@@ -262,3 +262,32 @@ def test_project_gates_find_the_venvs_python_tooling(worker, tmp_path, monkeypat
     ok, output = worker.run_tests(tmp_path)
     assert ok and "pytest-ok" in output
     assert worker.gate_env()["PATH"].startswith("/opt/sid-venv/bin" + __import__("os").pathsep)
+
+
+def test_gate_leaves_the_worktree_exactly_as_it_found_it(worker, tmp_path, monkeypatch):
+    import subprocess as sp
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    g = lambda *a: sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=wt,
+                          check=True, capture_output=True, text=True).stdout
+    g("init", "-q", "-b", "main")
+    (wt / "tracked.py").write_text("x = 1\n")
+    g("add", "."); g("commit", "-qm", "base")
+    (wt / "tracked.py").write_text("x = 2\n")          # builder's edit to a tracked file
+    (wt / "new_module.py").write_text("y = 1\n")        # builder's new source file
+    gate = ("mkdir -p __pycache__ build && touch __pycache__/m.pyc build/out.bin gate.log "
+            "&& rm new_module.py.bak 2>/dev/null; echo gate-done")
+    register(worker.redis, "py", tmp_path, gate_command=gate)
+    worker.use_project(worker.sid_projects.load(worker.redis, "py"))
+    ok, output = worker.run_tests(wt)
+    assert ok and "gate-done" in output
+    status = sorted(g("status", "--porcelain").splitlines())
+    assert status == [" M tracked.py", "?? new_module.py"], status
+    assert (wt / "new_module.py").read_text() == "y = 1\n"
+
+
+def test_gate_environment_disables_python_caches(worker, monkeypatch):
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-q")
+    env = worker.gate_env()
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["PYTEST_ADDOPTS"] == "-q -p no:cacheprovider"
