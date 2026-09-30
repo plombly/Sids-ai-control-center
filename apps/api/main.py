@@ -15,7 +15,7 @@ from redis import Redis
 import os
 
 from database import init_database
-from schemas import GoalAccepted, GoalSubmit, WorkerAction
+from schemas import GoalAccepted, GoalSubmit, PromptSubmit, WorkerAction
 
 app = FastAPI(
     title="SID's AI Command Center",
@@ -226,6 +226,7 @@ def _orchestrator(key, data):
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
         "status": status,
+        "provider": _text(data.get("provider")),
         "model": _text(data.get("model")),
         "active_goal": active_goal,
         "last_seen": _number(data.get("last_seen")),
@@ -380,8 +381,13 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _BUSY_WORKER_STATUSES = {"working", "busy", "claimed", "running", "active", "stopping"}
 _REDACT_KEY = re.compile(r"(password|passwd|secret|token|credential|api.?key|private.?key|authorization|cookie)", re.I)
 _REDACT_VALUE = re.compile(
-    r"(?i)(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|Bearer\s+[A-Za-z0-9._-]{8,}|"
-    r"(?:password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+|"
+    r"(?is)(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|"
+    r"AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{8,}|"
+    r"Bearer\s+[A-Za-z0-9._~+/=-]{8,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|"
+    r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*"
+    r"(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|authorization|cookie)"
+    r"(?:[_-][A-Za-z0-9]+)*"
+    r"\s*[:=]\s*(?:[^\s,;]+|\"[^\"]*\"|'[^']*')|"
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)"
 )
 
@@ -470,8 +476,12 @@ def submit_atomic_goal(payload: GoalSubmit):
 
 
 @app.post("/api/prompts", response_model=GoalAccepted, status_code=202)
-def submit_prompt(payload: GoalSubmit):
-    return _submit_goal(payload)
+def submit_prompt(payload: PromptSubmit):
+    return _submit_goal(GoalSubmit(
+        goal=payload.prompt,
+        atomic=payload.atomic,
+        request_id=payload.request_id,
+    ))
 
 
 @app.get("/api/goals/{goal_id}")

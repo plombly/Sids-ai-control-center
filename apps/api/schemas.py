@@ -39,6 +39,12 @@ class GoalSubmit(BaseModel):
     request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
+class PromptSubmit(BaseModel):
+    prompt: str = Field(min_length=1, max_length=100_000)
+    atomic: bool = False
+    request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+
 class GoalAccepted(BaseModel):
     id: str
     status: str
