@@ -147,6 +147,23 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
     assert client.get("/api/goals?limit=0").json() == []
 
 
+def test_dashboard_pagination_supports_offset_and_rejects_negative_offset(client, monkeypatch):
+    fake = dashboard_redis(monkeypatch)
+    for index in range(5):
+        fake.hashes[f"sid:jobs:page-{index}"] = {
+            "status": "queued", "updated_at": str(100 + index),
+        }
+        fake.hashes[f"sid:goals:page-{index}"] = {
+            "goal": f"goal {index}", "updated_at": str(100 + index),
+        }
+
+    for path in ("/api/jobs", "/api/jobs/recent", "/api/goals", "/api/goals/recent"):
+        assert client.get(f"{path}?limit=2&offset=0").json() == client.get(f"{path}?limit=2").json()
+        assert [item["id"] for item in client.get(f"{path}?limit=2&offset=2").json()] == ["page-2", "page-1"]
+        assert client.get(f"{path}?limit=2&offset=100").json() == []
+        assert client.get(f"{path}?offset=-1").status_code == 422
+
+
 
 def test_approval_requires_exact_integrated_review_metadata(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)

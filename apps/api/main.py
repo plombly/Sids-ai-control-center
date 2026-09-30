@@ -124,6 +124,10 @@ def _limit(value):
     return max(0, min(int(value), API_MAX_LIMIT))
 
 
+def _page(items, offset, limit):
+    return items[offset:offset + _limit(limit)]
+
+
 def _job(key, data):
     data = data if isinstance(data, dict) else {}
     return {
@@ -356,23 +360,35 @@ def api_heartbeat():
 
 
 @app.get("/api/goals")
-def api_goals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    return _all_goals()[:_limit(limit)]
+def api_goals(
+    limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return _page(_all_goals(), offset, limit)
 
 
 @app.get("/api/goals/recent")
-def api_recent_goals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    return api_goals(limit)
+def api_recent_goals(
+    limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return api_goals(limit, offset)
 
 
 @app.get("/api/jobs")
-def api_jobs(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    return _all_jobs()[:_limit(limit)]
+def api_jobs(
+    limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return _page(_all_jobs(), offset, limit)
 
 
 @app.get("/api/jobs/recent")
-def api_recent_jobs(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    return api_jobs(limit)
+def api_recent_jobs(
+    limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+):
+    return api_jobs(limit, offset)
 
 
 def _approval_ready(job):
