@@ -23,6 +23,7 @@ import datetime
 import gzip
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,9 @@ import tarfile
 from pathlib import Path
 
 REPO_ROOT = Path(os.getenv("REPO_ROOT", "/opt/sids-ai-command-center"))
-BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/sid-ai"))
+# A directory of its own: /var/backups/sid-ai also holds hand-made backups.
+BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/sid-ai/snapshots"))
+SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 KEEP = int(os.getenv("BACKUP_KEEP", "14"))
 REDIS_CONTAINER = os.getenv("REDIS_CONTAINER", "sid-ai-redis")
 POSTGRES_CONTAINER = os.getenv("POSTGRES_CONTAINER", "sid-ai-postgres")
@@ -106,7 +109,11 @@ def backup_config(dest):
 
 
 def rotate(root, keep):
-    snapshots = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink())
+    """Delete this tool's oldest snapshots beyond `keep`. Only directories
+    named exactly like its own snapshots are ever considered: anything else
+    in the directory (hand-made backups, other tools) is never touched."""
+    snapshots = sorted(p for p in root.iterdir()
+                       if p.is_dir() and not p.is_symlink() and SNAPSHOT_NAME.fullmatch(p.name))
     removed = []
     for old in snapshots[:-keep] if keep > 0 else []:
         shutil.rmtree(old)

@@ -78,3 +78,25 @@ def test_remote_copy_failure_fails_the_run(bk, monkeypatch):
 def test_secrets_are_copied_not_read():
     source = (ROOT / "scripts/backup-sid.py").read_text()
     assert "read_text" not in source.split("def backup_config")[1].split("def rotate")[0]
+
+
+def test_rotation_never_touches_directories_it_did_not_create(bk, tmp_path):
+    # Regression: the first install sorted hand-made backups in with the
+    # snapshots and deleted 12 of them ("2026..." sorts before letters).
+    root = tmp_path / "shared"
+    root.mkdir()
+    foreign = ["diagnostic-fix-20260929-180820", "efficiency-v1-20260929-125253", "upgrade-20260929-112037",
+               "20260101", "20260101T000000Z-manual", "notes"]
+    for name in foreign:
+        (root / name).mkdir()
+    (root / "link").symlink_to(root / "notes")
+    for stamp in ("20260101T000000Z", "20260102T000000Z", "20260103T000000Z"):
+        (root / stamp).mkdir()
+    assert bk.rotate(root, 1) == ["20260101T000000Z", "20260102T000000Z"]
+    remaining = sorted(p.name for p in root.iterdir())
+    assert remaining == sorted(foreign + ["link", "20260103T000000Z"])
+
+
+def test_default_location_is_a_dedicated_directory(bk):
+    module = load_module(ROOT / "scripts/backup-sid.py")
+    assert str(module.BACKUP_ROOT).endswith("/sid-ai/snapshots")
