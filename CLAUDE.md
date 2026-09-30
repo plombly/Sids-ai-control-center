@@ -39,6 +39,9 @@ Runtime (all live, all as root):
 | Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `docker exec sid-ai-redis redis-cli ...` |
 | Postgres | Docker `sid-ai-postgres` (only used by projects/tasks/agents API) |
 | Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
+| Claude CLI | `claude` 2.1.285, claude.ai subscription login (shares plan limits with interactive sessions) |
+| Role routing | `services/agent_cli.py`: planner=claude/opus, builder=codex, reviewer=claude/sonnet, repair=claude/sonnet; `ROLE_PROVIDERS`, `CLAUDE_<ROLE>_MODEL`, `CLAUDE_<ROLE>_BUDGET_USD`. Claude limit/auth errors fall back to Codex and set `sid:provider-cooldown:claude` (30 min) |
+| Write access | `SID_OPERATOR_TOKEN` in `/etc/sid-ai/operator.env` (root 600, never print it); API needs `X-SID-Token` on every non-GET; dashboard has a token field. Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
 
 Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
 — never hash-command it), `sid:jobs:<id>` (hash), queues `sid:goals` / `sid:jobs`
@@ -203,7 +206,6 @@ job `17b11696` was hand-salvaged. What exists vs missing:
 - Working: goal submit (normal/atomic, request_id idempotency), approval-ready
   read model, worker idle/busy, Copy for ChatGPT, handoff zip, Stop/Start.
 - Broken or incomplete:
-  - Dismiss is in-memory only.
   - List endpoints default to 8 items, so history silently truncates.
   - Repository panel is always "unknown" (API container has no git).
 - Missing: Web approve/reject/extend/reintegrate/reopen buttons (the backend
