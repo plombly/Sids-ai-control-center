@@ -1,5 +1,5 @@
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class ProjectCreate(BaseModel):
@@ -40,7 +40,13 @@ class GoalSubmit(BaseModel):
 
 
 class PromptSubmit(BaseModel):
-    prompt: str = Field(min_length=1, max_length=100_000)
+    # ``goal`` was the original request key; accept it as an input alias while
+    # exposing the newer ``prompt`` name to the handler and response schema.
+    prompt: str = Field(
+        min_length=1,
+        max_length=100_000,
+        validation_alias=AliasChoices("prompt", "goal"),
+    )
     atomic: bool = False
     request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
