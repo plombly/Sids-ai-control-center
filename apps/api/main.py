@@ -1,15 +1,21 @@
 import json
+import io
 import math
 import os
+import re
 import subprocess
 import time
+import uuid
+import zipfile
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, text
 from redis import Redis
 import os
 
 from database import init_database
+from schemas import GoalAccepted, GoalSubmit, WorkerAction
 
 app = FastAPI(
     title="SID's AI Command Center",
@@ -370,6 +376,208 @@ def api_failures(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
     return [job for job in _all_jobs() if job["status"] in FAILURE_STATUSES][:_limit(limit)]
 
 
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_BUSY_WORKER_STATUSES = {"working", "busy", "claimed", "running", "active", "stopping"}
+_REDACT_KEY = re.compile(r"(password|passwd|secret|token|credential|api.?key|private.?key|authorization|cookie)", re.I)
+_REDACT_VALUE = re.compile(
+    r"(?i)(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|Bearer\s+[A-Za-z0-9._-]{8,}|"
+    r"(?:password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+|"
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----)"
+)
+
+
+def _valid_identifier(value, label="identifier"):
+    value = _text(value)
+    if not value or not _IDENTIFIER.fullmatch(value):
+        raise HTTPException(status_code=422, detail=f"Invalid {label}")
+    return value
+
+
+def _goal_record(goal_id):
+    key = f"sid:goals:{_valid_identifier(goal_id, 'goal id')}"
+    data = _hash(key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return key, data
+
+
+def _job_record(job_id):
+    key = f"sid:jobs:{_valid_identifier(job_id, 'job id')}"
+    data = _hash(key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return key, data
+
+
+def _submit_goal(payload):
+    goal = " ".join(payload.goal.split())
+    if not goal:
+        raise HTTPException(status_code=422, detail="Goal cannot be blank")
+    request_id = _text(payload.request_id)
+    if request_id:
+        _valid_identifier(request_id, "request id")
+        marker = f"sid:goal-requests:{request_id}"
+        try:
+            if not redis.set(marker, "reserved", nx=True, ex=86400):
+                existing = redis.get(marker)
+                if existing and existing != "reserved":
+                    return {"id": existing, "status": "accepted", "atomic": payload.atomic, "duplicate": True}
+                raise HTTPException(status_code=409, detail="A goal with this request id is already being submitted")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    # A small duplicate guard for clients that omit request_id.
+    for key in _keys("sid:goals:*"):
+        old = _hash(key)
+        if old.get("goal") == goal and old.get("status") in {"queued", "planning", "running"}:
+            return {"id": _text(old.get("id"), _key_suffix(key)), "status": old.get("status"), "atomic": old.get("atomic") == "true", "duplicate": True}
+
+    goal_id = uuid.uuid4().hex[:12]
+    record = {
+        "id": goal_id, "goal": goal, "prompt": goal,
+        "status": "queued", "atomic": str(bool(payload.atomic)).lower(),
+        "created_at": str(time.time()), "updated_at": str(time.time()),
+    }
+    redis.hset(f"sid:goals:{goal_id}", mapping=record)
+    try:
+        redis.rpush(os.getenv("GOAL_QUEUE", "sid:goals"), json.dumps({"id": goal_id, "goal": goal, "atomic": payload.atomic}))
+    except Exception:
+        redis.hset(f"sid:goals:{goal_id}", mapping={"status": "queue_failed", "updated_at": str(time.time())})
+        raise HTTPException(status_code=503, detail="Goal queue is unavailable")
+    if request_id:
+        try:
+            redis.set(f"sid:goal-requests:{request_id}", goal_id, ex=86400)
+        except Exception:
+            pass
+    return {"id": goal_id, "status": "accepted", "atomic": bool(payload.atomic)}
+
+
+@app.post("/api/goals", response_model=GoalAccepted, status_code=202)
+def submit_goal(payload: GoalSubmit):
+    return _submit_goal(payload)
+
+
+@app.post("/api/goals/submit", response_model=GoalAccepted, status_code=202)
+def submit_goal_compat(payload: GoalSubmit):
+    return _submit_goal(payload)
+
+
+@app.post("/api/goals/submit-atomic", response_model=GoalAccepted, status_code=202)
+def submit_atomic_goal(payload: GoalSubmit):
+    return _submit_goal(payload.model_copy(update={"atomic": True}))
+
+
+@app.post("/api/prompts", response_model=GoalAccepted, status_code=202)
+def submit_prompt(payload: GoalSubmit):
+    return _submit_goal(payload)
+
+
+@app.get("/api/goals/{goal_id}")
+def get_goal_detail(goal_id: str):
+    key, data = _goal_record(goal_id)
+    result = _goal(key, data)
+    result["atomic"] = str(data.get("atomic", "false")).lower() in {"1", "true", "yes"}
+    result["jobs"] = [_job(f"sid:jobs:{job_id}", _hash(f"sid:jobs:{job_id}")) for job_id in result["child_job_ids"] if _hash(f"sid:jobs:{job_id}")]
+    return result
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_detail(job_id: str):
+    key, data = _job_record(job_id)
+    return _job(key, data)
+
+
+@app.get("/api/action-required")
+@app.get("/api/actions-required")
+def api_action_required(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
+    jobs = _all_jobs()
+    items = [job for job in jobs if (
+        job["status"] in FAILURE_STATUSES or
+        job["status"] == "awaiting_review" or
+        job["review_status"] in {"changes_required", "failed"}
+    )]
+    return items[:_limit(limit)]
+
+
+@app.get("/api/agents/activity")
+@app.get("/api/agent-activity")
+def api_agent_activity(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
+    return [job for job in _all_jobs() if job["worker"] or job["role"]][: _limit(limit)]
+
+
+def _worker_record(worker_id):
+    worker_id = _valid_identifier(worker_id, "worker id")
+    key = f"sid:workers:{worker_id}"
+    data = _hash(key)
+    if not data:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    return key, data
+
+
+@app.post("/api/workers/{worker_id}/stop")
+def stop_worker(worker_id: str, action: WorkerAction | None = None):
+    key, data = _worker_record(worker_id)
+    jobs = _all_jobs()
+    active = [job for job in jobs if job["worker"] == worker_id and job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
+    if active:
+        raise HTTPException(status_code=409, detail="Worker is busy; it cannot be stopped")
+    redis.hset(key, mapping={"status": "stopped", "stop_reason": _text(action.reason if action else None, "requested"), "updated_at": str(time.time())})
+    return _worker(key, {**data, "status": "stopped"}, jobs)
+
+
+@app.delete("/api/workers/{worker_id}")
+def remove_worker(worker_id: str):
+    key, data = _worker_record(worker_id)
+    jobs = _all_jobs()
+    active = [job for job in jobs if job["worker"] == worker_id and job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
+    if active or _text(data.get("status")).lower() in _BUSY_WORKER_STATUSES:
+        raise HTTPException(status_code=409, detail="Busy worker cannot be removed")
+    redis.delete(key)
+    return {"id": worker_id, "removed": True}
+
+
+@app.post("/api/workers/{worker_id}/start")
+def start_worker(worker_id: str):
+    key, data = _worker_record(worker_id)
+    if _text(data.get("status")).lower() in _BUSY_WORKER_STATUSES:
+        raise HTTPException(status_code=409, detail="Worker is already active")
+    redis.hset(key, mapping={"status": "ready", "updated_at": str(time.time())})
+    return _worker(key, {**data, "status": "ready"}, _all_jobs())
+
+
+def _redact(value, key=""):
+    if _REDACT_KEY.search(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): _redact(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(item, key) for item in value]
+    if isinstance(value, str):
+        return _REDACT_VALUE.sub("[REDACTED]", value)
+    return value
+
+
+@app.get("/api/goals/{goal_id}/handoff")
+@app.get("/api/goals/{goal_id}/handoff-bundle")
+@app.get("/api/handoff/{goal_id}")
+def download_handoff(goal_id: str):
+    detail = get_goal_detail(goal_id)
+    bundle = {
+        "bundle_type": "PRE-MERGE REVIEW",
+        "goal": detail,
+        "repository": _repository(),
+        "generated_at": time.time(),
+    }
+    content = json.dumps(_redact(bundle), indent=2, sort_keys=True).encode()
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
+        output.writestr("PRE-MERGE REVIEW.json", content)
+    archive.seek(0)
+    return StreamingResponse(archive, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="handoff-{_valid_identifier(goal_id, "goal id")}.zip"'})
+
+
 @app.on_event("startup")
 def startup():
     init_database()
@@ -389,6 +597,7 @@ from schemas import (
     ProjectResponse,
     TaskCreate,
     TaskResponse,
+    WorkerAction,
 )
 
 
