@@ -40,7 +40,7 @@ from pathlib import Path
 
 from redis import Redis
 from redis.exceptions import ResponseError
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # services/
 import sid_redis  # noqa: E402  (services/sid_redis.py)
 
 

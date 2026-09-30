@@ -32,3 +32,21 @@ def test_every_host_program_sends_the_password():
     # redis-cli runs inside the container with its own env, never with the password in argv.
     backup = (ROOT / "scripts/backup-sid.py").read_text()
     assert '"redis-cli", "--rdb"' not in backup and "REDISCLI_AUTH" in backup
+
+
+def test_every_entry_point_can_import_sid_redis_on_its_own():
+    """Run each program's own imports in a fresh interpreter (tests put
+    services/ on sys.path already, which once hid a wrong path)."""
+    import subprocess
+    programs = ["services/worker/worker.py", "services/orchestrator/orchestrator.py",
+                "services/operator/sid_operator.py", "services/apps/sid_apps.py", "scripts/job-review.py",
+                "scripts/sid-project.py", "scripts/sid-watchdog.py", "scripts/prune-sid-data.py",
+                "scripts/submit-goal.py", "scripts/submit-job.py", "scripts/submit-review.py",
+                "scripts/goal-status.py", "scripts/local-diagnostic.py", "apps/tui/sid-tui.py"]
+    for name in programs:
+        source = (ROOT / name).read_text()
+        line = next(l for l in source.splitlines() if l.startswith("sys.path.insert(0, str(Path(__file__)"))
+        code = ("import sys\nfrom pathlib import Path\n__file__ = %r\n%s\nimport sid_redis\n"
+                % (str(ROOT / name), line.split("  #")[0]))
+        result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+        assert result.returncode == 0, (name, result.stderr[-300:])
