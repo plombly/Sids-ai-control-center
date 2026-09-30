@@ -1,5 +1,7 @@
 """Behavior of services/operator/sid_operator.py, the Web action executor."""
 
+import json
+
 import pytest
 
 from sid_testing import BASE, INTEGRATED, JOB, ROOT, load_module, make_builder
@@ -398,5 +400,73 @@ def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
     source = (ROOT / "services/operator/sid_operator.py").read_text()
     assert 'ROOT / "scripts/job-review.py"' in source
     assert 'job_review.approve(job_id, expected_candidate=request["expected_candidate"])' in source
-    for forbidden in ("subprocess", '"git"', '"merge"', "hdel(", "rpush("):
+    for forbidden in ('"git"', '"merge"', "hdel(", "rpush("):
         assert forbidden not in source, forbidden
+    # Its only subprocess is the project CLI (host-side project management).
+    calls = [line.strip() for line in source.splitlines() if "runner(" in line or "subprocess.run" in line]
+    assert calls == ["def execute_project(request, runner=subprocess.run):",
+                     'result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],'], calls
+
+
+# --- project actions (host-side project management) ----------------------------------
+
+@pytest.mark.parametrize("fields,reason", [
+    ({"action": "create_project", "project_id": "Bad_Id", "name": "x", "source": "empty"}, "invalid project id"),
+    ({"action": "create_project", "project_id": "web", "name": "", "source": "empty"}, "1-80"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "zip"}, "empty or clone"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "clone", "url": "/etc"}, "git@"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "clone", "url": "file:///etc"}, "git@"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "empty", "importance": "urgent"}, "importance"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "empty", "gate": "a\nb"}, "one line"),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "source": "empty", "push_remote": "/tmp/x"}, "push remote"),
+    ({"action": "project_push_setup", "project_id": "web", "url": "../../x"}, "git@"),
+])
+def test_project_requests_are_validated(op, fields, reason):
+    with pytest.raises(op.Invalid, match=reason):
+        op.validate(fields, f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_project_actions_can_be_disabled(op):
+    op.ALLOWED_ACTIONS = frozenset({"reject"})
+    with pytest.raises(op.Invalid, match="disabled"):
+        op.validate({"action": "create_project", "project_id": "web", "name": "W", "source": "empty"},
+                    f"{int(NOW * 1000)}-0", NOW)
+
+
+@pytest.mark.parametrize("request_fields,args", [
+    ({"action": "create_project", "project_id": "web", "name": "Web Shop", "importance": "high",
+      "source": "empty", "url": "", "gate": "", "push_remote": ""},
+     ["create", "--id", "web", "--name", "Web Shop", "--importance", "high", "--empty"]),
+    ({"action": "create_project", "project_id": "web", "name": "Web", "importance": "low", "source": "clone",
+      "url": "git@github.com:me/web.git", "gate": "npm test", "push_remote": "git@github.com:me/web.git"},
+     ["create", "--id", "web", "--name", "Web", "--importance", "low", "--clone", "git@github.com:me/web.git",
+      "--gate", "npm test", "--push-remote", "git@github.com:me/web.git"]),
+    ({"action": "project_retry_clone", "project_id": "web"}, ["retry-clone", "web"]),
+    ({"action": "project_push_setup", "project_id": "web", "url": "git@github.com:me/web.git"},
+     ["push-setup", "web", "git@github.com:me/web.git"]),
+])
+def test_project_cli_arguments(op, request_fields, args):
+    assert op.project_cli_args(request_fields) == args
+
+
+def test_project_request_runs_the_cli_and_reports_the_deploy_key(op):
+    from types import SimpleNamespace
+    seen = []
+    runner = lambda cmd, **kw: seen.append(cmd) or SimpleNamespace(
+        returncode=0, stdout=json.dumps({"id": "web", "status": "pending_key", "public_key": "ssh-ed25519 AAA"}), stderr="")
+    status, message, output = op.execute_project({"action": "project_retry_clone", "project_id": "web"}, runner)
+    assert status == "succeeded" and "deploy key created" in message and "ssh-ed25519" in output
+    assert seen[0][1].endswith("scripts/sid-project.py") and seen[0][2:] == ["retry-clone", "web"]
+    fail = lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="ERROR: project id already registered\n")
+    assert op.execute_project({"action": "project_retry_clone", "project_id": "web"}, fail)[:2] == (
+        "refused", "project id already registered")
+
+
+def test_project_request_end_to_end_through_the_stream(op, monkeypatch):
+    monkeypatch.setattr(op, "execute_project", lambda request: ("succeeded", f"made {request['project_id']}", "{}"))
+    op.redis.xadd(STREAM, {"request_id": "req-project1", "action": "create_project", "project_id": "web",
+                           "name": "Web", "importance": "high", "source": "empty"})
+    deliver(op)
+    done = result(op, "req-project1")
+    assert done["status"] == "succeeded" and done["message"] == "made web"
+    assert done["project_id"] == "web" and done["action"] == "create_project"

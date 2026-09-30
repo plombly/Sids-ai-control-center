@@ -27,9 +27,11 @@ job-review.py is loaded once at startup: restart this service after changing it.
 """
 
 import importlib.util
+import json
 import io
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -53,7 +55,11 @@ HEARTBEAT_TTL = 30
 READ_BLOCK_MS = 5000
 OUTPUT_LIMIT = 8000
 
-ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen")
+ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
+           "create_project", "project_retry_clone", "project_push_setup")
+# Project-level actions run scripts/sid-project.py on the host (directories,
+# git clone, deploy keys); they carry project fields instead of a job.
+PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup")
 # Actions that carry the exact integrated candidate the human confirmed.
 CANDIDATE_ACTIONS = ("approve", "queue_approve")
 DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
@@ -61,7 +67,13 @@ FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
+    "project_id", "name", "importance", "source", "url", "gate",
 )
+PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+# Web-requested clones and push remotes: network git URLs only (never a host
+# path, which would copy an arbitrary local directory into a project).
+GIT_URL = re.compile(r"(git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+|ssh://[^\s]+|https://[^\s]+)")
+PROJECT_CLI = ROOT / "scripts/sid-project.py"
 
 JOB_ID = re.compile(r"[A-Za-z0-9]{1,64}")
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{7,63}")
@@ -155,9 +167,86 @@ def entry_age(entry_id, now):
         raise Invalid("unreadable stream entry id")
 
 
+def validate_project_request(action, fields):
+    project_id = fields.get("project_id", "")
+    if not PROJECT_ID.fullmatch(project_id):
+        raise Invalid("invalid project id")
+    request = {"action": action, "project_id": project_id, "job_id": ""}
+    url = fields.get("url", "")
+    if action == "create_project":
+        name = fields.get("name", "").strip()
+        if not name or len(name) > 80 or not name.isprintable():
+            raise Invalid("project name must be 1-80 printable characters")
+        importance = fields.get("importance", "medium")
+        if importance not in ("high", "medium", "low"):
+            raise Invalid("importance must be high, medium or low")
+        source = fields.get("source", "")
+        if source not in ("empty", "clone"):
+            raise Invalid("source must be empty or clone")
+        if source == "clone" and not GIT_URL.fullmatch(url):
+            raise Invalid("clone needs a git@..., ssh:// or https:// URL")
+        push_remote = fields.get("push_remote", "")
+        if push_remote and not GIT_URL.fullmatch(push_remote):
+            raise Invalid("push remote must be a git@..., ssh:// or https:// URL")
+        gate = fields.get("gate", "")
+        if len(gate) > 200 or "\n" in gate or "\r" in gate:
+            raise Invalid("gate command must be one line of at most 200 characters")
+        request.update(name=name, importance=importance, source=source, url=url,
+                       push_remote=push_remote, gate=gate)
+    elif action == "project_push_setup":
+        if not GIT_URL.fullmatch(url):
+            raise Invalid("push setup needs a git@..., ssh:// or https:// URL")
+        request["url"] = url
+    return request
+
+
+def project_cli_args(request):
+    action, project_id = request["action"], request["project_id"]
+    if action == "create_project":
+        args = ["create", "--id", project_id, "--name", request["name"],
+                "--importance", request["importance"]]
+        args += ["--empty"] if request["source"] == "empty" else ["--clone", request["url"]]
+        if request.get("gate"):
+            args += ["--gate", request["gate"]]
+        if request.get("push_remote"):
+            args += ["--push-remote", request["push_remote"]]
+        return args
+    if action == "project_retry_clone":
+        return ["retry-clone", project_id]
+    return ["push-setup", project_id, request["url"]]
+
+
+def execute_project(request, runner=subprocess.run):
+    """Run sid-project.py on the host. Returns (status, message, output)."""
+    try:
+        result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],
+                        text=True, capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return "error", "project command timed out after 300s", ""
+    if result.returncode != 0:
+        reason = (result.stderr.strip().splitlines() or ["project command failed"])[-1]
+        return "refused", reason.removeprefix("ERROR: "), result.stderr[-OUTPUT_LIMIT:]
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        data = {}
+    summary = f"{request['action']} {request['project_id']}: {data.get('status', 'done')}"
+    if data.get("public_key"):
+        summary += " (deploy key created: add it to the GitHub repository with write access)"
+    return "succeeded", summary, result.stdout[-OUTPUT_LIMIT:]
+
+
 def validate(fields, entry_id, now):
     """Re-check everything the API checked; never trust the stream."""
     action = fields.get("action", "")
+    if action in PROJECT_ACTIONS:
+        if action not in ALLOWED_ACTIONS:
+            raise Invalid(f"action {action!r} is disabled on this host (OPERATOR_ALLOWED_ACTIONS)")
+        age = entry_age(entry_id, now)
+        if age > REQUEST_TTL:
+            raise Invalid(f"request expired: made {int(age)}s ago, limit {REQUEST_TTL}s",
+                          status="expired")
+        return validate_project_request(action, fields)
     job_id = fields.get("job_id", "")
     expected_status = fields.get("expected_status", "")
     candidate = fields.get("expected_candidate", "")
@@ -224,6 +313,8 @@ def call_action(request):
 
 def execute(request):
     """Run one validated request. Returns (status, message, output)."""
+    if request["action"] in PROJECT_ACTIONS:
+        return execute_project(request)
     job_status = redis.hget(f"sid:jobs:{request['job_id']}", "status")
     if job_status is None:
         return "refused", f"job not found: {request['job_id']}", ""
