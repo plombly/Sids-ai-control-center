@@ -80,6 +80,12 @@ class MemoryRedis:
         self.values.setdefault(key, []).append(value)
         return len(self.values[key])
 
+    def lrem(self, key, count, value):
+        items = self.values.get(key, [])
+        kept = [item for item in items if item != value]
+        self.values[key] = kept
+        return len(items) - len(kept)
+
     def lrange(self, key, start, end):
         items = self.values.get(key, [])
         return list(items[start:] if end == -1 else items[start:end + 1])

@@ -53,8 +53,10 @@ HEARTBEAT_TTL = 30
 READ_BLOCK_MS = 5000
 OUTPUT_LIMIT = 8000
 
-ACTIONS = ("approve", "reject", "extend", "reintegrate", "reopen")
-DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen"
+ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen")
+# Actions that carry the exact integrated candidate the human confirmed.
+CANDIDATE_ACTIONS = ("approve", "queue_approve")
+DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
 FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
@@ -172,13 +174,13 @@ def validate(fields, entry_id, now):
         raise Invalid("invalid job id")
     if not STATUS.fullmatch(expected_status):
         raise Invalid("expected_status is required")
-    if action == "approve":
+    if action in CANDIDATE_ACTIONS:
         if not FULL_SHA.fullmatch(candidate):
             raise Invalid(
                 "approve requires the full 40-character candidate SHA the human confirmed"
             )
     elif candidate:
-        raise Invalid(f"expected_candidate is only accepted for approve, not {action}")
+        raise Invalid(f"expected_candidate is only accepted for approve/queue_approve, not {action}")
     if action == "extend":
         if not (extra.isdigit() and 1 <= int(extra) <= 5):
             raise Invalid("extend requires extra between 1 and 5")
@@ -206,6 +208,10 @@ def call_action(request):
     action, job_id = request["action"], request["job_id"]
     if action == "approve":
         job_review.approve(job_id, expected_candidate=request["expected_candidate"])
+    elif action == "queue_approve":
+        job_review.queue_approval(job_id, request["expected_candidate"])
+    elif action == "dequeue_approve":
+        job_review.dequeue_approval(job_id)
     elif action == "reject":
         job_review.reject(job_id)
     elif action == "extend":
@@ -288,6 +294,24 @@ def process(entry_id, fields, now=None):
     redis.xack(REQUEST_STREAM, CONSUMER_GROUP, entry_id)
 
 
+def run_merge_queue():
+    """Merge the next fresh queued approval (job-review.py merge queue)."""
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            merged = job_review.process_merge_queue()
+    except SystemExit as exc:  # Refused from git plumbing, not from a merge
+        log(f"merge queue: {getattr(exc, 'message', exc)}")
+        return None
+    except Exception as exc:
+        log(f"merge queue error: {type(exc).__name__}: {exc}")
+        return None
+    for line in (out.getvalue() + err.getvalue()).splitlines():
+        if line.strip():
+            log(f"merge queue: {line}")
+    return merged
+
+
 def ensure_group():
     try:
         redis.xgroup_create(REQUEST_STREAM, CONSUMER_GROUP, id="0", mkstream=True)
@@ -337,6 +361,7 @@ def main():
                 for entry_id, fields in messages:
                     heartbeat("working")
                     process(entry_id, fields)
+            run_merge_queue()
         except KeyboardInterrupt:
             break
         except Exception as exc:

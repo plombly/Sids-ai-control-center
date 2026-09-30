@@ -182,7 +182,7 @@ def test_disabled_action_is_refused(op, calls):
 
 def test_default_allowlist_excludes_approve(op):
     assert op.parse_allowed_actions(op.DEFAULT_ALLOWED_ACTIONS) == frozenset(
-        {"reject", "extend", "reintegrate", "reopen"})
+        {"reject", "extend", "reintegrate", "reopen", "dequeue_approve"})
 
 
 def test_unknown_allowlist_entry_stops_startup(op):

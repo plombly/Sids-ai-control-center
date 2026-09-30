@@ -66,7 +66,7 @@ class OperatorFakeRedis:
         return f"{len(self.stream)}-0"
 
 
-def heartbeat(allowed="approve,reject,extend,reintegrate,reopen"):
+def heartbeat(allowed="approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen"):
     return {"id": "sid-operator-01", "status": "idle", "allowed_actions": allowed,
             "request_ttl": "600", "last_seen": "1"}
 
@@ -292,3 +292,41 @@ def test_web_approval_is_refused_without_a_configured_token(client, fake, monkey
     assert fake.stream == []
     # Other actions keep working without a token (unchanged behavior).
     assert post(client, headers={}, action="reject", expected_candidate=None).status_code == 202
+
+
+# --- merge queue -------------------------------------------------------------------
+
+def test_queue_approve_needs_candidate_and_token(client, fake, monkeypatch):
+    assert post(client, action="queue_approve", expected_candidate=None).status_code == 422
+    assert post(client, action="queue_approve").status_code == 202
+    assert fake.stream[-1][1]["action"] == "queue_approve"
+    monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
+    response = post(client, headers={}, request_id="req-00000009", action="queue_approve")
+    assert response.status_code == 403 and "SID_OPERATOR_TOKEN" in response.json()["detail"]
+
+
+def test_dequeue_needs_no_candidate(client, fake):
+    assert post(client, action="dequeue_approve", expected_candidate=None).status_code == 202
+    assert post(client, request_id="req-00000002", action="dequeue_approve").status_code == 422
+
+
+def test_merge_queue_read_model(client, fake, monkeypatch):
+    class Lists(OperatorFakeRedis):
+        def lrange(self, key, start, end):
+            return ["b1", "gone"] if key == "sid:merge-queue" else []
+
+        def get(self, key):
+            return "h" * 40 if key == "sid:main-head" else None
+
+    queue = Lists(fake.hashes)
+    fake.hashes["sid:jobs:b1"].update({
+        "title": "Add x", "merge_queue_state": "waiting", "merge_queue_reason": "stale: waiting",
+        "approval_intent_candidate": "a" * 40, "integration_base_commit": "h" * 40,
+        "approval_intent_at": "12"})
+    monkeypatch.setattr(main, "redis", queue)
+    body = client.get("/api/merge-queue").json()
+    assert body["main_head"] == "h" * 40
+    first, second = body["items"]
+    assert (first["position"], first["id"], first["state"], first["fresh"]) == (1, "b1", "waiting", True)
+    assert first["approved_candidate"] == "a" * 40 and first["candidate"] == CANDIDATE
+    assert (second["id"], second["status"], second["state"]) == ("gone", "unknown", "queued")

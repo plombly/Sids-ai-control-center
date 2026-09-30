@@ -98,6 +98,14 @@ Operator actions: `sid:operator-requests` (STREAM, consumer group `sid-operator`
 10. Bounded repair behavior and dependency handling.
 11. Human approval stays mandatory. No auto-approve, no verdict override.
 12. Host-side `scripts/job-review.py` is authoritative for final Git validation and merge.
+13. Merge queue (amendment, 2026-09-30): a queued approval (`queue_approve` /
+    `job-review.py queue JOB --candidate SHA`) binds to the exact ordered
+    SOURCE commits the human approved (the candidate they saw must match at
+    queue time). When main moves, the orchestrator re-integrates those same
+    sources on the new main; the queue merges only through unchanged
+    `approve()` after the gate AND a fresh independent review pass on the new
+    integrated candidate. Changed sources (repair/rebuild) or a failing fresh
+    review void the approval. `approve --candidate` stays exact-SHA.
 
 `workflow-self-test.py` and `efficiency-self-test.py` assert several of these
 by inspecting source text. If you legitimately change such code, update

@@ -783,6 +783,33 @@ def start_worker(worker_id: str):
 
 
 
+@app.get("/api/merge-queue")
+def api_merge_queue():
+    """Queued approvals in merge order, with the state the operator service
+    last recorded (it has the repository; the API does not)."""
+    try:
+        ids = redis.lrange("sid:merge-queue", 0, -1)
+        main_head = redis.get("sid:main-head") or ""
+    except Exception:
+        ids, main_head = [], ""
+    items = []
+    for position, job_id in enumerate(ids, start=1):
+        data = _hash(f"sid:jobs:{job_id}")
+        items.append({
+            "position": position,
+            "id": _text(job_id),
+            "title": _text(data.get("title")),
+            "status": _text(data.get("status"), "unknown"),
+            "state": _text(data.get("merge_queue_state"), "queued"),
+            "reason": _text(data.get("merge_queue_reason"), ""),
+            "approved_candidate": _text(data.get("approval_intent_candidate")),
+            "candidate": _text(data.get("integrated_candidate_commit")),
+            "fresh": bool(main_head) and data.get("integration_base_commit") == main_head,
+            "approved_at": _timestamp(data.get("approval_intent_at")),
+        })
+    return {"main_head": main_head or None, "items": items}
+
+
 # Operator actions. The API has no repository authority (no git, no
 # shell): it records a request and the host-side operator service
 # (services/operator/sid_operator.py) validates and executes it with
@@ -862,7 +889,7 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
         raise HTTPException(status_code=403, detail=f"Action {payload.action} is disabled on the host (OPERATOR_ALLOWED_ACTIONS)")
     # Advancing main from the Web is never accepted from an open API, even
     # if the host enabled it.
-    if payload.action == "approve" and not OPERATOR_TOKEN:
+    if payload.action in ("approve", "queue_approve") and not OPERATOR_TOKEN:
         raise HTTPException(status_code=403, detail="Web approval requires SID_OPERATOR_TOKEN on the API")
 
     # Early feedback only; the operator service re-checks at execution time.

@@ -282,6 +282,131 @@ def cleanup_after_merge(job_id, data, worktree, branch):
             )
 
 
+# --- merge queue ---------------------------------------------------------------
+#
+# Several candidates can be ready at once, but each merge moves main and makes
+# the others stale (approve() refuses stale main). A queued approval binds to
+# the exact ordered SOURCE commits the human approved, not to one integrated
+# SHA: when main moves, the orchestrator re-integrates those same sources onto
+# the new main, and the queue merges only after the deterministic gate AND a
+# fresh independent review pass on that new integrated candidate, through the
+# unchanged approve() with all its checks. If the sources change (repair,
+# rebuild) or the fresh review requires changes, the approval is void and a
+# human must approve again. `approve --candidate` remains exact.
+
+MERGE_QUEUE = "sid:merge-queue"
+MAIN_HEAD_KEY = "sid:main-head"
+
+
+def _sources(value):
+    try:
+        parsed = json.loads(value or "[]")
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def queue_approval(job_id, expected_candidate):
+    """Approve the change the human saw, to merge as soon as it is fresh."""
+    key = f"sid:jobs:{job_id}"
+    data = job_record(job_id)
+    if data.get("status") != "awaiting_review":
+        fail(f"job status is {data.get('status')!r}; expected 'awaiting_review'")
+    if not (data.get("review_status") == "complete" and data.get("review_verdict") == "pass"):
+        fail(f"Job {job_id} cannot be approved: independent review has not passed")
+    if data.get("integration_status") != "passed":
+        fail(f"Job {job_id} cannot be approved: integration did not pass")
+    integrated = data.get("integrated_candidate_commit")
+    if not integrated or expected_candidate != integrated:
+        fail(
+            f"confirmed candidate {expected_candidate} is not the integrated "
+            f"candidate {integrated}; review the current candidate and confirm again"
+        )
+    if data.get("reviewed_commit") != integrated:
+        fail("review did not target the exact integrated candidate")
+    sources = _sources(data.get("source_candidate_commits"))
+    if not sources:
+        fail("job has no source candidate commits to approve")
+    r.hset(key, mapping={
+        "approval_intent_candidate": integrated,
+        "approval_intent_sources": json.dumps(sources, separators=(",", ":")),
+        "approval_intent_at": str(time.time()),
+        "merge_queue_state": "queued",
+        "merge_queue_reason": "",
+        "updated_at": str(time.time()),
+    })
+    if job_id not in r.lrange(MERGE_QUEUE, 0, -1):
+        r.rpush(MERGE_QUEUE, job_id)
+    print(f"QUEUED FOR MERGE: {job_id} ({len(sources)} source commit(s)); "
+          "merges once fresh on main with a passing gate and review")
+
+
+def dequeue_approval(job_id, reason="removed by operator"):
+    key = f"sid:jobs:{job_id}"
+    removed = r.lrem(MERGE_QUEUE, 0, job_id)
+    if r.hgetall(key):
+        r.hdel(key, "approval_intent_candidate", "approval_intent_sources", "approval_intent_at")
+        r.hset(key, mapping={"merge_queue_state": "removed", "merge_queue_reason": reason,
+                             "updated_at": str(time.time())})
+    print(f"DEQUEUED: {job_id} ({reason})" if removed else f"NOT QUEUED: {job_id}")
+
+
+def merge_readiness(data, main_head):
+    """('ready' | 'wait' | 'invalid', reason) for a queued job."""
+    status = data.get("status")
+    if status != "awaiting_review":
+        return "invalid", f"job is {status!r}, not awaiting review"
+    intent = _sources(data.get("approval_intent_sources"))
+    if not intent or intent != _sources(data.get("source_candidate_commits")):
+        return "invalid", "the change differs from what was approved (repaired or rebuilt); approve again"
+    if data.get("review_status") == "complete" and data.get("review_verdict") == "changes_required":
+        return "invalid", "the fresh review requires changes; approve again after repair"
+    if not (data.get("integration_status") == "passed" and data.get("review_status") == "complete"
+            and data.get("review_verdict") == "pass"
+            and data.get("reviewed_commit") == data.get("integrated_candidate_commit")):
+        return "wait", "re-integration or review in progress"
+    if data.get("integration_base_commit") != main_head:
+        return "wait", "stale: waiting for re-integration onto current main"
+    return "ready", ""
+
+
+def process_merge_queue():
+    """Merge the first ready queued job (at most one per call: each merge
+    moves main and makes the rest stale). Returns the merged job id or None."""
+    ids = r.lrange(MERGE_QUEUE, 0, -1)
+    main_head = git("rev-parse", "HEAD").stdout.strip()
+    r.set(MAIN_HEAD_KEY, main_head)
+    for job_id in ids:
+        key = f"sid:jobs:{job_id}"
+        data = r.hgetall(key)
+        state, reason = merge_readiness(data, main_head)
+        if state == "invalid":
+            if data:
+                dequeue_approval(job_id, reason)
+                r.hset(key, "merge_queue_state", "invalid")
+            else:
+                r.lrem(MERGE_QUEUE, 0, job_id)
+            continue
+        if state == "wait":
+            if (data.get("merge_queue_state"), data.get("merge_queue_reason")) != ("waiting", reason):
+                r.hset(key, mapping={"merge_queue_state": "waiting", "merge_queue_reason": reason})
+            continue
+        try:
+            approve(job_id, expected_candidate=data["integrated_candidate_commit"])
+        except Refused as exc:
+            if "another approval" in exc.message or "stale main" in exc.message:
+                r.hset(key, mapping={"merge_queue_state": "waiting", "merge_queue_reason": exc.message})
+                continue  # transient; next pass
+            dequeue_approval(job_id, f"approval refused: {exc.message}")
+            r.hset(key, "merge_queue_state", "invalid")
+            continue
+        r.lrem(MERGE_QUEUE, 0, job_id)
+        r.hset(key, mapping={"merge_queue_state": "merged", "merge_queue_reason": "",
+                             "merged_via": "merge-queue"})
+        return job_id
+    return None
+
+
 REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted", "integration_failed"}
 
 
@@ -324,6 +449,7 @@ def reject(job_id):
     if git("show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
         git("branch", "-D", branch)
 
+    r.lrem(MERGE_QUEUE, 0, job_id)
     r.hset(
         key,
         mapping={
@@ -500,7 +626,9 @@ USAGE = """Usage:
   job-review.py reject JOB_ID
   job-review.py extend JOB_ID [EXTRA_ATTEMPTS]   grant more repairs (default 1)
   job-review.py reintegrate JOB_ID               fresh integration on current main + fresh review
-  job-review.py reopen JOB_ID                    un-block a job whose failed dependency recovered"""
+  job-review.py reopen JOB_ID                    un-block a job whose failed dependency recovered
+  job-review.py queue JOB_ID --candidate SHA     approve the change; merge when fresh (merge queue)
+  job-review.py dequeue JOB_ID                   withdraw a queued approval"""
 
 
 def is_full_sha(value):
@@ -508,14 +636,14 @@ def is_full_sha(value):
 
 
 def main():
-    actions = {"approve", "reject", "extend", "reintegrate", "reopen"}
+    actions = {"approve", "reject", "extend", "reintegrate", "reopen", "queue", "dequeue"}
     argv = sys.argv[1:]
     action = argv[0] if argv else None
     rest = argv[2:]
     if len(argv) < 2 or action not in actions or not (
         not rest
         or (action == "extend" and len(rest) == 1)
-        or (action == "approve" and len(rest) == 2 and rest[0] == "--candidate")
+        or (action in ("approve", "queue") and len(rest) == 2 and rest[0] == "--candidate")
     ):
         print(USAGE, file=sys.stderr)
         raise SystemExit(2)
@@ -530,6 +658,14 @@ def main():
         if candidate is not None and not is_full_sha(candidate):
             fail("--candidate must be the full 40-character lowercase commit SHA")
         approve(job_id, expected_candidate=candidate)
+    elif action == "queue":
+        if not rest:
+            fail("queue requires --candidate SHA (the integrated candidate you reviewed)")
+        if not is_full_sha(rest[1]):
+            fail("--candidate must be the full 40-character lowercase commit SHA")
+        queue_approval(job_id, rest[1])
+    elif action == "dequeue":
+        dequeue_approval(job_id)
     elif action == "reject":
         reject(job_id)
     elif action == "extend":

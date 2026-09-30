@@ -74,7 +74,7 @@ class OperatorActionRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "reject", "extend", "reintegrate", "reopen"]
+    action: Literal["approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen"]
     request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
     # The job status the human saw; the action is refused if it changed.
     expected_status: str = Field(pattern=r"^[a-z_]{1,64}$")
@@ -84,8 +84,8 @@ class OperatorActionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _fields_match_action(self):
-        if (self.action == "approve") != (self.expected_candidate is not None):
-            raise ValueError("expected_candidate is required for approve and only for approve")
+        if (self.action in ("approve", "queue_approve")) != (self.expected_candidate is not None):
+            raise ValueError("expected_candidate is required for approve/queue_approve and only for them")
         if (self.action == "extend") != (self.extra is not None):
             raise ValueError("extra is required for extend and only for extend")
         return self

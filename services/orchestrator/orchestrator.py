@@ -1075,6 +1075,70 @@ def retry_failed_builds():
         print(f"[{ORCHESTRATOR_ID}] retry job={job_id} attempt={next_attempt}", flush=True)
 
 
+def queue_reintegration(key, builder, fields):
+    """Fresh isolated integration of the builder's same source commits on
+    current main, followed automatically by a fresh independent review (the
+    job-review.py reintegrate operation). Returns the integrate job id."""
+    builder_id = builder.get("id") or key.rsplit(":", 1)[-1]
+    release_stale_integration_lock(builder_id)
+    integrate_id = uuid.uuid4().hex[:8]
+    created = now()
+    r.hdel(key, *DERIVED_REVIEW_FIELDS)
+    r.hset(key, mapping={"last_integrate_job_id": integrate_id, "updated_at": created, **fields})
+    r.hset(f"sid:jobs:{integrate_id}", mapping={
+        "id": integrate_id, "status": "queued", "role": "integrate",
+        "target_builder_id": builder_id, "goal_id": builder.get("goal_id", ""),
+        "created_at": created, "updated_at": created,
+    })
+    r.rpush(JOB_QUEUE, json.dumps({
+        "id": integrate_id, "role": "integrate",
+        "target_builder_id": builder_id, "created_at": created,
+    }))
+    return integrate_id
+
+
+MERGE_QUEUE = "sid:merge-queue"
+
+
+def main_head():
+    result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+                            text=True, capture_output=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def refresh_queued_candidates(head=None):
+    """Re-integrate queued approvals whose candidate went stale because main
+    moved. Once per main commit per job; only queued jobs, so candidates no
+    one approved do not burn reviews on every merge."""
+    ids = r.lrange(MERGE_QUEUE, 0, -1)
+    if not ids:
+        return
+    head = head or main_head()
+    work = live_work()
+    if not head or work is None:
+        return
+    busy = work[0] | work[1]
+    for builder_id in ids:
+        key = f"sid:jobs:{builder_id}"
+        builder = r.hgetall(key)
+        if not (builder.get("status") == "awaiting_review"
+                and builder.get("integration_status") == "passed"
+                and builder.get("review_status") == "complete"
+                and builder.get("review_verdict") == "pass"
+                and builder.get("integration_base_commit") not in ("", None, head)
+                and builder.get("stale_reintegrated_for") != head):
+            continue
+        related = {builder_id, builder.get("review_job_id"), builder.get("repair_job_id"),
+                   builder.get("last_integrate_job_id")} - {None, ""}
+        if related & busy:
+            continue
+        if not r.hsetnx(key, f"stale_reintegration_{head[:12]}", now()):
+            continue
+        integrate_id = queue_reintegration(key, builder, {"stale_reintegrated_for": head})
+        print(f"[{ORCHESTRATOR_ID}] queued approval {builder_id} is stale; "
+              f"re-integrating on {head[:12]} via {integrate_id}", flush=True)
+
+
 def recover_stalled_reviews(now_ts=None):
     """Re-integrate and re-review a candidate whose review cannot finish:
     the reviewer failed, or the worker running its integration, review
@@ -1117,25 +1181,10 @@ def recover_stalled_reviews(now_ts=None):
             continue
         if not r.hsetnx(key, f"review_recovery_{recoveries + 1}_at", now()):
             continue
-        release_stale_integration_lock(builder_id)
-        integrate_id = uuid.uuid4().hex[:8]
-        created = now()
-        r.hdel(key, *DERIVED_REVIEW_FIELDS)
-        r.hset(key, mapping={
-            "last_integrate_job_id": integrate_id,
+        integrate_id = queue_reintegration(key, builder, {
             "review_recoveries": str(recoveries + 1),
             "review_recovery_reason": reason[-2000:],
-            "updated_at": created,
         })
-        r.hset(f"sid:jobs:{integrate_id}", mapping={
-            "id": integrate_id, "status": "queued", "role": "integrate",
-            "target_builder_id": builder_id, "goal_id": builder.get("goal_id", ""),
-            "created_at": created, "updated_at": created,
-        })
-        r.rpush(JOB_QUEUE, json.dumps({
-            "id": integrate_id, "role": "integrate",
-            "target_builder_id": builder_id, "created_at": created,
-        }))
         print(f"[{ORCHESTRATOR_ID}] review recovery builder={builder_id} "
               f"integrate={integrate_id} ({recoveries + 1}/{MAX_REVIEW_RECOVERIES})", flush=True)
     for suspect in [s for s in _lost_suspects if s.startswith("stall:") and s not in seen]:
@@ -1323,6 +1372,7 @@ def main():
                 recover_lost_jobs()
                 retry_failed_builds()
                 recover_stalled_reviews()
+                refresh_queued_candidates()
                 queue_repairs()
                 release_dependencies()
                 update_goals()
