@@ -124,12 +124,27 @@ Non-terminal hand-off: `needs_human` (repairs exhausted; dependents wait).
 Other roles: reviewer (`review_complete`), repair (`repair_complete`),
 integrate (`integrate_complete` / `integration_failed`).
 
+Self-healing (orchestrator loop; approval is never automatic):
+- Workers publish the job they hold (`job_id` in `sid:workers:<id>`). A job in
+  an in-flight status that no live worker holds and the queue lacks, for
+  `LOST_JOB_CONFIRM_SECONDS` (60), is failed "worker lost". Skipped while any
+  live worker is too old to report `job_id`.
+- A failed/test_failed/integration_failed builder with `build_attempt` is
+  rebuilt from current main with the failure in its prompt, up to
+  `MAX_BUILD_ATTEMPTS` (2), then `needs_human` (`needs_human_kind=build`).
+  While a retry is pending the failure is not terminal (no cascade).
+  Records without `build_attempt` (pre-self-healing) are never retried.
+- An `awaiting_review` builder whose review is not complete and has nothing
+  in flight is reintegrated + re-reviewed, up to `MAX_REVIEW_RECOVERIES` (2),
+  then `needs_human` (`needs_human_kind=review`).
+- A failed repair resets the builder worktree to the committed candidate.
+
 Operator commands (host):
 
 ```
 python3 scripts/job-review.py approve JOB [--candidate SHA]   # refuses unless SHA is the integrated candidate
 python3 scripts/job-review.py reject JOB        # awaiting_review, needs_human, repair_exhausted, integration_failed
-python3 scripts/job-review.py extend JOB [N]    # grant N more repairs to a needs_human job
+python3 scripts/job-review.py extend JOB [N]    # needs_human: N more repairs, or N more rebuilds if kind=build
 python3 scripts/job-review.py reintegrate JOB   # fresh integration on current main + fresh review (stale recovery)
 python3 scripts/job-review.py reopen JOB        # un-block blocked_failed_dependency once deps recovered
 python3 scripts/submit-goal.py [--atomic] "GOAL"
