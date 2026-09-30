@@ -161,5 +161,43 @@ def test_health_route(client, monkeypatch):
     engine = MagicMock()
     monkeypatch.setattr(main, 'engine', engine)
     monkeypatch.setattr(main.redis, 'ping', lambda: True)
+    monkeypatch.setattr(main, '_pipeline_health', lambda: None)  # never touch a live Redis
     assert client.get('/health').json() == {
-        'status': 'healthy', 'services': {'postgres': 'healthy', 'redis': 'healthy'}}
+        'status': 'healthy', 'services': {'postgres': 'healthy', 'redis': 'healthy'}, 'pipeline': None}
+
+
+class _HeartbeatRedis:
+    def __init__(self, keys, statuses=None, fail=False):
+        self.keys, self.statuses, self.fail = keys, statuses or {}, fail
+
+    def scan_iter(self, pattern):
+        if self.fail:
+            raise ConnectionError('down')
+        prefix = pattern[:-1]
+        return iter([k for k in self.keys if k.startswith(prefix)])
+
+    def hget(self, key, field):
+        return self.statuses.get(key)
+
+
+def test_health_reports_pipeline_heartbeats_without_changing_status(client, monkeypatch):
+    from unittest.mock import MagicMock
+    import main
+    monkeypatch.setattr(main, 'engine', MagicMock())
+    fake = _HeartbeatRedis(['sid:orchestrators:o1', 'sid:operator-service:op', 'sid:workers:w1', 'sid:workers:w2'],
+                           {'sid:workers:w1': 'working', 'sid:workers:w2': 'idle'})
+    fake.ping = lambda: True
+    monkeypatch.setattr(main, 'redis', fake)
+    body = client.get('/health').json()
+    assert body['pipeline'] == {'orchestrators': 1, 'operator_service': True, 'workers': 2, 'workers_busy': 1}
+    assert body['status'] == 'healthy'
+    empty = _HeartbeatRedis([])
+    empty.ping = lambda: True
+    monkeypatch.setattr(main, 'redis', empty)
+    body = client.get('/health').json()
+    assert body['pipeline'] == {'orchestrators': 0, 'operator_service': False, 'workers': 0, 'workers_busy': 0}
+    assert body['status'] == 'healthy', 'pipeline state never changes status'
+    down = _HeartbeatRedis([], fail=True)
+    down.ping = lambda: True
+    monkeypatch.setattr(main, 'redis', down)
+    assert client.get('/health').json()['pipeline'] is None

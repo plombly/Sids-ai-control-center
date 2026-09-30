@@ -335,8 +335,24 @@ def health():
 
     return {
         "status": "healthy" if healthy else "degraded",
-        "services": services
+        "services": services,
+        # Informational: does not affect "status" (pipeline heartbeats expire
+        # after 30s, so a key's existence means the process is live).
+        "pipeline": _pipeline_health(),
     }
+
+
+def _pipeline_health():
+    try:
+        workers = list(redis.scan_iter("sid:workers:*"))
+        return {
+            "orchestrators": sum(1 for _ in redis.scan_iter("sid:orchestrators:*")),
+            "operator_service": any(True for _ in redis.scan_iter("sid:operator-service:*")),
+            "workers": len(workers),
+            "workers_busy": sum(1 for key in workers if redis.hget(key, "status") == "working"),
+        }
+    except Exception:
+        return None
 
 
 # Read-only dashboard data. These routes only read Redis hashes/lists and never
