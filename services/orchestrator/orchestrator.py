@@ -3,12 +3,16 @@
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import redis
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import agent_cli  # noqa: E402  (services/agent_cli.py)
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -21,6 +25,7 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.6-luna")
 ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "sid-orchestrator-01")
 PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "180"))
+PLANNER_LOG_ROOT = Path(os.getenv("PLANNER_LOG_ROOT", "/var/log/sid-ai/planner"))
 MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
@@ -142,6 +147,22 @@ Return ONLY valid JSON using this exact shape:
 
 
 def run_planner(goal, atomic=False):
+    """Plan a goal with the provider configured for the planner role; Claude
+    falls back to Codex when it cannot serve the call."""
+    if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
+        log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
+        run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic),
+                                   REPO_ROOT, log_path, PLAN_TIMEOUT)
+        if run.ok:
+            return extract_json(run.text)
+        if not run.unavailable:
+            raise RuntimeError(f"claude planner failed: {run.describe_error()}")
+        agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
+        print(f"[{ORCHESTRATOR_ID}] claude planner unavailable; falling back to codex", flush=True)
+    return run_codex_planner(goal, atomic)
+
+
+def run_codex_planner(goal, atomic=False):
     cmd = [
         "codex",
         "exec",
@@ -481,26 +502,7 @@ def review_findings(review):
     if not path.exists():
         return "Reviewer requested changes; review log is unavailable."
 
-    messages = []
-
-    try:
-        for line in path.read_text(errors="replace").splitlines():
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if event.get("type") != "item.completed":
-                continue
-
-            item = event.get("item") or {}
-
-            if item.get("type") == "agent_message":
-                text = str(item.get("text", "")).strip()
-                if text:
-                    messages.append(text)
-    except OSError as exc:
-        return f"Reviewer requested changes; log read failed: {exc}"
+    messages = agent_cli.agent_messages(path)
 
     if not messages:
         return "Reviewer requested changes but emitted no findings."

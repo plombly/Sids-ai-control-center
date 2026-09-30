@@ -4,6 +4,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -11,6 +12,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from redis import Redis
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import agent_cli  # noqa: E402  (services/agent_cli.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = os.environ.get("WORKER_QUEUE", "sid:jobs")
@@ -304,6 +308,10 @@ def create_worktree(job_id):
 
 
 def parse_codex_log(log_path):
+    """(session_id, usage) from a job log: Codex JSONL or a Claude result."""
+    claude_result = agent_cli.read_claude_result(log_path)
+    if claude_result is not None:
+        return str(claude_result.get("session_id") or ""), agent_cli.claude_usage(claude_result)
     session_id = ""
     usage = {
         "input_tokens": "",
@@ -473,6 +481,66 @@ def run_codex(job, worktree, log_path):
             )
 
     return process.returncode, time.time() - started
+
+
+def repair_allowed_bash():
+    """Shell commands a Claude builder/repair may run: focused validation and
+    read-only git. Anything else is refused (print mode never prompts)."""
+    return (
+        f"Bash({SID_PYTHON} -m pytest *)",
+        "Bash(node apps/web/app.test.js)",
+        "Bash(git status)", "Bash(git status *)",
+        "Bash(git diff)", "Bash(git diff *)",
+        "Bash(git log *)", "Bash(git show *)",
+    )
+
+
+def run_agent(job, worktree, log_path):
+    """Run the provider configured for this job's role (ROLE_PROVIDERS).
+
+    Claude falls back to Codex when it cannot serve the call (plan limit,
+    auth, overload) and then cools down for CLAUDE_COOLDOWN_SECONDS so later
+    jobs skip straight to Codex. Records the provider and model that ran.
+    """
+    role = job.get("role", "builder")
+    key = f"sid:jobs:{job['id']}"
+    provider = agent_cli.role_provider(role)
+    fallback = ""
+    if provider == "claude" and agent_cli.claude_cooling_down(redis):
+        provider, fallback = "codex", "claude cooling down after an unavailable response"
+
+    if provider == "claude":
+        model = agent_cli.claude_model(role)
+        timeout = int(job.get("timeout_seconds") or role_limit(
+            role, "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
+        redis.hset(key, mapping={"provider": "claude", "model": model,
+                                 "updated_at": str(time.time())})
+        run = agent_cli.run_claude(
+            role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
+            model=model,
+            allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
+            tick=lambda: heartbeat("working"),
+        )
+        if run.unavailable:
+            fallback = f"claude unavailable: {run.describe_error()}"
+            agent_cli.start_cooldown(redis, fallback)
+            print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
+        elif run.timed_out:
+            raise RuntimeError(f"Claude exceeded {timeout} second {role} timeout")
+        elif not run.ok:
+            raise RuntimeError(f"Claude {role} failed: {run.describe_error()}")
+        else:
+            redis.hset(key, mapping={
+                "cost_usd": agent_cli.claude_usage(run.result)["cost_usd"],
+                "updated_at": str(time.time()),
+            })
+            return 0, run.duration
+
+    model = job.get("model", DEFAULT_MODEL)
+    redis.hset(key, mapping={"provider": "codex", "model": model,
+                             "provider_fallback": fallback,
+                             "updated_at": str(time.time())})
+    return run_codex(job, worktree, log_path)
 
 
 def run_tests(worktree):
@@ -819,7 +887,7 @@ def process_review_job(job, key, log_path):
         },
     )
 
-    returncode, duration = run_codex(job, worktree, log_path)
+    returncode, duration = run_agent(job, worktree, log_path)
     session_id, usage = parse_codex_log(log_path)
 
     head_after = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
@@ -827,17 +895,7 @@ def process_review_job(job, key, log_path):
     if head_after != candidate_commit or dirty_after:
         raise RuntimeError("Candidate changed during read-only review")
 
-    messages = []
-    for line in log_path.read_text(errors="replace").splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") != "item.completed":
-            continue
-        item = event.get("item", {})
-        if item.get("type") == "agent_message":
-            messages.append(item.get("text", ""))
+    messages = agent_cli.agent_messages(log_path)
 
     verdict, findings = parse_review_verdict(messages)
 
@@ -997,7 +1055,7 @@ def process_repair_job(job, key, log_path, test_log):
     )
 
     try:
-        returncode, duration = run_codex(job, worktree, log_path)
+        returncode, duration = run_agent(job, worktree, log_path)
         session_id, usage = parse_codex_log(log_path)
 
         common = {
@@ -1312,7 +1370,7 @@ def _process_job(raw_job):
             },
         )
 
-        returncode, duration = run_codex(job, worktree, log_path)
+        returncode, duration = run_agent(job, worktree, log_path)
         session_id, usage = parse_codex_log(log_path)
 
         redis.hset(
