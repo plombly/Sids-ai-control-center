@@ -6,7 +6,10 @@ import {
   publicKeyMarkup,
   buildProjectRequest,
   validateProjectValues,
-  deleteProjectMarkup
+  deleteProjectMarkup,
+  buildSettingsMarkup,
+  appStatusMarkup,
+  buildSettingsRequest
 } from './lib/projects.js';
 
 test('project list markup renders projects and empty state', () => {
@@ -82,4 +85,28 @@ test('delete section on every project page except SID itself', () => {
   assert.equal(deleteProjectMarkup('sid'), '');
   assert.match(projectDetailMarkup({ id: 'web-shop', status: 'active' }), /project-delete-form/);
   assert.doesNotMatch(projectDetailMarkup({ id: 'sid', status: 'active' }), /project-delete-form/);
+});
+
+test('build & run settings: empty fields stay empty, SID has none', () => {
+  const html = buildSettingsMarkup({ id: 'shop', setup_command: '', gate_command: 'npm test', run_command: '' });
+  assert.match(html, /id="project-settings-form"/);
+  assert.match(html, /name="setup_command" value=""/);
+  assert.match(html, /name="gate_command" value="npm test"/);
+  assert.doesNotMatch(html, /value="—"/);
+  assert.doesNotMatch(html, /app-status/);
+  assert.equal(buildSettingsMarkup({ id: 'sid' }), '');
+  assert.deepEqual(buildSettingsRequest({ setup_command: ' npm ci ', gate_command: '', run_command: 'npm start', run_port: '' }),
+    { setup_command: 'npm ci', gate_command: '', run_command: 'npm start' });
+  assert.equal(buildSettingsRequest({ run_port: '8105' }).run_port, 8105);
+});
+
+test('app status links to the app on this server only when running', () => {
+  const running = appStatusMarkup({ id: 'shop', run_command: 'npm start', app: { state: 'running', port: 8100, commit: 'abcdef123456' } }, '10.0.0.59');
+  assert.match(running, /href="http:\/\/10.0.0.59:8100\/"/);
+  assert.match(running, /data-app-restart="shop"/);
+  assert.match(running, /main abcdef12/);
+  const crashed = appStatusMarkup({ id: 'shop', run_command: 'npm start', app: { state: 'crashed', port: 8100, log: '<err>' } }, 'h');
+  assert.doesNotMatch(crashed, /href=/);
+  assert.match(crashed, /&lt;err&gt;/);
+  assert.equal(appStatusMarkup({ id: 'shop', run_command: '' }, 'h'), '');
 });

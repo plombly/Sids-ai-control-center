@@ -13,11 +13,13 @@ import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import sid_redis  # noqa: E402  (services/sid_redis.py)
+import sid_projects  # noqa: E402  (services/sid_projects.py)
 
 
 PROJECT_SET = "sid:projects"
 # Directories under this base are the only ones delete ever removes.
 PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
+SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -34,29 +36,7 @@ def get_redis():
 
 
 def detect_gate(repo):
-    repo = Path(repo)
-    package = repo / "package.json"
-    if package.is_file():
-        try:
-            data = json.loads(package.read_text())
-            if isinstance(data, dict) and isinstance(data.get("scripts"), dict) and "test" in data["scripts"]:
-                return "npm test"
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
-    if any((repo / name).exists() for name in ("pyproject.toml", "pytest.ini", "setup.cfg")) or (repo / "tests").is_dir():
-        return "python3 -m pytest -q"
-    if (repo / "Cargo.toml").is_file():
-        return "cargo test"
-    if (repo / "go.mod").is_file():
-        return "go test ./..."
-    makefile = repo / "Makefile"
-    if makefile.is_file():
-        try:
-            if any(re.match(r"^test:", line) for line in makefile.read_text().splitlines()):
-                return "make test"
-        except OSError:
-            pass
-    return ""
+    return sid_projects.detect_gate(repo)
 
 
 def run_git(args, cwd=None, env=None):
@@ -301,6 +281,11 @@ def delete(args):
         r.hset(key_for(args.id), mapping={"status": previous, "updated_at": now()})
         raise ProjectError("still running: " + ", ".join(busy) + ". Nothing was deleted; try again when it finishes")
 
+    # Its running app (services/apps/sid_apps.py), if any.
+    try:
+        subprocess.run([SYSTEMCTL, "stop", f"sid-app-{args.id}"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
     for queue, owned in (("sid:jobs", job_ids), ("sid:goals", goal_ids)):
         for raw in r.lrange(queue, 0, -1):
             payload = _json(raw)
@@ -309,7 +294,7 @@ def delete(args):
     keys = [f"sid:jobs:{jid}" for jid in job_ids] + [f"sid:integration-lock:{jid}" for jid in job_ids]
     keys += [f"sid:goals:{gid}" for gid in goal_ids]
     keys += [key_for(args.id), f"sid:project-stats:{args.id}", f"sid:merge-queue:{args.id}",
-             f"sid:main-head:{args.id}", f"sid:approval-lock:{args.id}"]
+             f"sid:main-head:{args.id}", f"sid:approval-lock:{args.id}", f"sid:app-status:{args.id}"]
     for key in keys:
         r.delete(key)
     r.srem(PROJECT_SET, args.id)

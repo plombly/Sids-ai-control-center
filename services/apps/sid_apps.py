@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Keep each project's app running from its latest main.
+
+A project with a run command (set on its web page) gets:
+  - a live checkout of its main branch at <project>/live (a git worktree),
+  - its dependency setup run there after every change of main,
+  - the app itself as the systemd unit sid-app-<id>, started through
+    `systemd-run` inside the project sandbox (kind "app": host network so
+    your PC can reach it, only the live checkout and <project>/data
+    writable), with PORT set (8100-8199, assigned once per project) and
+    HOST=0.0.0.0, restarted by systemd if it crashes,
+  - a status record sid:app-status:<id> the dashboard shows (state, commit,
+    port, last log lines).
+
+Every loop the service reconciles: a new main commit, a changed command or
+port, or a restart request (restart_at on the project) redeploys; a project
+without a run command, archived or deleting has its app stopped. The SID
+project itself is never run here.
+"""
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from redis import Redis
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import project_sandbox  # noqa: E402
+import sid_projects  # noqa: E402
+import sid_redis  # noqa: E402
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+LOOP_SECONDS = float(os.getenv("APPS_LOOP_SECONDS", "10"))
+SETUP_TIMEOUT = int(os.getenv("APPS_SETUP_TIMEOUT", "900"))
+PORT_RANGE = range(int(os.getenv("APPS_PORT_MIN", "8100")), int(os.getenv("APPS_PORT_MAX", "8199")) + 1)
+STATUS_PREFIX = "sid:app-status:"
+SYSTEMCTL = os.getenv("SYSTEMCTL", "systemctl")
+SYSTEMD_RUN = os.getenv("SYSTEMD_RUN", "systemd-run")
+JOURNALCTL = os.getenv("JOURNALCTL", "journalctl")
+
+redis = None
+stopping = False
+
+
+def unit_name(project_id):
+    return f"sid-app-{project_id}"
+
+
+def run(args, **kwargs):
+    return subprocess.run(args, text=True, capture_output=True, **kwargs)
+
+
+def git(args, cwd):
+    result = run(["git", *args], cwd=str(cwd))
+    if result.returncode:
+        raise RuntimeError(f"git {' '.join(args)}: {(result.stderr or result.stdout).strip()}")
+    return result.stdout.strip()
+
+
+def unit_state(project_id):
+    """systemd's ActiveState for the app unit ("inactive" when absent)."""
+    out = run([SYSTEMCTL, "show", unit_name(project_id), "-p", "ActiveState", "--value"]).stdout.strip()
+    return out or "inactive"
+
+
+def stop_unit(project_id):
+    run([SYSTEMCTL, "stop", unit_name(project_id)])
+    run([SYSTEMCTL, "reset-failed", unit_name(project_id)])
+
+
+def log_tail(project_id, lines=30):
+    out = run([JOURNALCTL, "-u", unit_name(project_id), "-n", str(lines), "--no-pager", "-o", "cat"]).stdout
+    return out[-4000:]
+
+
+def set_status(project_id, **fields):
+    fields["updated_at"] = str(time.time())
+    redis.hset(STATUS_PREFIX + project_id, mapping={k: str(v) for k, v in fields.items()})
+
+
+def assign_port(project):
+    """The project's port, assigning the lowest free one on first use."""
+    if project.run_port in PORT_RANGE:
+        return project.run_port
+    taken = set()
+    for other in redis.smembers("sid:projects") or []:
+        try:
+            taken.add(int(redis.hget(f"sid:projects:{other}", "run_port") or 0))
+        except ValueError:
+            pass
+    for port in PORT_RANGE:
+        if port not in taken:
+            redis.hset(f"sid:projects:{project.id}", "run_port", str(port))
+            project.run_port = port
+            return port
+    raise RuntimeError("no free app port left in 8100-8199")
+
+
+def live_checkout(project, commit):
+    """<project>/live at commit (a detached worktree of the project repo)."""
+    live = Path(project.root) / "live"
+    if not os.path.lexists(live / ".git"):
+        if live.exists():
+            raise RuntimeError(f"{live} exists but is not a worktree; remove it by hand")
+        git(["worktree", "prune"], project.repo)
+        git(["worktree", "add", "--detach", str(live), commit], project.repo)
+    sid_projects.verify_worktree_pointer(live, project.repo)
+    git(["checkout", "--detach", "--force", commit], live)
+    return live
+
+
+def app_env(live, port):
+    env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+           "LANG": os.environ.get("LANG", "C.UTF-8"), "PORT": str(port), "HOST": "0.0.0.0",
+           "NODE_ENV": "production"}
+    local = [str(live / "node_modules/.bin"), str(live / ".venv/bin")]
+    env["PATH"] = os.pathsep.join([p for p in local if Path(p).is_dir()] + [env["PATH"]])
+    return env
+
+
+def setup(project, live):
+    command = project.setup_command or sid_projects.detect_setup(live)
+    if not command:
+        return True, ""
+    argv = project_sandbox.command(["/bin/sh", "-c", command], project, live, kind="setup")
+    try:
+        result = run(argv, cwd=str(live), timeout=SETUP_TIMEOUT, env={**os.environ, **app_env(live, 0)})
+    except subprocess.TimeoutExpired:
+        return False, f"setup timed out after {SETUP_TIMEOUT}s"
+    return result.returncode == 0, (result.stdout + result.stderr)[-3000:]
+
+
+def start_unit(project, live, port):
+    env = app_env(live, port)
+    inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app")
+    args = [SYSTEMD_RUN, f"--unit={unit_name(project.id)}", "--collect", "--quiet",
+            # A web app should keep running: restart it whenever it exits,
+            # but give up (state "failed" -> dashboard "crashed") after 5
+            # quick exits instead of looping forever.
+            "--property=Restart=always", "--property=RestartSec=5",
+            "--property=StartLimitIntervalSec=120", "--property=StartLimitBurst=5",
+            f"--property=WorkingDirectory={live}",
+            f"--description=SID app {project.id}"]
+    args += [f"--setenv={k}={v}" for k, v in env.items()]
+    result = run([*args, "--", *inner])
+    if result.returncode:
+        raise RuntimeError(f"systemd-run failed: {(result.stderr or result.stdout).strip()}")
+
+
+def deploy(project, head, port):
+    set_status(project.id, state="deploying", commit=head, port=port, command=project.run_command, error="")
+    stop_unit(project.id)
+    live = live_checkout(project, head)
+    ok, output = setup(project, live)
+    if not ok:
+        set_status(project.id, state="setup_failed", error="dependency setup failed", log=output)
+        return
+    start_unit(project, live, port)
+    set_status(project.id, state="running", deployed_at=time.time(), log="")
+
+
+def reconcile(project):
+    status = redis.hgetall(STATUS_PREFIX + project.id) or {}
+    wanted = bool(project.run_command) and project.status == "active"
+    if not wanted:
+        if unit_state(project.id) in ("active", "activating", "reloading", "failed"):
+            stop_unit(project.id)
+        if status.get("state") not in (None, "stopped"):
+            set_status(project.id, state="stopped", error="")
+        return
+    port = assign_port(project)
+    head = git(["rev-parse", f"refs/heads/{project.default_branch}"], project.repo)
+    try:
+        restart_at = float(redis.hget(f"sid:projects:{project.id}", "restart_at") or 0)
+        deployed_at = float(status.get("deployed_at") or 0)
+    except ValueError:
+        restart_at = deployed_at = 0
+    changed = (status.get("commit") != head or status.get("command") != project.run_command
+               or status.get("port") != str(port) or restart_at > deployed_at)
+    if status.get("state") == "setup_failed" and not changed:
+        return  # wait for a new commit, a new command or a restart request
+    if changed or status.get("state") in (None, "", "stopped", "deploying"):
+        deploy(project, head, port)
+        return
+    state = unit_state(project.id)
+    if state == "active":
+        if status.get("state") != "running":
+            set_status(project.id, state="running", error="")
+    elif state == "failed":
+        set_status(project.id, state="crashed", error="the app keeps exiting; see the log", log=log_tail(project.id))
+    elif state == "inactive" and status.get("state") in ("running", "crashed"):
+        # Gone (host reboot, manual stop): start it again from the same commit.
+        deploy(project, head, port)
+
+
+def cleanup_removed(known_ids):
+    """Stop apps whose project no longer exists (deleted)."""
+    for key in redis.scan_iter(STATUS_PREFIX + "*"):
+        project_id = key[len(STATUS_PREFIX):]
+        if project_id not in known_ids:
+            stop_unit(project_id)
+            redis.delete(key)
+
+
+def loop_once():
+    projects = [p for p in sid_projects.all_projects(redis) if not p.is_sid]
+    known = set(redis.smembers("sid:projects") or [])
+    for project in projects:
+        try:
+            reconcile(project)
+        except Exception as exc:
+            set_status(project.id, state="error", error=str(exc)[:500])
+    # Registered but not active (archived, deleting): stop their apps too.
+    for project_id in known - {p.id for p in projects} - {sid_projects.SID_PROJECT}:
+        if unit_state(project_id) != "inactive":
+            stop_unit(project_id)
+            set_status(project_id, state="stopped", error="")
+    cleanup_removed(known)
+
+
+def main():
+    global redis
+    redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
+
+    def stop(*_):
+        global stopping
+        stopping = True
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    print(f"[sid-apps] running; ports {PORT_RANGE.start}-{PORT_RANGE.stop - 1}", flush=True)
+    while not stopping:
+        try:
+            loop_once()
+            redis.set("sid:apps-service", json.dumps({"updated_at": time.time()}), ex=60)
+        except Exception as exc:
+            print(f"[sid-apps] loop error: {exc}", flush=True)
+        time.sleep(LOOP_SECONDS)
+
+
+if __name__ == "__main__":
+    main()

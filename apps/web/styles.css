@@ -652,3 +652,16 @@ label {
 .danger-zone h3 {
   color: var(--red);
 }
+
+.build-settings,
+.app-status {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.app-log {
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+}

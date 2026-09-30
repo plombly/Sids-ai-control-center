@@ -213,3 +213,29 @@ def test_delete_project_needs_the_typed_id_and_never_sid(client):
     ok = test_client.post(url, json={"confirm": "alpha", "request_id": "req-del-0004"})
     assert ok.status_code == 202
     assert fake.stream[-1][1]["action"] == "delete_project" and fake.stream[-1][1]["confirm"] == "alpha"
+
+
+def test_patch_build_and_run_settings(client):
+    test_client, fake = client
+    response = test_client.patch("/api/projects/alpha", json={"setup_command": "npm ci", "run_command": "npm start",
+                                                               "run_port": 8105})
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["setup_command"], body["run_command"], body["run_port"]) == ("npm ci", "npm start", 8105)
+    assert test_client.patch("/api/projects/alpha", json={"run_command": "a\nb"}).status_code == 422
+    assert test_client.patch("/api/projects/alpha", json={"run_port": 8080}).status_code == 422
+    assert test_client.patch("/api/projects/alpha", json={}).status_code == 422
+    fake.hashes["sid:projects:old"]["run_port"] = "8106"
+    assert test_client.patch("/api/projects/alpha", json={"run_port": 8106}).status_code == 409
+    # SID's own commands are never editable from the web.
+    test_client.patch("/api/projects/sid", json={"gate_command": "true", "importance": "high"})
+    assert "gate_command" not in fake.hashes["sid:projects:sid"]
+
+
+def test_app_status_and_restart(client):
+    test_client, fake = client
+    fake.hashes["sid:app-status:alpha"] = {"state": "running", "port": "8100", "commit": "abc", "log": ""}
+    assert test_client.get("/api/projects/alpha").json()["app"]["state"] == "running"
+    assert test_client.post("/api/projects/alpha/app/restart").status_code == 202
+    assert "restart_at" in fake.hashes["sid:projects:alpha"]
+    assert test_client.post("/api/projects/sid/app/restart").status_code == 404

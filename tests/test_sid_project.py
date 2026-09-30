@@ -164,6 +164,7 @@ def deletable(monkeypatch, tmp_path):
     monkeypatch.setattr(sid_project, "get_redis", lambda: fake)
     base = tmp_path / "projects"
     monkeypatch.setattr(sid_project, "PROJECTS_BASE", base)
+    monkeypatch.setattr(sid_project, "SYSTEMCTL", "true")
     root = base / "shop"
     for sub in ("repo", "worktrees", "logs"):
         (root / sub).mkdir(parents=True)

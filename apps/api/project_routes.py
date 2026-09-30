@@ -20,8 +20,17 @@ class ProjectGoal(BaseModel):
     request_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
+_COMMAND = r"^[^\r\n]*$"
+
+
 class ProjectPatch(BaseModel):
-    importance: Literal["high", "medium", "low"]
+    """Any subset of the editable settings. Commands are one line; an empty
+    string clears one (gate/setup: detect automatically; run: app off)."""
+    importance: Optional[Literal["high", "medium", "low"]] = None
+    gate_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
+    setup_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
+    run_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
+    run_port: Optional[int] = Field(default=None, ge=8100, le=8199)
 
 
 _REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"
@@ -140,6 +149,15 @@ def _counts(project_id):
     return counts
 
 
+def _app_status(project_id):
+    status = _data(_redis().redis.hgetall(f"sid:app-status:{project_id}"))
+    if not status:
+        return None
+    return {"state": _text(status.get("state"), "unknown"), "port": _numeric(status.get("port")),
+            "commit": _text(status.get("commit")), "error": _text(status.get("error")),
+            "log": _text(status.get("log")), "updated_at": _numeric(status.get("updated_at"))}
+
+
 def _item(project_id, data=None):
     main = _redis()
     data = data if data is not None else _project_data(project_id)
@@ -150,6 +168,10 @@ def _item(project_id, data=None):
         "importance": _text(data.get("importance"), "medium"),
         "status": _text(data.get("status"), "active"),
         "gate_command": _text(data.get("gate_command")),
+        "setup_command": _text(data.get("setup_command")),
+        "run_command": _text(data.get("run_command")),
+        "run_port": _numeric(data.get("run_port")),
+        "app": _app_status(project_id),
         "push_remote": _text(data.get("push_remote")),
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
@@ -218,8 +240,28 @@ def patch_project(project_id: str, payload: ProjectPatch):
     key = f"sid:projects:{project_id}"
     if project_id == "sid" and not main.redis.hgetall(key):
         main.redis.hset(key, mapping={"id": "sid", "name": "SID AI Command Center", "status": "active"})
-    main.redis.hset(key, mapping={"importance": payload.importance, "updated_at": str(time.time())})
+    changes = payload.model_dump(exclude_none=True)
+    if project_id == "sid":
+        # SID's commands are its own gate and control plane: never editable.
+        changes = {k: v for k, v in changes.items() if k == "importance"}
+    if "run_port" in changes:
+        for other in _members(main):
+            if other != project_id and _project_data(other).get("run_port") == str(changes["run_port"]):
+                raise HTTPException(status_code=409, detail=f"Port {changes['run_port']} is used by {other}")
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change")
+    main.redis.hset(key, mapping={**{k: str(v).strip() for k, v in changes.items()}, "updated_at": str(time.time())})
     return _item(project_id)
+
+
+@router.post("/api/projects/{project_id}/app/restart", status_code=202)
+def restart_app(project_id: str):
+    """Ask the apps service to redeploy this project's app now."""
+    project_id = _id(project_id)
+    if project_id == "sid" or not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    _redis().redis.hset(f"sid:projects:{project_id}", "restart_at", str(time.time()))
+    return {"id": project_id, "restart_requested": True}
 
 
 # --- host-side project management (via the operator service) -------------------

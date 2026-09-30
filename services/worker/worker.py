@@ -153,10 +153,7 @@ def keep_alive(status="working"):
 
 def check_worktree_pointer(cwd):
     """Refuse to run host git inside a project worktree whose .git pointer is
-    not the one git created. Project code (a gate, an agent's commands) can
-    write its worktree; a replaced .git pointer or a planted .git directory
-    would make SID's own git commands, running unsandboxed, load that
-    project's hooks and config."""
+    not the one git created (sid_projects.verify_worktree_pointer)."""
     if PROJECT is None or PROJECT.is_sid or cwd is None:
         return
     root = Path(WORKTREE_ROOT).resolve()
@@ -164,24 +161,9 @@ def check_worktree_pointer(cwd):
     if path == root or root not in path.parents:
         return
     top = root / path.relative_to(root).parts[0]
-    pointer = top / ".git"
-    if not os.path.lexists(pointer):
-        if top.exists():
-            raise RuntimeError(f"worktree {top.name} has no .git pointer; refusing to run git in it")
+    if not os.path.lexists(top / ".git") and not top.exists():
         return
-    expected_base = (Path(REPO_ROOT) / ".git" / "worktrees").resolve()
-    try:
-        if pointer.is_symlink() or not pointer.is_file():
-            raise ValueError("not a regular file")
-        content = pointer.read_text().strip()
-        if not content.startswith("gitdir: "):
-            raise ValueError("not a gitdir pointer")
-        target = Path(content[len("gitdir: "):])
-        target = (target if target.is_absolute() else top / target).resolve()
-        if target.parent != expected_base:
-            raise ValueError(f"points to {target}")
-    except (OSError, ValueError) as exc:
-        raise RuntimeError(f"worktree {top.name} .git pointer was tampered with ({exc}); refusing to run git in it")
+    sid_projects.verify_worktree_pointer(top, REPO_ROOT)
 
 
 def agent_sandbox(worktree):
@@ -217,13 +199,18 @@ def use_project(project):
         REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = project.repo, project.worktrees, project.logs
 
 
-def gate_env():
-    """Environment for project gates: SID's venv first on PATH, so
-    'python3 -m pytest' (the detected default for Python projects) finds the
-    test tooling; system tools (npm, cargo, go, make) still resolve."""
+def gate_env(worktree=None):
+    """Environment for project gates: the worktree's own .venv and
+    node_modules/.bin (from the setup step) first, then SID's venv, so
+    'python3 -m pytest' finds test tooling; system tools still resolve."""
     env = os.environ.copy()
     venv_bin = str(Path(SID_PYTHON).parent)
-    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    paths = [venv_bin]
+    if worktree is not None:
+        for local in (Path(worktree) / "node_modules/.bin", Path(worktree) / ".venv/bin"):
+            if local.is_dir():
+                paths.insert(0, str(local))
+    env["PATH"] = os.pathsep.join(paths) + os.pathsep + env.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     # Keep gates from writing caches into the worktree in the first place.
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " -p no:cacheprovider").strip()
@@ -236,11 +223,73 @@ def untracked_files(worktree):
     return {path for path in out.split("\0") if path}
 
 
-def project_gate(worktree, timeout=900):
-    """(ok, output) of a non-SID project's own gate command, run in worktree."""
-    command = PROJECT.gate_command if PROJECT else ""
+SETUP_MARKER = "sid-setup-done"
+SETUP_EXCLUDE_HEADER = "# sid: dependency files from each project's setup step (never committed)"
+
+
+def _exclude_pattern(name):
+    """A root-anchored gitignore pattern for one top-level name."""
+    escaped = "".join("\\" + c if c in "*?[]\\!# " else c for c in name)
+    return "/" + escaped
+
+
+def ignore_setup_output(worktree, created):
+    """Keep what setup installed (node_modules, .venv, lock files it wrote)
+    out of every commit: its top-level names go into the repository's shared
+    info/exclude, which only SID writes (sandboxes see .git read-only)."""
+    names = sorted({path.split("/", 1)[0] for path in created if path and path.split("/", 1)[0] not in (".git", "")})
+    if not names:
+        return
+    common = run_git("rev-parse", "--git-common-dir", cwd=worktree).stdout.strip()
+    exclude = (Path(worktree) / common).resolve() / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text().splitlines() if exclude.exists() else []
+    lines = [line for line in (_exclude_pattern(n) for n in names) if line not in existing]
+    if lines:
+        header = [] if SETUP_EXCLUDE_HEADER in existing else [SETUP_EXCLUDE_HEADER]
+        with exclude.open("a") as handle:
+            handle.write("\n".join(["", *header, *lines]) + "\n")
+
+
+def project_setup(worktree, timeout=900):
+    """(ok, output). Installs a project's dependencies in a worktree once,
+    with network, inside the project sandbox. Tests stay offline."""
+    command = (PROJECT.setup_command or sid_projects.detect_setup(worktree)) if PROJECT else ""
     if not command:
-        return True, f"no gate command configured for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
+        return True, ""
+    gitdir = Path(run_git("rev-parse", "--absolute-git-dir", cwd=worktree).stdout.strip())
+    marker = gitdir / SETUP_MARKER
+    if marker.is_file() and marker.read_text() == command:
+        return True, ""
+    tracked_clean = not run_git("status", "--porcelain", "--untracked-files=no", cwd=worktree).stdout.strip()
+    before = untracked_files(worktree)
+    argv = project_sandbox.command(["/bin/sh", "-c", command], PROJECT, worktree, kind="setup")
+    try:
+        result = subprocess.run(argv, cwd=worktree, text=True, capture_output=True,
+                                timeout=timeout, env=gate_env(worktree))
+    except subprocess.TimeoutExpired:
+        return False, f"$ {command}  (setup)\ntimed out after {timeout}s\n"
+    finally:
+        # Setup must not change tracked files (npm install rewriting a lock
+        # file would otherwise end up in the candidate).
+        if tracked_clean:
+            run_git("checkout", "--", ".", cwd=worktree, check=False)
+        ignore_setup_output(worktree, untracked_files(worktree) - before)
+    if result.returncode == 0:
+        marker.write_text(command)
+    output = f"$ {command}  (setup)\n{result.stdout}{result.stderr}"
+    return result.returncode == 0, output[-6000:]
+
+
+def project_gate(worktree, timeout=900):
+    """(ok, output) of a non-SID project's own gate command, run in worktree.
+    An empty gate command is detected from the worktree (detect_gate)."""
+    setup_ok, setup_output = project_setup(worktree)
+    if not setup_ok:
+        return False, setup_output + "\ndependency setup failed; tests were not run\n"
+    command = (PROJECT.gate_command or sid_projects.detect_gate(worktree)) if PROJECT else ""
+    if not command:
+        return True, setup_output + f"no gate command configured or detected for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
     # A gate must leave the worktree as it found it: files it creates (caches,
     # build output) would otherwise be committed into the candidate or make
     # the integrated worktree look modified. Only files that were not there
@@ -250,14 +299,14 @@ def project_gate(worktree, timeout=900):
     try:
         argv = project_sandbox.command(["/bin/sh", "-c", command], PROJECT, worktree, kind="gate")
         result = subprocess.run(argv, cwd=worktree, text=True,
-                                capture_output=True, timeout=timeout, env=gate_env())
+                                capture_output=True, timeout=timeout, env=gate_env(worktree))
     except subprocess.TimeoutExpired:
         return False, f"$ {command}\ntimed out after {timeout}s\n"
     finally:
         created = sorted(untracked_files(worktree) - before)
         if created:
             run_git("clean", "-f", "-q", "--", *created, cwd=worktree, check=False)
-    return result.returncode == 0, f"$ {command}\n{result.stdout}{result.stderr}"
+    return result.returncode == 0, setup_output + f"$ {command}\n{result.stdout}{result.stderr}"
 
 
 def integration_worktree(job_id):
@@ -415,6 +464,13 @@ def create_worktree(job_id, suffix=""):
         run_git("branch", "-D", branch)
 
     run_git("worktree", "add", "-b", branch, str(path), PROJECT.default_branch if PROJECT else "main")
+    if PROJECT is not None and not PROJECT.is_sid:
+        # Dependencies before the builder starts, so it can run the tests.
+        # A failure is reported again (and retried) by the gate.
+        try:
+            project_setup(path)
+        except Exception as exc:
+            print(f"[{WORKER_ID}] setup warning for {path.name}: {exc}", flush=True)
     return branch, path
 
 

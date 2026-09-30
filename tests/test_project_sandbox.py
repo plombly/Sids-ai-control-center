@@ -144,3 +144,52 @@ def test_project_gate_runs_inside_the_sandbox(worker, monkeypatch):
                         lambda argv, *a, **k: seen.append((argv, k)) or real(argv, *a, **k))
     module.project_gate(wt)
     assert seen and seen[0][1]["kind"] == "gate"
+
+
+# --- setup step: dependencies with network, never committed -------------------------
+
+def test_setup_has_network_and_a_package_cache_but_gates_do_not(tmp_path, hidden):
+    project, wt = make_project(tmp_path)
+    setup = project_sandbox.command(["true"], project, wt, kind="setup")
+    gate = project_sandbox.command(["true"], project, wt, kind="gate")
+    assert "--unshare-net" not in setup and "--unshare-net" in gate
+    cache = str(project.root / "cache")
+    assert ["--bind", cache, cache] == setup[setup.index(cache) - 1:][:3]
+    assert ["--setenv", "HOME", cache] == setup[setup.index("HOME") - 1:][:3]
+
+
+def test_setup_output_is_never_committed_and_runs_once(worker, monkeypatch):
+    module, project, wt = worker
+    (wt / "tracked.txt").write_text("original\n")
+    module.run_git("add", "tracked.txt", cwd=wt)
+    module.run_git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "t", cwd=wt)
+    project.setup_command = ("mkdir -p node_modules/.bin && echo dep > node_modules/dep.js && "
+                             "echo lock > package-lock.json && echo changed >> tracked.txt && echo SETUP-RAN")
+    project.gate_command = "test -f node_modules/dep.js && echo GATE-SAW-DEPS"
+    ok, output = module.project_gate(wt)
+    assert ok, output
+    assert "SETUP-RAN" in output and "GATE-SAW-DEPS" in output
+    status = module.run_git("status", "--porcelain", cwd=wt).stdout
+    assert status == "", status  # installed files ignored, tracked file restored
+    assert (wt / "tracked.txt").read_text() == "original\n"
+    ok, output = module.project_gate(wt)
+    assert ok and "SETUP-RAN" not in output  # once per worktree
+
+
+def test_failed_setup_fails_the_gate_without_running_tests(worker):
+    module, project, wt = worker
+    project.setup_command = "echo cannot-download; exit 7"
+    project.gate_command = "echo TESTS-RAN"
+    ok, output = module.project_gate(wt)
+    assert not ok and "cannot-download" in output and "TESTS-RAN" not in output
+
+
+def test_commands_are_detected_when_not_configured(tmp_path):
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "node test.js"}}')
+    assert sid_projects.detect_gate(tmp_path) == "npm test"
+    assert sid_projects.detect_setup(tmp_path).startswith("npm install")
+    (tmp_path / "package-lock.json").write_text("{}")
+    (tmp_path / "requirements.txt").write_text("flask\n")
+    setup = sid_projects.detect_setup(tmp_path)
+    assert setup.startswith("npm ci") and ".venv/bin/pip install -q pytest -r requirements.txt" in setup
+    assert sid_projects.detect_setup(tmp_path / "missing") == ""

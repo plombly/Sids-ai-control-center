@@ -10,6 +10,7 @@ environment variables and its Redis keys keep their original names, so
 single-project behavior is unchanged when nothing else is registered.
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -32,6 +33,15 @@ class Project:
         self.logs = Path(fields["logs"])
         self.default_branch = fields.get("default_branch") or "main"
         self.gate_command = fields.get("gate_command") or ""
+        # Installs dependencies (with network) before builds and gates; empty
+        # means detect from the worktree (detect_setup).
+        self.setup_command = fields.get("setup_command") or ""
+        # Run the app from main (services/apps/sid_apps.py); "" = not run.
+        self.run_command = fields.get("run_command") or ""
+        try:
+            self.run_port = int(fields.get("run_port") or 0)
+        except (TypeError, ValueError):
+            self.run_port = 0
         importance = fields.get("importance") or "medium"
         self.importance = importance if importance in IMPORTANCE else "medium"
         self.status = fields.get("status") or "active"
@@ -140,3 +150,74 @@ def all_projects(redis_client):
         if project.status == "active":
             projects.append(project)
     return projects
+
+
+# --- build commands detected from a checkout ---------------------------------------
+# Used when a project has no explicit command, so a project that starts empty
+# gets its tests and dependency install as soon as the builder adds them.
+
+def detect_gate(path):
+    """The test command a checkout implies, or ""."""
+    path = Path(path)
+    package = path / "package.json"
+    if package.is_file():
+        try:
+            data = json.loads(package.read_text())
+            if isinstance(data, dict) and isinstance(data.get("scripts"), dict) and "test" in data["scripts"]:
+                return "npm test"
+        except (OSError, ValueError, TypeError):
+            pass
+    if any((path / name).exists() for name in ("pyproject.toml", "pytest.ini", "setup.cfg")) or (path / "tests").is_dir():
+        return "python3 -m pytest -q"
+    if (path / "Cargo.toml").is_file():
+        return "cargo test"
+    if (path / "go.mod").is_file():
+        return "go test ./..."
+    makefile = path / "Makefile"
+    if makefile.is_file():
+        try:
+            if any(re.match(r"^test:", line) for line in makefile.read_text().splitlines()):
+                return "make test"
+        except OSError:
+            pass
+    return ""
+
+
+def detect_setup(path):
+    """The dependency install a checkout implies, or "". Python projects get
+    their own .venv (with pytest) in the worktree; gates put it first on PATH."""
+    path = Path(path)
+    steps = []
+    if (path / "package-lock.json").is_file():
+        steps.append("npm ci --no-audit --no-fund")
+    elif (path / "package.json").is_file():
+        steps.append("npm install --no-audit --no-fund")
+    if (path / "requirements.txt").is_file():
+        steps.append("python3 -m venv .venv && .venv/bin/pip install -q pytest -r requirements.txt")
+    elif (path / "pyproject.toml").is_file():
+        steps.append("python3 -m venv .venv && .venv/bin/pip install -q pytest -e .")
+    return " && ".join(steps)
+
+
+def verify_worktree_pointer(top, repo):
+    """Raise unless top/.git is the pointer git wrote: a regular file naming a
+    directory in repo/.git/worktrees. Project code can write its worktree;
+    a replaced pointer (or a planted .git directory) would make SID's own,
+    unsandboxed git commands load that project's hooks and config."""
+    top = Path(top)
+    pointer = top / ".git"
+    if not os.path.lexists(pointer):
+        raise RuntimeError(f"worktree {top.name} has no .git pointer; refusing to run git in it")
+    expected_base = (Path(repo) / ".git" / "worktrees").resolve()
+    try:
+        if pointer.is_symlink() or not pointer.is_file():
+            raise ValueError("not a regular file")
+        content = pointer.read_text().strip()
+        if not content.startswith("gitdir: "):
+            raise ValueError("not a gitdir pointer")
+        target = Path(content[len("gitdir: "):])
+        target = (target if target.is_absolute() else top / target).resolve()
+        if target.parent != expected_base:
+            raise ValueError(f"points to {target}")
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"worktree {top.name} .git pointer was tampered with ({exc}); refusing to run git in it")

@@ -188,6 +188,22 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   worktree + /tmp, no network for commands, reads unrestricted). Host git
   refuses to run in a project worktree whose .git pointer was replaced
   (check_worktree_pointer), so no project can plant hooks/config for SID.
+- Build settings per project (web "Build & run", PATCH /api/projects/<id>):
+  setup_command (dependency install, runs once per worktree WITH network in
+  the sandbox, kind "setup", package cache <project>/cache; its new
+  top-level files go into the repo's shared .git/info/exclude so they are
+  never committed; tracked files it changes are restored), gate_command,
+  run_command, run_port. Empty setup/gate = detected from the worktree
+  (sid_projects.detect_setup/detect_gate), so a project that starts empty
+  gets tests once the builder adds package.json/pyproject. Gates put the
+  worktree's node_modules/.bin and .venv/bin first on PATH.
+- Apps (services/apps/sid_apps.py, unit deploy/systemd/sid-ai-apps.service):
+  a project with run_command runs from <project>/live (detached worktree at
+  main) as transient unit sid-app-<id> (systemd-run, Restart=always, gives
+  up after 5 quick exits), sandbox kind "app" (host network, live checkout
+  and <project>/data writable), env PORT (8100-8199, assigned once) and
+  HOST=0.0.0.0. Redeploys on a new main commit, changed command/port or
+  POST /api/projects/<id>/app/restart; status in sid:app-status:<id>.
 - Delete: sid-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
   Refuses SID and projects with running work; removes queued work,

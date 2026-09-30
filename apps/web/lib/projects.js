@@ -1,5 +1,5 @@
 import { requestJSON, operatorRequest, newRequestId } from './api.js';
-import { esc, pill, text, number } from './format.js';
+import { esc, escValue, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
 
 const requestId = newRequestId;
@@ -50,7 +50,48 @@ export function projectDetailMarkup(project) {
     project.importance === 'low' ? ' selected' : ''
   }>low</option></select></label></div><div class="stack">${pill(project.status)}${retry}</div><form id="project-goal-form" class="goal-form"><textarea name="goal" placeholder="Describe work for ${esc(
     name
-  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form><form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form><div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${deleteProjectMarkup(id)}</section>`;
+  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form><form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form><div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${buildSettingsMarkup(project)}${deleteProjectMarkup(id)}</section>`;
+}
+
+const APP_STATES = {
+  running: 'Running', deploying: 'Deploying the latest main…', setup_failed: 'Dependency setup failed',
+  crashed: 'Crashed', stopped: 'Stopped', error: 'Error'
+};
+
+// The running app: state, link from this browser, restart, last log lines.
+export function appStatusMarkup(project, hostname = globalThis.location?.hostname || 'localhost') {
+  const id = text(project?.id, '');
+  if (!id || id === 'sid' || !text(project?.run_command, '')) return '';
+  const app = project.app || {};
+  const port = app.port || project.run_port;
+  const state = text(app.state, 'starting');
+  const url = port ? `http://${hostname}:${port}/` : '';
+  const link = state === 'running' && url ? `<a class="button" href="${escValue(url)}" target="_blank" rel="noopener">Open ${esc(url)}</a>` : '';
+  const commit = app.commit ? `<span class="subtle">main ${esc(String(app.commit).slice(0, 8))}</span>` : '';
+  const error = app.error ? `<div class="form-status">${esc(app.error)}</div>` : '';
+  const log = app.log ? `<pre class="app-log">${esc(app.log)}</pre>` : '';
+  return `<div class="app-status"><div class="item-head"><span class="item-title">App ${pill(state)} ${esc(APP_STATES[state] || '')}</span>${commit}</div><div class="form-row">${link}<button type="button" data-app-restart="${esc(id)}">Restart</button></div>${error}${log}</div>`;
+}
+
+// Dependency setup, tests and the run command; empty means automatic/off.
+export function buildSettingsMarkup(project) {
+  const id = text(project?.id, '');
+  if (!id || id === 'sid') return '';
+  const input = (name, label, placeholder, hint) =>
+    `<label class="field">${esc(label)}<input name="${name}" value="${escValue(project[name])}" placeholder="${escValue(placeholder)}" autocomplete="off"></label><span class="field-hint">${esc(hint)}</span>`;
+  return `<form id="project-settings-form" class="goal-form build-settings"><h3>Build &amp; run</h3>${input(
+    'setup_command', 'Install dependencies', 'Detect automatically', 'Runs with internet access before builds and tests (npm ci, pip install …). Tests themselves run offline.'
+  )}${input('gate_command', 'Test command', 'Detect automatically', 'Must pass before anything is merged (npm test, pytest …).')}${input(
+    'run_command', 'Run command', 'Not running', 'Keeps the app running from the latest main, e.g. npm start. Listen on the PORT environment variable and 0.0.0.0.'
+  )}${input('run_port', 'Port', 'Assigned automatically (8100-8199)', 'Open it from your PC at this server\'s address and this port.')}<div class="form-row"><button type="submit">Save settings</button><span id="project-settings-status" class="form-status" role="status"></span></div></form>${appStatusMarkup(project)}`;
+}
+
+export function buildSettingsRequest(values) {
+  const body = {};
+  for (const key of ['setup_command', 'gate_command', 'run_command']) body[key] = text(values[key], '').trim();
+  const port = text(values.run_port, '').trim();
+  if (port) body.run_port = Number(port);
+  return body;
 }
 
 // Deleting wipes the project from the server; SID itself cannot be deleted.
@@ -153,6 +194,15 @@ if (typeof document !== 'undefined') {
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
   });
+  registerClick('appRestart', async button => {
+    button.disabled = true;
+    try {
+      await requestJSON(`/api/projects/${encodeURIComponent(button.dataset.appRestart)}/app/restart`, { method: 'POST' });
+      button.textContent = 'Restarting…';
+    } catch (error) {
+      button.textContent = error.message;
+    }
+  });
   registerClick('retryClone', async button => {
     const id = button.dataset.retryClone;
     try {
@@ -199,6 +249,14 @@ if (typeof document !== 'undefined') {
           body: JSON.stringify({ goal: values.goal?.trim(), atomic: values.atomic === 'on', request_id: requestId() })
         });
         status('project-goal-status', `Submitted goal ${response.id}`);
+      } else if (form.id === 'project-settings-form') {
+        const body = buildSettingsRequest(values);
+        if (body.run_port !== undefined && !(body.run_port >= 8100 && body.run_port <= 8199))
+          return status('project-settings-status', 'Port must be between 8100 and 8199');
+        await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}`, { method: 'PATCH', body: JSON.stringify(body) });
+        status('project-settings-status', 'Saved');
+        document.activeElement?.blur?.();
+        await render(activeRoute, true);
       } else if (form.id === 'project-delete-form') {
         const id = activeRoute.projectId;
         if (text(values.confirm, '').trim() !== id) return status('project-delete-status', `Type ${id} exactly to confirm`);

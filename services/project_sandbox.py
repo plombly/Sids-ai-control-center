@@ -15,8 +15,14 @@ Inside the sandbox a process sees:
   - a private, empty /tmp;
   - for agents only, their own CLI state (~/.codex, ~/.claude) read-write;
   - for gates, no network at all (a private loopback): tests cannot reach
-    SID's Redis or the internet. SID_SANDBOX_GATE_NETWORK=1 shares the host
-    network instead.
+    the internet or anything on this server. SID_SANDBOX_GATE_NETWORK=1
+    shares the host network instead;
+  - for the setup step (dependency install), the host network and a
+    persistent per-project package cache (<project>/cache as HOME), because
+    npm/pip must download. It is otherwise confined like a gate;
+  - for a running app (services/apps/sid_apps.py), the host network (so your
+    PC can reach its port), its live checkout writable and a persistent
+    <project>/data directory (HOME and DATA_DIR).
 
 The SID project itself is the control plane and is never sandboxed here.
 """
@@ -49,11 +55,12 @@ def _exists(path):
 def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
     """argv wrapped in bubblewrap for this project (unchanged for SID).
 
-    kind: "gate" (no network, no agent state) or "agent". writable=False
+    kind: "gate" (no network, no agent state), "setup" (network, package
+    cache) or "agent" (network, CLI state). writable=False
     (the planner) leaves workdir read-only like the rest of the project."""
     if project is None or project.is_sid or not enabled():
         return list(argv)
-    if kind not in ("gate", "agent"):
+    if kind not in ("gate", "setup", "agent", "app"):
         raise ValueError(f"unknown sandbox kind: {kind}")
     workdir = Path(workdir).resolve()
     project_root = Path(getattr(project, "root", "") or project.repo.parent).resolve()
@@ -90,5 +97,13 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
         for path in AGENT_STATE:
             if _exists(path):
                 args += ["--bind", path, path]
+    if kind == "app" and project_root.is_dir():
+        data = project_root / "data"
+        data.mkdir(exist_ok=True)
+        args += ["--bind", str(data), str(data), "--setenv", "HOME", str(data), "--setenv", "DATA_DIR", str(data)]
+    if kind == "setup" and project_root.is_dir():
+        cache = project_root / "cache"
+        cache.mkdir(exist_ok=True)
+        args += ["--bind", str(cache), str(cache), "--setenv", "HOME", str(cache)]
     args += ["--setenv", "TMPDIR", "/tmp", "--unsetenv", "REDIS_URL", "--chdir", str(workdir), "--"]
     return args + list(argv)
