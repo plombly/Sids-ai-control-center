@@ -176,6 +176,23 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   medium>low>high), then in-flight work, then least remaining effort
   (planner sizes S/M/L = 1/3/8, sid:project-stats:<id>) minus aging, then
   age; claim by LREM. Re-ranked every pick; never preempts.
+- Sandbox (services/project_sandbox.py, bubblewrap): non-SID gates and
+  Claude runs (reviewer/repair/builder/planner) see the host read-only with
+  SID's trees, /etc/sid-ai, backups, logs, /root and other projects hidden,
+  the docker socket and the project's deploy key masked, a private /tmp,
+  and only the job's worktree writable (its .git pointer and the repo's
+  .git read-only). Gates also get no network (SID_SANDBOX_GATE_NETWORK=1
+  to allow). SID_PROJECT_SANDBOX=0 turns it off. Codex is NOT wrapped: it
+  needs its own bubblewrap, which cannot nest without handing the outer
+  sandbox capabilities; it keeps its own workspace-write sandbox (writes:
+  worktree + /tmp, no network for commands, reads unrestricted). Host git
+  refuses to run in a project worktree whose .git pointer was replaced
+  (check_worktree_pointer), so no project can plant hooks/config for SID.
+- Delete: sid-project.py delete ID --confirm ID (operator action
+  delete_project, POST /api/projects/<id>/delete, web "Delete project").
+  Refuses SID and projects with running work; removes queued work,
+  job/goal records, project keys and, only if SID created it
+  (<SID_PROJECTS_BASE>/<id>, not a symlink), the directory.
 - The claude CLI self-updates (shared with interactive sessions); a missing
   or half-installed executable is a 2-minute outage with Codex fallback.
 

@@ -178,14 +178,17 @@ class ClaudeRun:
 
 
 def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None,
-               allowed_bash=(), tick=None, tools=None):
-    """Run `claude -p` for one role. The JSON result is written to log_path."""
+               allowed_bash=(), tick=None, tools=None, wrap=None):
+    """Run `claude -p` for one role. The JSON result is written to log_path.
+    wrap(argv) -> argv runs it inside a sandbox (project_sandbox)."""
     command = claude_command(
         role, model or claude_model(role),
         claude_budget(role) if budget_usd is None else budget_usd,
         allowed_bash,
         tools,
     )
+    if wrap is not None:
+        command = wrap(command)
     env = {**os.environ, "HOME": os.environ.get("HOME") or "/root"}
     started = time.time()
     log_path = Path(log_path)

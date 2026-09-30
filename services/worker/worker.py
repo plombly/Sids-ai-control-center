@@ -16,6 +16,7 @@ from redis import Redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
+import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = os.environ.get("WORKER_QUEUE", "sid:jobs")
@@ -149,7 +150,46 @@ def keep_alive(status="working"):
         thread.join(timeout=HEARTBEAT_SECONDS + 1)
 
 
+def check_worktree_pointer(cwd):
+    """Refuse to run host git inside a project worktree whose .git pointer is
+    not the one git created. Project code (a gate, an agent's commands) can
+    write its worktree; a replaced .git pointer or a planted .git directory
+    would make SID's own git commands, running unsandboxed, load that
+    project's hooks and config."""
+    if PROJECT is None or PROJECT.is_sid or cwd is None:
+        return
+    root = Path(WORKTREE_ROOT).resolve()
+    path = Path(cwd).resolve()
+    if path == root or root not in path.parents:
+        return
+    top = root / path.relative_to(root).parts[0]
+    pointer = top / ".git"
+    if not os.path.lexists(pointer):
+        if top.exists():
+            raise RuntimeError(f"worktree {top.name} has no .git pointer; refusing to run git in it")
+        return
+    expected_base = (Path(REPO_ROOT) / ".git" / "worktrees").resolve()
+    try:
+        if pointer.is_symlink() or not pointer.is_file():
+            raise ValueError("not a regular file")
+        content = pointer.read_text().strip()
+        if not content.startswith("gitdir: "):
+            raise ValueError("not a gitdir pointer")
+        target = Path(content[len("gitdir: "):])
+        target = (target if target.is_absolute() else top / target).resolve()
+        if target.parent != expected_base:
+            raise ValueError(f"points to {target}")
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"worktree {top.name} .git pointer was tampered with ({exc}); refusing to run git in it")
+
+
+def agent_sandbox(worktree):
+    """argv wrapper that runs an agent CLI in the project sandbox (SID: none)."""
+    return lambda argv: project_sandbox.command(argv, PROJECT, worktree, kind="agent")
+
+
 def run_git(*args, cwd=None, check=True):
+    check_worktree_pointer(cwd)
     return subprocess.run(
         ["git", *args],
         cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
@@ -207,7 +247,8 @@ def project_gate(worktree, timeout=900):
     # and every tracked file are never touched.
     before = untracked_files(worktree)
     try:
-        result = subprocess.run(["/bin/sh", "-c", command], cwd=worktree, text=True,
+        argv = project_sandbox.command(["/bin/sh", "-c", command], PROJECT, worktree, kind="gate")
+        result = subprocess.run(argv, cwd=worktree, text=True,
                                 capture_output=True, timeout=timeout, env=gate_env())
     except subprocess.TimeoutExpired:
         return False, f"$ {command}\ntimed out after {timeout}s\n"
@@ -579,7 +620,7 @@ def run_review_aspects(job, worktree, log_path, timeout):
                   + agent_cli.REVIEW_ASPECT_FOCUS[aspect])
         run = agent_cli.run_claude(
             "reviewer", prompt, worktree, log_path.with_name(f"{log_path.stem}.{aspect}.json"),
-            timeout, model=model, tick=lambda: heartbeat("working"))
+            timeout, model=model, tick=lambda: heartbeat("working"), wrap=agent_sandbox(worktree))
         if run.result is not None:
             run.result["_model"] = model
         runs[aspect] = run
@@ -640,7 +681,8 @@ def run_alternate_builder(job, provider, worktree, log_path, timeout):
         model = agent_cli.claude_model("builder")
         run = agent_cli.run_claude(
             "builder", efficiency_prefix("builder") + job["prompt"], worktree, log_path, timeout,
-            model=model, allowed_bash=repair_allowed_bash(), tick=lambda: heartbeat("working"))
+            model=model, allowed_bash=repair_allowed_bash(), tick=lambda: heartbeat("working"),
+            wrap=agent_sandbox(worktree))
         cost = agent_cli.claude_usage(run.result)["cost_usd"] if run.result else ""
         return run.ok, run.duration, cost, model
     independent = {**job, "role": "builder", "prompt": job["prompt"] + (
@@ -782,7 +824,7 @@ def run_agent(job, worktree, log_path):
                 run = agent_cli.run_claude(
                     role, efficiency_prefix(role) + job["prompt"] + REBASE_CHECK_NOTE, worktree,
                     log_path, timeout, model=model, tick=lambda: heartbeat("working"),
-                    tools="")  # one turn: everything it needs is in the prompt
+                    tools="", wrap=agent_sandbox(worktree))  # one turn: everything it needs is in the prompt
             elif role == "reviewer" and len(agent_cli.review_aspects()) > 1:
                 run = run_review_aspects(job, worktree, log_path, timeout)
             else:
@@ -791,6 +833,7 @@ def run_agent(job, worktree, log_path):
                     model=model,
                     allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
                     tick=lambda: heartbeat("working"),
+                    wrap=agent_sandbox(worktree),
                 )
             if run.unavailable:
                 fallback = f"claude unavailable: {run.describe_error()}"

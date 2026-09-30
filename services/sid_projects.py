@@ -26,6 +26,8 @@ class Project:
         self.id = fields["id"]
         self.name = fields.get("name") or self.id
         self.repo = Path(fields["repo"])
+        # The project's own directory (holds repo, worktrees, logs, deploy key).
+        self.root = Path(fields.get("root") or Path(fields["repo"]).parent)
         self.worktrees = Path(fields["worktrees"])
         self.logs = Path(fields["logs"])
         self.default_branch = fields.get("default_branch") or "main"

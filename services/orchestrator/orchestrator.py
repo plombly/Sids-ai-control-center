@@ -14,6 +14,7 @@ import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
+import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -208,8 +209,10 @@ def run_planner(goal, atomic=False, info=None, project=None):
             info.update(provider="codex", model=DEFAULT_MODEL)
             return run_codex_planner(goal, atomic, project)
         try:
-            run = agent_cli.run_claude("planner", planner_prompt(goal, atomic=atomic, project=project),
-                                       project.repo, log_path, PLAN_TIMEOUT, model=planner_model(atomic))
+            run = agent_cli.run_claude(
+                "planner", planner_prompt(goal, atomic=atomic, project=project),
+                project.repo, log_path, PLAN_TIMEOUT, model=planner_model(atomic),
+                wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
         finally:
             agent_cli.release_claude_slot(r, slot)
         if run.ok:
