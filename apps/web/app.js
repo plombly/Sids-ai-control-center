@@ -369,7 +369,7 @@ if (typeof document !== 'undefined') {
       loadHistoryPage(offset);
     }
   });
-  document.getElementById('goal-form').addEventListener('submit', event => {
+  document.getElementById('goal-form')?.addEventListener('submit', event => {
     event.preventDefault();
     if (state.goalSubmission.pending) return;
     const input = document.getElementById('goal-input'),

@@ -113,12 +113,12 @@ if (typeof document !== 'undefined') {
   };
   async function render(route, force = false) {
     const container = root();
-    if (!container || route.view !== 'projects' || (!force && focusedForm(container))) return;
+    if (!container || route.view !== 'projects' || route.create || (!force && focusedForm(container))) return;
     const version = ++renderVersion;
     if (route.projectId === null) {
       try {
         const projects = await requestJSON('/api/projects?limit=25');
-        if (version === renderVersion) container.innerHTML = `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECTS</p><h2>Projects</h2></div></div><div class="stack">${projectListMarkup(projects)}</div></section>${newProjectFormMarkup()}`;
+        if (version === renderVersion) container.innerHTML = `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECTS</p><h2>Projects</h2></div><div><a class="button" href="#/projects/new">Create a project</a></div></div><div class="stack">${projectListMarkup(projects)}</div></section>`;
       } catch (error) {
         container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
       }
@@ -137,7 +137,7 @@ if (typeof document !== 'undefined') {
     activeRoute = route;
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
-    if (route.view !== 'projects') return;
+    if (route.view !== 'projects' || route.create) return;
     render(route, true);
     refreshTimer = setInterval(() => render(activeRoute), 5000);
   });

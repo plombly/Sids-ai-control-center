@@ -6,3 +6,4 @@ import './providers.js';
 import './system-health.js';
 import './projects.js';
 import './project-overview.js';
+import './project-wizard.js';

@@ -1,4 +1,5 @@
-// Hash routes: #/ (dashboard, the home screen), #/projects, #/projects/<id>.
+// Hash routes: #/ (dashboard, the home screen), #/projects, #/projects/new
+// (create wizard, lib/project-wizard.js), #/projects/<id>.
 // Views are elements with data-view="<name>"; only the current one is shown.
 // Feature modules react to navigation with onRoute(fn) from ./registry.js.
 import { routeHandlers } from './registry.js';
@@ -12,10 +13,11 @@ export function parseRoute(hash) {
     .filter(Boolean)
     .map(decodeURIComponent);
   if (parts[0] === 'projects') {
+    if (parts[1] === 'new') return { view: 'projects', projectId: null, create: true };
     const projectId = parts[1] && PROJECT_ID.test(parts[1]) ? parts[1] : null;
-    return { view: 'projects', projectId };
+    return { view: 'projects', projectId, create: false };
   }
-  return { view: 'dashboard', projectId: null };
+  return { view: 'dashboard', projectId: null, create: false };
 }
 
 export function applyRoute(route, doc = globalThis.document) {
