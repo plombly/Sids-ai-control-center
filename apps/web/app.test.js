@@ -102,6 +102,7 @@ async function main() {
   assert.equal(dismissalCalls[0][0], '/api/dismissals');
   assert.equal(dismissalCalls[0][1].method, 'POST');
   assert.deepEqual(JSON.parse(dismissalCalls[0][1].body), {ids:['j-1']});
+  assert.equal(dismissalCalls[0][1].headers['content-type'], 'application/json');  // shared write path (sends the operator token)
   assert.deepEqual(await loadDismissals(dismissalFetch), ['j-1']);
   assert.equal(dismissalCalls[1][1].method, undefined);
   await assert.rejects(dismiss(['j-1'], async () => ({ok:false,status:422})), /HTTP 422/);

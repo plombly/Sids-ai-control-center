@@ -115,15 +115,9 @@ export const jobAction = (jobId, body, fetchImpl = fetch) =>
   );
 export const operatorRequest = (requestId, fetchImpl = fetch) =>
   requestJSON(`/api/operator-requests/${encodeURIComponent(requestId)}`, { method: 'GET' }, fetchImpl);
-export async function dismiss(ids, fetchImpl = fetch) {
-  const response = await fetchImpl('/api/dismissals', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids })
-  });
-  if (!response.ok) throw new Error(`Unable to dismiss items (HTTP ${response.status})`);
-  return response.json();
-}
+// Through requestJSON so the operator token is sent like every other write.
+export const dismiss = (ids, fetchImpl = fetch) =>
+  requestJSON('/api/dismissals', { method: 'POST', body: JSON.stringify({ ids }) }, fetchImpl);
 export async function loadDismissals(fetchImpl = fetch) {
   const response = await fetchImpl('/api/dismissals');
   if (!response.ok) throw new Error(`Unable to load dismissals (HTTP ${response.status})`);

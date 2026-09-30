@@ -264,6 +264,8 @@ def test_writes_need_the_operator_token(client, fake):
     ("post", "/api/workers/w1/stop", None),
     ("delete", "/api/workers/w1", None),
     ("post", "/projects", {"name": "p"}),
+    ("post", "/api/dismissals", {"ids": ["j1"]}),
+    ("delete", "/api/dismissals/j1", None),
 ])
 def test_every_write_route_is_protected(client, fake, method, path, payload):
     kwargs = {"json": payload} if payload is not None else {}
