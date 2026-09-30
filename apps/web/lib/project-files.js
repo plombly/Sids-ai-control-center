@@ -51,7 +51,7 @@ export function listingMarkup(projectId, area, path, entries = []) {
     const modified = entry.modified ? new Date(entry.modified * 1000).toLocaleString() : '';
     const remove = area === 'data' ? `<button type="button" class="danger-button" data-file-delete="${escValue(full)}">Delete</button>` : '';
     const download = entry.type === 'dir' ? `<a class="button" href="${escValue(downloadUrl(projectId, area, full))}" download>Zip</a>` : '';
-    return `<tr><td>${name}</td><td>${esc(formatSize(entry.size))}</td><td class="subtle">${esc(modified)}</td><td>${download}${remove}</td></tr>`;
+    return `<tr><td>${name}</td><td>${escValue(formatSize(entry.size))}</td><td class="subtle">${escValue(modified)}</td><td>${download}${remove}</td></tr>`;
   });
   return `<div class="table-wrap"><table class="job-table file-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
 }
@@ -74,7 +74,7 @@ export function filesPageMarkup(state, listing) {
     path
   )}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label>${newFolder}<a class="button" href="${escValue(
     downloadUrl(projectId, area, path)
-  )}" download>Download this folder</a></div><div id="project-file-status" class="form-status" role="status">${esc(state.message || '')}</div>${body}</section>`;
+  )}" download>Download this folder</a></div><div id="project-file-status" class="form-status" role="status">${escValue(state.message)}</div>${body}</section>`;
 }
 
 let state = null;

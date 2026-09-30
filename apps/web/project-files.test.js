@@ -44,3 +44,9 @@ test('page: tabs, upload input, new folder only for data, code upload warning', 
   assert.match(data, /data-file-new-folder/);
   assert.match(data, /Nothing here yet/);
 });
+
+test('no dashes for empty status or folder sizes', () => {
+  const html = filesPageMarkup({ projectId: 'shop', area: 'code', path: '', message: '' }, { entries: [{ name: 'src', type: 'dir', size: null, modified: 1 }] });
+  assert.match(html, /role="status"><\/div>/);
+  assert.doesNotMatch(html, /—/);
+});
