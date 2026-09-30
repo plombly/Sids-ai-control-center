@@ -1,4 +1,5 @@
-// Project file browser (#/projects/<id>/files): browse and download a
+// Project file browser, on every project page (below the details;
+// #/projects/<id>/files scrolls to it): browse and download a
 // project's code (main) and app data; upload to data, or to code as a commit
 // on main made by the host (apps/api/file_routes.py).
 import { requestJSON, operatorRequest, newRequestId } from './api.js';
@@ -67,9 +68,7 @@ export function filesPageMarkup(state, listing) {
       ? listingMarkup(projectId, area, path, listing.entries)
       : '<div class="empty">Loading…</div>';
   const newFolder = area === 'data' ? '<button type="button" data-file-new-folder="1">New folder</button>' : '';
-  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">FILES</p><h2><a href="#/projects/${encodeURIComponent(
-    projectId
-  )}">${esc(projectId)}</a></h2></div><div class="file-tabs">${tabs}</div></div><p class="subtle">${esc(AREAS[area].note)}</p>${breadcrumbMarkup(
+  return `<section class="panel wide" id="project-files"><div class="panel-heading"><div><p class="eyebrow">FILES</p><h2>Code and data</h2></div><div class="file-tabs">${tabs}</div></div><p class="subtle">${esc(AREAS[area].note)}</p>${breadcrumbMarkup(
     area,
     path
   )}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label>${newFolder}<a class="button" href="${escValue(
@@ -79,7 +78,7 @@ export function filesPageMarkup(state, listing) {
 
 let state = null;
 let listing = null;
-const root = () => (typeof document === 'undefined' ? null : document.getElementById('projects-root'));
+const root = () => (typeof document === 'undefined' ? null : document.getElementById('project-files-panel'));
 
 function render() {
   const container = root();
@@ -199,12 +198,17 @@ if (typeof document !== 'undefined') {
   });
 }
 
+const scrollToFiles = () => root()?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+
 onRoute(route => {
-  if (!(route.view === 'projects' && route.files && route.projectId)) {
+  if (!(route.view === 'projects' && route.projectId && !route.create) || route.projectId === 'sid') {
     state = null;
     return;
   }
-  if (state?.projectId === route.projectId) return;
+  if (state?.projectId === route.projectId && root()?.firstChild) {
+    if (route.files) scrollToFiles();
+    return;
+  }
   state = { projectId: route.projectId, area: 'code', path: '', message: '' };
-  load();
+  load().then(() => route.files && scrollToFiles());
 });

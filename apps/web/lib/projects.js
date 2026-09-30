@@ -44,7 +44,7 @@ export function projectDetailMarkup(project) {
   const jobRows = jobs.map(job => `<tr><td><button type="button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${pill(
     job.status
   )}</td><td>${esc(job.review_verdict)}</td><td>${esc(job.provider)}/${esc(job.model)}</td></tr>`).join('');
-  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECT</p><h2>${esc(name)}</h2></div>${id && id !== 'sid' ? `<a class="button" href="#/projects/${encodeURIComponent(id)}/files">Files</a>` : ''}<label>Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
+  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECT</p><h2>${esc(name)}</h2></div>${id && id !== 'sid' ? `<a class="button" href="#/projects/${encodeURIComponent(id)}/files">Files ↓</a>` : ''}<label>Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
     project.importance === 'low' ? ' selected' : ''
@@ -153,6 +153,19 @@ if (typeof document !== 'undefined') {
   let renderVersion = 0;
   let busy = false; // an operator request is in flight: keep its status visible
   const root = () => document.getElementById('projects-root');
+  // A project page has two parts: the details this module re-renders every
+  // few seconds, and the file browser (lib/project-files.js), which keeps
+  // its own state and must not be redrawn with them.
+  const detailMain = () => {
+    const container = root();
+    if (!container) return null;
+    let main = document.getElementById('project-detail-main');
+    if (!main || !container.contains(main)) {
+      container.innerHTML = '<div id="project-detail-main"></div><div id="project-files-panel"></div>';
+      main = document.getElementById('project-detail-main');
+    }
+    return main;
+  };
   const focusedForm = container => {
     const active = document.activeElement;
     return active && container?.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
@@ -163,7 +176,7 @@ if (typeof document !== 'undefined') {
   };
   async function render(route, force = false) {
     const container = root();
-    if (!container || route.view !== 'projects' || route.create || route.files || busy || (!force && focusedForm(container))) return;
+    if (!container || route.view !== 'projects' || route.create || busy || (!force && focusedForm(document.getElementById('project-detail-main') || container))) return;
     const version = ++renderVersion;
     if (route.projectId === null) {
       try {
@@ -176,10 +189,10 @@ if (typeof document !== 'undefined') {
     }
     try {
       const project = await requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}?limit=25`);
-      if (version === renderVersion) container.innerHTML = projectDetailMarkup(project);
+      if (version === renderVersion) detailMain().innerHTML = projectDetailMarkup(project);
     } catch (error) {
       if (version !== renderVersion) return;
-      container.innerHTML = `<div class="empty">${error.message === 'HTTP 404' ? 'Project not found' : esc(error.message)}</div>`;
+      detailMain().innerHTML = `<div class="empty">${error.message === 'HTTP 404' ? 'Project not found' : esc(error.message)}</div>`;
     }
   }
   const formValues = form => Object.fromEntries(new FormData(form).entries());
@@ -187,7 +200,8 @@ if (typeof document !== 'undefined') {
     activeRoute = route;
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
-    if (route.view !== 'projects' || route.create || route.files) return;
+    if (route.view !== 'projects' || route.create) return;
+    if (route.projectId) detailMain(); // before the file browser looks for its slot
     render(route, true);
     refreshTimer = setInterval(() => render(activeRoute), 5000);
   });
