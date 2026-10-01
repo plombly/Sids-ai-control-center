@@ -92,9 +92,10 @@ export function projectsMarkup(projects = [], hostname = globalThis.location?.ho
           : app?.state && app.state !== 'stopped'
             ? `<span class="app-link warn">App ${esc(app.state.replace('_', ' '))}</span>`
             : '';
-      return `<a class="home-project" href="#/projects/${encodeURIComponent(project.id)}"><div class="card-top"><strong>${esc(project.name || project.id)}</strong><span class="importance imp-${escValue(project.importance)}">${esc(project.importance || '')}</span></div><span class="subtle">${busy ? `${esc(busy)} job${busy === 1 ? '' : 's'} in progress` : 'Idle'}${counts.jobs_awaiting_approval ? ` · ${esc(counts.jobs_awaiting_approval)} to approve` : ''}</span>${appLine}</a>`;
+      // The whole card opens the project (stretched link); the app link sits above it.
+      return `<article class="home-project"><div class="card-top"><a class="project-link" href="#/projects/${encodeURIComponent(project.id)}"><strong>${esc(project.name || project.id)}</strong></a><span class="importance imp-${escValue(project.importance)}">${esc(project.importance || '')}</span></div><span class="subtle">${busy ? `${esc(busy)} job${busy === 1 ? '' : 's'} in progress` : 'Idle'}${counts.jobs_awaiting_approval ? ` · ${esc(counts.jobs_awaiting_approval)} to approve` : ''}</span>${appLine}</article>`;
     })
-    .join('')}<a class="home-project add" href="#/projects/new"><strong>+ New project</strong><span class="subtle">Start empty or import from GitHub</span></a></div>`;
+    .join('')}<article class="home-project add"><a class="project-link" href="#/projects/new"><strong>+ New project</strong></a><span class="subtle">Start empty or import from GitHub</span></article></div>`;
 }
 
 // --- recently finished -------------------------------------------------------------------
@@ -139,7 +140,7 @@ function paint(id, html) {
 function draw(state) {
   if (typeof document === 'undefined' || !document.getElementById('home')) return;
   const get = key => (Array.isArray(state?.[key]?.data) ? state[key].data : []);
-  const names = Object.fromEntries(projects.map(project => [project.id, project.name || project.id]));
+  const names = Object.fromEntries(projects.map(project => [project.id, project.id === 'sid' ? 'SID' : project.name || project.id]));
   const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set() });
   const count = items.ready.length + items.stuck.length;
   paint('home-status', statusMarkup({ health, workers: get('workers'), jobs: get('jobs'), projects }));

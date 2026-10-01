@@ -57,6 +57,7 @@ test('projects and recent work', () => {
   assert.match(html, /1 job in progress · 2 to approve/);
   assert.match(html, /href="http:\/\/10.0.0.59:8100\/"/);
   assert.match(html, /\+ New project/);
+  assert.doesNotMatch(html, /<a [^>]*>(?:(?!<\/a>).)*<a /s);  // no link inside a link
   const recent = recentMarkup([
     { id: 'g1', status: 'completed', prompt: 'Old', updated_at: NOW - 9000 },
     { id: 'g2', status: 'failed', prompt: 'New', updated_at: NOW - 60, project_id: 'shop' },
