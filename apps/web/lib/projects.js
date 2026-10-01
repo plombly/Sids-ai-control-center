@@ -343,6 +343,9 @@ if (typeof document !== 'undefined') {
   const formValues = form => Object.fromEntries(new FormData(form).entries());
   onRoute(route => {
     activeRoute = route;
+    // A page still loading for the previous route must not draw over this one
+    // (e.g. the create wizard): every render checks this version first.
+    renderVersion += 1;
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
     if (route.view !== 'projects' || route.create) return;
