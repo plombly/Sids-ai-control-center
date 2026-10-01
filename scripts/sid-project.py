@@ -15,6 +15,8 @@ from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import sid_redis  # noqa: E402  (services/sid_redis.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
+import file_ops  # noqa: E402  (apps/api/file_ops.py, shared with the API)
 
 
 PROJECT_SET = "sid:projects"
@@ -343,10 +345,40 @@ def repo_path_parts(rel):
     return parts
 
 
+def change_main(record, project_id, change, message_for):
+    """Run change(repo) on the project's main checkout and commit whatever it
+    changed as "SID operator" (hooks off). Holds the project's approval lock
+    so it never races a merge; refuses unless the checkout is clean on main.
+    change returns a result dict; message_for(result) is the commit message."""
+    repo = Path(record["repo"])
+    r = get_redis()
+    lock_key, token = f"sid:approval-lock:{project_id}", uuid.uuid4().hex
+    if not r.set(lock_key, token, nx=True, ex=300):
+        raise ProjectError("main is being advanced by an approval right now; try again in a moment")
+    try:
+        branch = run_git(["symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
+        if branch != (record.get("default_branch") or "main"):
+            raise ProjectError(f"the project's checkout is on {branch!r}, not its main branch")
+        if run_git(["status", "--porcelain"], cwd=repo).stdout.strip():
+            raise ProjectError("the project's main checkout has uncommitted changes")
+        result = change(repo)
+        run_git(["add", "-A"], cwd=repo)
+        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo).returncode == 0:
+            return {"id": project_id, "status": "unchanged", **result}
+        who = {"GIT_AUTHOR_NAME": "SID operator", "GIT_AUTHOR_EMAIL": "operator@sid.local",
+               "GIT_COMMITTER_NAME": "SID operator", "GIT_COMMITTER_EMAIL": "operator@sid.local"}
+        run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message_for(result)],
+                cwd=repo, env={**os.environ, **who})
+        head = run_git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        return {"id": project_id, "status": "committed", "commit": head, **result}
+    finally:
+        r.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) "
+               "else return 0 end", 1, lock_key, token)
+
+
 def commit_upload(args):
     """Commit a file uploaded from the dashboard (staged by the API in
-    UPLOADS_BASE/<upload>/file) to the project's main, as the operator.
-    Holds the project's approval lock so it never races a merge."""
+    UPLOADS_BASE/<upload>/file) to the project's main, as the operator."""
     validate_id(args.id)
     if args.id == "sid":
         raise ProjectError("SID's own code cannot be changed by upload")
@@ -356,20 +388,11 @@ def commit_upload(args):
     staged = staged_dir / "file"
     try:
         parts = repo_path_parts(args.path)
-        r = get_redis()
-        record = project(r, args.id)
+        record = project(get_redis(), args.id)
         if staged.is_symlink() or not staged.is_file():
             raise ProjectError("uploaded file not found (it may have expired)")
-        repo = Path(record["repo"])
-        lock_key, token = f"sid:approval-lock:{args.id}", uuid.uuid4().hex
-        if not r.set(lock_key, token, nx=True, ex=300):
-            raise ProjectError("main is being advanced by an approval right now; try again in a moment")
-        try:
-            branch = run_git(["symbolic-ref", "--short", "HEAD"], cwd=repo).stdout.strip()
-            if branch != (record.get("default_branch") or "main"):
-                raise ProjectError(f"the project's checkout is on {branch!r}, not its main branch")
-            if run_git(["status", "--porcelain"], cwd=repo).stdout.strip():
-                raise ProjectError("the project's main checkout has uncommitted changes")
+
+        def place(repo):
             current = repo
             for part in parts[:-1]:
                 current = current / part
@@ -380,22 +403,41 @@ def commit_upload(args):
                 raise ProjectError(f"{args.path} is a folder or a link")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(staged, dest)
-            rel = "/".join(parts)
-            run_git(["add", "--", rel], cwd=repo)
-            if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo).returncode == 0:
-                return {"id": args.id, "status": "unchanged", "path": rel}
-            who = {"GIT_AUTHOR_NAME": "SID operator", "GIT_AUTHOR_EMAIL": "operator@sid.local",
-                   "GIT_COMMITTER_NAME": "SID operator", "GIT_COMMITTER_EMAIL": "operator@sid.local"}
-            run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m",
-                     f"Upload {rel} from the dashboard"], cwd=repo, env={**os.environ, **who})
-            head = run_git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
-        finally:
-            r.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) "
-                   "else return 0 end", 1, lock_key, token)
+            return {"path": "/".join(parts)}
+
+        return change_main(record, args.id, place, lambda result: f"Upload {result['path']} from the dashboard")
     finally:
         if staged_dir.is_dir() and not staged_dir.is_symlink() and staged_dir.parent == UPLOADS_BASE:
             shutil.rmtree(staged_dir, ignore_errors=True)
-    return {"id": args.id, "status": "committed", "path": rel, "commit": head}
+
+
+CHANGE_MESSAGES = {
+    "mkdir": lambda r: f"Create folder {r['path']} from the dashboard",
+    "rename": lambda r: f"Rename {r['from']} to {r['path']} from the dashboard",
+    "move": lambda r: f"Move {r['from']} to {r['path']} from the dashboard",
+    "copy": lambda r: f"Copy {r['from']} to {r['path']} from the dashboard",
+    "delete": lambda r: f"Delete {r['path']} from the dashboard",
+    "zip": lambda r: f"Zip {r['from']} into {r['path']} from the dashboard",
+    "unzip": lambda r: f"Unzip {r['from']} into {r['path']} from the dashboard",
+}
+
+
+def code_change(args):
+    """A file-browser operation (file_ops) on the project's main, committed."""
+    validate_id(args.id)
+    if args.id == "sid":
+        raise ProjectError("SID's own code cannot be changed from the file browser")
+    if args.op not in CHANGE_MESSAGES:
+        raise ProjectError(f"unknown operation: {args.op}")
+    record = project(get_redis(), args.id)
+
+    def change(repo):
+        try:
+            return file_ops.apply(repo, args.op, args.path, args.dest or "", forbid_git=True, keep_file=True)
+        except file_ops.FileOpError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    return change_main(record, args.id, change, CHANGE_MESSAGES[args.op])
 
 
 def retry_clone(args):
@@ -434,6 +476,7 @@ def main(argv=None):
     p = sub.add_parser("archive"); p.add_argument("id")
     p = sub.add_parser("delete"); p.add_argument("id"); p.add_argument("--confirm", required=True, help="the project id again")
     p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True)
+    p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
     p = sub.add_parser("show"); p.add_argument("id")
     sub.add_parser("list")
     args = parser.parse_args(argv)
@@ -442,6 +485,8 @@ def main(argv=None):
         elif args.command == "register-existing": result = register_existing(args)
         elif args.command == "retry-clone": result = retry_clone(args)
         elif args.command == "push-setup":
+            if args.id == "sid":
+                raise ProjectError("SID's own remote and key are set up by hand on the host (git remote in its checkout)")
             validate_id(args.id); r = get_redis(); record = project(r, args.id); record, public = do_push_setup(r, record, args.url); result = dict(record, public_key=public, instruction="Add this public key to the GitHub repository as a deploy key with write access")
         elif args.command == "set-importance":
             validate_id(args.id); validate_importance(args.level); r = get_redis(); record = project(r, args.id); record["importance"] = args.level; record["updated_at"] = now(); r.hset(key_for(args.id), mapping=record); result = record
@@ -451,6 +496,8 @@ def main(argv=None):
             result = delete(args)
         elif args.command == "commit-upload":
             result = commit_upload(args)
+        elif args.command == "code-change":
+            result = code_change(args)
         elif args.command == "show":
             validate_id(args.id); result = project(get_redis(), args.id)
         else:

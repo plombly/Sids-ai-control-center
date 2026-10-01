@@ -154,3 +154,15 @@ def test_loadavg_unreadable(wd):
 def test_threshold_environment_override(wd, monkeypatch):
     monkeypatch.setenv("WATCHDOG_MEM_WARN_PERCENT", "80")
     assert wd.check_memory(lambda: "MemTotal: 100 kB\nMemAvailable: 75 kB\n")["level"] == "warn"
+
+
+def test_system_info_hides_credentials_in_https_remotes():
+    import subprocess as sp
+    module = load_module(ROOT / "scripts/sid-watchdog.py")
+    answers = {"get-url": "https://user:tok@github.com/me/sid.git", "symbolic-ref": "main", "rev-parse": "abc1234",
+               "log": "Last commit"}
+    def runner(args, **kwargs):
+        key = next(k for k in answers if k in args)
+        return sp.CompletedProcess(args, 0, answers[key] + "\n", "")
+    info = module.system_info(runner)
+    assert info["remote"] == "https://github.com/me/sid.git" and info["branch"] == "main" and info["head"] == "abc1234"

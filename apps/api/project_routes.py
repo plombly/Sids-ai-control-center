@@ -149,6 +149,17 @@ def _counts(project_id):
     return counts
 
 
+def _system_info():
+    try:
+        info = json.loads(_redis().redis.get("sid:system-info") or "{}")
+    except (TypeError, ValueError):
+        info = {}
+    info = info if isinstance(info, dict) else {}
+    return {"remote": _text(info.get("remote")), "branch": _text(info.get("branch")),
+            "head": _text(info.get("head")), "subject": _text(info.get("subject")),
+            "gate": "scripts/integration-check.py (tests, self-tests, diagnostics)"}
+
+
 def _app_status(project_id):
     status = _data(_redis().redis.hgetall(f"sid:app-status:{project_id}"))
     if not status:
@@ -167,11 +178,13 @@ def _item(project_id, data=None):
         "name": _text(data.get("name"), "SID AI Command Center" if project_id == "sid" else project_id),
         "importance": _text(data.get("importance"), "medium"),
         "status": _text(data.get("status"), "active"),
-        "gate_command": _text(data.get("gate_command")),
+        "gate_command": "scripts/integration-check.py" if project_id == "sid" else _text(data.get("gate_command")),
         "setup_command": _text(data.get("setup_command")),
         "run_command": _text(data.get("run_command")),
         "run_port": _numeric(data.get("run_port")),
         "app": _app_status(project_id),
+        # SID itself: the control plane, configured on the host.
+        "system": _system_info() if project_id == "sid" else None,
         "push_remote": _text(data.get("push_remote")),
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
@@ -320,6 +333,10 @@ def retry_clone(project_id: str, payload: ProjectRequest):
 @router.post("/api/projects/{project_id}/push-setup", status_code=202)
 def push_setup(project_id: str, payload: ProjectPushSetup):
     project_id = _id(project_id)
+    if project_id == "sid":
+        # SID's own GitHub remote and key are configured on the host; this
+        # would replace them and could break pushing.
+        raise HTTPException(status_code=403, detail="SID's GitHub setup is managed on the host, not from the dashboard")
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return _operator_request("project_push_setup", payload.request_id,

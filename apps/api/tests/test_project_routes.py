@@ -183,7 +183,10 @@ def test_retry_clone_only_for_projects_waiting_for_a_key(client):
 def test_push_setup_request(client):
     test_client, fake = client
     _operator_ready(fake)
-    response = test_client.post("/api/projects/sid/push-setup",
+    refused = test_client.post("/api/projects/sid/push-setup",
+                               json={"url": "git@github.com:me/sid.git", "request_id": "req-push-0000"})
+    assert refused.status_code == 403 and fake.stream == []
+    response = test_client.post("/api/projects/alpha/push-setup",
                                 json={"url": "git@github.com:me/sid.git", "request_id": "req-push-0001"})
     assert response.status_code == 202
     assert fake.stream[-1][1] | {} == {**fake.stream[-1][1], "action": "project_push_setup", "url": "git@github.com:me/sid.git"}
@@ -239,3 +242,11 @@ def test_app_status_and_restart(client):
     assert test_client.post("/api/projects/alpha/app/restart").status_code == 202
     assert "restart_at" in fake.hashes["sid:projects:alpha"]
     assert test_client.post("/api/projects/sid/app/restart").status_code == 404
+
+
+def test_sid_project_shows_its_system_info_and_real_gate(client):
+    test_client, fake = client
+    fake.strings["sid:system-info"] = json.dumps({"remote": "git@github.com:me/sid.git", "branch": "main", "head": "abc1234"})
+    sid = test_client.get("/api/projects/sid").json()
+    assert sid["system"]["remote"] == "git@github.com:me/sid.git" and sid["gate_command"] == "scripts/integration-check.py"
+    assert test_client.get("/api/projects/alpha").json()["system"] is None

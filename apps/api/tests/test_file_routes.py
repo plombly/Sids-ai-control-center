@@ -98,3 +98,32 @@ def test_code_upload_cleans_staging_when_the_host_refuses(files):
     response = client.put("/api/projects/shop/files/code", params={"path": "a.txt", "request_id": "upload-0003"},
                           content=b"x")
     assert response.status_code == 403 and not (uploads / "upload-0003").exists()
+
+
+def test_data_operations_happen_now(files):
+    client, _, _, data, _ = files
+    client.put("/api/projects/shop/files/data?path=a.txt", content=b"a")
+    post = lambda **body: client.post("/api/projects/shop/files/data/op", json=body)
+    assert post(op="rename", path="a.txt", dest="b.txt").json()["path"] == "b.txt"
+    assert post(op="mkdir", path="dir").json()["path"] == "dir"
+    assert post(op="move", path="b.txt", dest="dir").json()["path"] == "dir/b.txt"
+    assert post(op="zip", path="dir").json()["path"] == "dir.zip"
+    assert post(op="unzip", path="dir.zip").json()["path"] == "dir (2)"
+    assert (data / "dir (2)" / "dir" / "b.txt").read_bytes() == b"a"
+    assert post(op="rename", path="dir", dest="../x").status_code == 422
+    assert post(op="delete", path="").status_code == 422
+
+
+def test_code_operations_go_to_the_host(files):
+    client, fake, repo, _, _ = files
+    _operator_ready(fake, allowed="project_commit_upload")
+    post = lambda **body: client.post("/api/projects/shop/files/code/op", json=body)
+    response = post(op="rename", path="src/app.js", dest="main.js", request_id="code-op-0001")
+    assert response.status_code == 202 and response.json()["status"] == "pending"
+    fields = fake.stream[-1][1]
+    assert (fields["action"], fields["op"], fields["path"], fields["dest"]) == ("project_commit_upload", "rename", "src/app.js", "main.js")
+    assert (repo / "src" / "app.js").exists()  # nothing changed by the API
+    assert post(op="delete", path=".git", request_id="code-op-0002").status_code == 404
+    assert post(op="rename", path="src/app.js", dest=".git", request_id="code-op-0003").status_code == 422
+    assert post(op="delete", path="missing.txt", request_id="code-op-0004").status_code == 404
+    assert post(op="delete", path="src/app.js").status_code == 422  # needs a request id

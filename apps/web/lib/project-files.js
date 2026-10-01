@@ -7,7 +7,7 @@ import { esc, escValue } from './format.js';
 import { registerClick, onRoute } from './registry.js';
 
 const AREAS = {
-  code: { label: 'Code (main)', note: 'Uploads here are committed straight to main as you (no review, no tests).' },
+  code: { label: 'Code (main)', note: 'Every change here (upload, rename, move, copy, zip, delete) is committed straight to main as you: no review, no tests.' },
   data: { label: 'App data', note: "Your app's data folder (DATA_DIR). Files here are not part of the code." }
 };
 
@@ -39,6 +39,18 @@ export function breadcrumbMarkup(area, path) {
   return `<div class="breadcrumb">${crumbs.join('<span class="subtle"> / </span>')}</div>`;
 }
 
+// The actions a row offers. Download sends a file as itself and a folder
+// as a zip; links (rare) can only be renamed, moved or deleted.
+export function rowActions(entry) {
+  const actions = [];
+  if (entry.type !== 'link') actions.push(['download', entry.type === 'dir' ? 'Download as zip' : 'Download']);
+  actions.push(['rename', 'Rename…'], ['move', 'Move to…']);
+  if (entry.type !== 'link') actions.push(['copy', 'Copy to…'], ['zip', 'Zip']);
+  if (entry.type === 'file' && /\.zip$/i.test(entry.name)) actions.push(['unzip', 'Unzip']);
+  actions.push(['delete', 'Delete']);
+  return actions;
+}
+
 export function listingMarkup(projectId, area, path, entries = []) {
   if (!entries.length) return '<div class="empty">This folder is empty</div>';
   const rows = entries.map(entry => {
@@ -50,9 +62,11 @@ export function listingMarkup(projectId, area, path, entries = []) {
           ? `<span class="subtle">${esc(entry.name)} (link)</span>`
           : `<a href="${escValue(downloadUrl(projectId, area, full))}" download>${esc(entry.name)}</a>`;
     const modified = entry.modified ? new Date(entry.modified * 1000).toLocaleString() : '';
-    const remove = area === 'data' ? `<button type="button" class="danger-button" data-file-delete="${escValue(full)}">Delete</button>` : '';
-    const download = entry.type === 'dir' ? `<a class="button" href="${escValue(downloadUrl(projectId, area, full))}" download>Zip</a>` : '';
-    return `<tr><td>${name}</td><td>${escValue(formatSize(entry.size))}</td><td class="subtle">${escValue(modified)}</td><td>${download}${remove}</td></tr>`;
+    const options = rowActions(entry)
+      .map(([value, label]) => `<option value="${value}">${esc(label)}</option>`)
+      .join('');
+    const menu = `<select class="file-action" data-file-action="${escValue(full)}" data-file-type="${escValue(entry.type)}" aria-label="Actions for ${escValue(entry.name)}"><option value="">Actions…</option>${options}</select>`;
+    return `<tr><td>${name}</td><td>${escValue(formatSize(entry.size))}</td><td class="subtle">${escValue(modified)}</td><td>${menu}</td></tr>`;
   });
   return `<div class="table-wrap"><table class="job-table file-table"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
 }
@@ -67,7 +81,7 @@ export function filesPageMarkup(state, listing) {
     : listing
       ? listingMarkup(projectId, area, path, listing.entries)
       : '<div class="empty">Loading…</div>';
-  const newFolder = area === 'data' ? '<button type="button" data-file-new-folder="1">New folder</button>' : '';
+  const newFolder = '<button type="button" data-file-new-folder="1">New folder</button>';
   return `<section class="panel wide" id="project-files"><div class="panel-heading"><div><p class="eyebrow">FILES</p><h2>Code and data</h2></div><div class="file-tabs">${tabs}</div></div><p class="subtle">${esc(AREAS[area].note)}</p>${breadcrumbMarkup(
     area,
     path
@@ -162,36 +176,70 @@ registerClick('fileArea', button => {
   state.message = '';
   load();
 });
-registerClick('fileDelete', async button => {
-  if (!state) return;
-  const target = button.dataset.fileDelete;
-  if (!globalThis.confirm?.(`Delete ${target} from the app data? This cannot be undone.`)) return;
+const base = () => `/api/projects/${encodeURIComponent(state.projectId)}/files/${state.area}`;
+
+// One file operation. Data: done at once. Code: the host commits it to main.
+async function runOp(op, path, dest = '') {
+  const area = state.area;
+  const body = { op, path, dest };
+  if (area === 'code') body.request_id = newRequestId();
+  say(area === 'code' ? `Committing ${op} of ${path || dest} to main…` : `Working…`);
   try {
-    await requestJSON(`/api/projects/${encodeURIComponent(state.projectId)}/files/data?${new URLSearchParams({ path: target })}`, { method: 'DELETE' });
-    say(`Deleted ${target}`);
+    const response = await requestJSON(`${base()}/op`, { method: 'POST', body: JSON.stringify(body) });
+    if (area === 'code') {
+      const result = await waitForHost(response.request_id || body.request_id);
+      say(result.status === 'succeeded' ? `Done: ${result.message || op}` : `${op} failed: ${result.message || result.status}`);
+    } else {
+      say(`Done: ${op} ${response.path || path}`);
+    }
   } catch (error) {
     say(error.message);
   }
-  load();
-});
+  await load();
+}
+
+function download(path) {
+  const link = document.createElement('a');
+  link.href = downloadUrl(state.projectId, state.area, path);
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+const promptFolder = (verb, name) =>
+  globalThis.prompt?.(`${verb} ${name} to which folder? (path from the top, empty = top level)`, state.path);
+
+async function rowAction(select) {
+  const path = select.dataset.fileAction;
+  const action = select.value;
+  select.value = '';
+  if (!state || !action) return;
+  const name = path.split('/').pop();
+  if (action === 'download') return download(path);
+  if (action === 'rename') {
+    const next = globalThis.prompt?.(`Rename ${name} to`, name)?.trim();
+    if (next && next !== name) await runOp('rename', path, next);
+  } else if (action === 'move' || action === 'copy') {
+    const dest = promptFolder(action === 'move' ? 'Move' : 'Copy', name);
+    if (dest !== null && dest !== undefined) await runOp(action, path, dest.trim().replace(/^\/+|\/+$/g, ''));
+  } else if (action === 'delete') {
+    const where = state.area === 'code' ? 'the code (this commits to main)' : 'the app data';
+    if (globalThis.confirm?.(`Delete ${name} from ${where}? This cannot be undone.`)) await runOp('delete', path);
+  } else if (action === 'zip' || action === 'unzip') {
+    await runOp(action, path);
+  }
+}
+
 registerClick('fileNewFolder', async () => {
   if (!state) return;
   const name = globalThis.prompt?.('New folder name')?.trim();
-  if (!name) return;
-  try {
-    await requestJSON(`/api/projects/${encodeURIComponent(state.projectId)}/files/data/folder`, {
-      method: 'POST',
-      body: JSON.stringify({ path: joinPath(state.path, name) })
-    });
-    say(`Created ${name}`);
-  } catch (error) {
-    say(error.message);
-  }
-  load();
+  if (name) await runOp('mkdir', joinPath(state.path, name));
 });
 
 if (typeof document !== 'undefined') {
   document.addEventListener('change', event => {
+    if (event.target?.matches?.('select[data-file-action]')) return rowAction(event.target);
     if (event.target?.id !== 'project-file-input' || !state) return;
     const files = Array.from(event.target.files || []);
     if (files.length) upload(files);

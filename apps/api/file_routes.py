@@ -20,13 +20,14 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+import file_ops
 import project_routes as projects
 
 router = APIRouter()
@@ -244,3 +245,41 @@ async def upload_code(project_id: str, request: Request, path: str = Query(min_l
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return {**result, "path": rel, "size": size}
+
+
+class FileOp(BaseModel):
+    op: Literal["mkdir", "rename", "move", "copy", "delete", "zip", "unzip"]
+    path: str = Field(default="", max_length=400)
+    dest: str = Field(default="", max_length=400)
+    request_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+
+
+@router.post("/api/projects/{project_id}/files/{area}/op")
+def file_op(project_id: str, area: Literal["code", "data"], payload: FileOp):
+    """mkdir / rename (dest = new name) / move, copy (dest = folder) /
+    delete / zip / unzip. Data: done now. Code: checked here against the
+    read-only checkout, then committed to main by the host (poll the
+    operator request)."""
+    project_id, data = _project(project_id)
+    if area == "data":
+        root = _area_root(project_id, data, "data", create=True)
+        try:
+            return {"area": "data", **file_ops.apply(root, payload.op, payload.path, payload.dest)}
+        except file_ops.FileOpError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc))
+    root = _area_root(project_id, data, "code")
+    try:
+        _, rel = file_ops.resolve(root, payload.path, must_exist=payload.op != "mkdir", forbid_git=True)
+        if payload.op == "rename":
+            file_ops.check_name(payload.dest, forbid_git=True)
+        if payload.op in ("move", "copy"):
+            file_ops.resolve(root, payload.dest, forbid_git=True)
+    except file_ops.FileOpError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    if not rel:
+        raise HTTPException(status_code=422, detail="Choose a file or folder, not the top level")
+    if not payload.request_id:
+        raise HTTPException(status_code=422, detail="request_id is required for code changes")
+    result = projects._operator_request("project_commit_upload", payload.request_id, {
+        "project_id": project_id, "op": payload.op, "path": rel, "dest": payload.dest})
+    return JSONResponse(status_code=202, content={**result, "area": "code", "op": payload.op, "path": rel})

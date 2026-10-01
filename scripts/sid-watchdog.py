@@ -242,8 +242,30 @@ def publish(r, report):
     return changes
 
 
+SYSTEM_INFO_KEY = "sid:system-info"
+
+
+def system_info(runner=subprocess.run):
+    """What the dashboard shows on SID's own project page (the API container
+    has no git): its GitHub remote, branch and current commit."""
+    def git(*args):
+        result = runner(["git", "-C", REPO_ROOT, *args], text=True, capture_output=True)
+        return result.stdout.strip() if result.returncode == 0 else ""
+    remote = git("remote", "get-url", "origin")
+    # Never publish credentials embedded in an https remote.
+    if "@" in remote and remote.startswith("http"):
+        remote = "https://" + remote.split("@", 1)[1]
+    return {"remote": remote, "branch": git("symbolic-ref", "--short", "HEAD"),
+            "head": git("rev-parse", "--short", "HEAD"), "subject": git("log", "-1", "--format=%s"),
+            "checked_at": str(time.time())}
+
+
 def main():
     r = redis_lib.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
+    try:
+        r.set(SYSTEM_INFO_KEY, json.dumps(system_info()), ex=HEALTH_TTL)
+    except Exception as exc:
+        print(f"[sid-watchdog] could not publish system info: {exc}", flush=True)
     report = run_checks(r)
     try:
         for line in publish(r, report):

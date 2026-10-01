@@ -71,8 +71,11 @@ FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
-    "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload",
+    "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
 )
+# project_commit_upload commits one dashboard file change to a project's main:
+# an upload (op "upload", the default) or a file-browser operation.
+CODE_OPS = ("mkdir", "rename", "move", "copy", "delete", "zip", "unzip")
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 # Web-requested clones and push remotes: network git URLs only (never a host
 # path, which would copy an arbitrary local directory into a project).
@@ -206,13 +209,23 @@ def validate_project_request(action, fields):
     elif action == "project_commit_upload":
         if project_id == "sid":
             raise Invalid("SID's own code cannot be changed by upload")
-        path = fields.get("path", "")
-        if not path or len(path) > 400 or any(ord(c) < 32 for c in path) or path.startswith("/"):
-            raise Invalid("invalid upload path")
-        if not REQUEST_ID.fullmatch(fields.get("upload", "")):
-            raise Invalid("invalid upload id")
-        request.update(path=path, upload=fields["upload"])
+        path, dest, op = fields.get("path", ""), fields.get("dest", ""), fields.get("op") or "upload"
+        for value in (path, dest):
+            if len(value) > 400 or any(ord(c) < 32 for c in value) or value.startswith("/"):
+                raise Invalid("invalid path")
+        if not path:
+            raise Invalid("invalid path")
+        if op == "upload":
+            if not REQUEST_ID.fullmatch(fields.get("upload", "")):
+                raise Invalid("invalid upload id")
+            request.update(op="upload", path=path, upload=fields["upload"])
+        elif op in CODE_OPS:
+            request.update(op=op, path=path, dest=dest)
+        else:
+            raise Invalid(f"unknown file operation: {op!r}")
     elif action == "project_push_setup":
+        if project_id == "sid":
+            raise Invalid("SID's GitHub setup is managed on the host, not from the dashboard")
         if not GIT_URL.fullmatch(url):
             raise Invalid("push setup needs a git@..., ssh:// or https:// URL")
         request["url"] = url
@@ -235,7 +248,10 @@ def project_cli_args(request):
     if action == "delete_project":
         return ["delete", project_id, "--confirm", request["confirm"]]
     if action == "project_commit_upload":
-        return ["commit-upload", project_id, "--path", request["path"], "--upload", request["upload"]]
+        if request.get("op", "upload") == "upload":
+            return ["commit-upload", project_id, "--path", request["path"], "--upload", request["upload"]]
+        return ["code-change", project_id, "--op", request["op"], "--path", request["path"],
+                "--dest", request.get("dest", "")]
     return ["push-setup", project_id, request["url"]]
 
 

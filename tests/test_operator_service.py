@@ -493,3 +493,18 @@ def test_commit_upload_request(op):
     with pytest.raises(op.Invalid, match="SID"):
         op.validate({"action": "project_commit_upload", "project_id": "sid", "path": "a", "upload": "upload-0001"},
                     f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_code_change_request(op):
+    request = op.validate({"action": "project_commit_upload", "project_id": "web", "op": "rename",
+                           "path": "a.txt", "dest": "b.txt"}, f"{int(NOW * 1000)}-0", NOW)
+    assert op.project_cli_args(request) == ["code-change", "web", "--op", "rename", "--path", "a.txt", "--dest", "b.txt"]
+    with pytest.raises(op.Invalid, match="unknown"):
+        op.validate({"action": "project_commit_upload", "project_id": "web", "op": "chmod", "path": "a"},
+                    f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_push_setup_is_refused_for_sid(op):
+    with pytest.raises(op.Invalid, match="managed on the host"):
+        op.validate({"action": "project_push_setup", "project_id": "sid", "url": "git@github.com:me/x.git"},
+                    f"{int(NOW * 1000)}-0", NOW)

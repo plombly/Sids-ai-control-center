@@ -9,7 +9,8 @@ import {
   deleteProjectMarkup,
   buildSettingsMarkup,
   appStatusMarkup,
-  buildSettingsRequest
+  buildSettingsRequest,
+  systemInfoMarkup
 } from './lib/projects.js';
 
 test('project list markup renders projects and empty state', () => {
@@ -109,4 +110,18 @@ test('app status links to the app on this server only when running', () => {
   assert.doesNotMatch(crashed, /href=/);
   assert.match(crashed, /&lt;err&gt;/);
   assert.equal(appStatusMarkup({ id: 'shop', run_command: '' }, 'h'), '');
+});
+
+test('SID: labelled as this system, no GitHub push form, shows its host setup', () => {
+  const list = projectListMarkup([{ id: 'sid', name: 'SID', importance: 'high', status: 'active', counts: {}, stats: {} }]);
+  assert.match(list, /this system/);
+  const page = projectDetailMarkup({ id: 'sid', name: 'SID', status: 'active', system: { remote: 'git@github.com:me/sid.git', branch: 'main', head: 'abc1234', subject: '<b>' } });
+  assert.match(page, /SID · THIS SYSTEM/);
+  assert.doesNotMatch(page, /project-push-form/);
+  assert.match(page, /git@github.com:me\/sid.git/);
+  assert.match(page, /main @ abc1234/);
+  assert.match(page, /&lt;b&gt;/);
+  assert.match(page, /project-goal-form/);
+  assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }), /project-push-form/);
+  assert.match(systemInfoMarkup(null), /not reported yet/);
 });

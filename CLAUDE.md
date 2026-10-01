@@ -213,9 +213,20 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   sid-project.py commit-upload (operator action project_commit_upload,
   holds the project's approval lock, author "SID operator", hooks off).
   Paths are confined (no .., no .git, symlinks may not lead out); SID's own
-  repo is not browsable. New deploy keys live in /etc/sid-ai/project-keys/
+  repo is not browsable. Operations (apps/api/file_ops.py, stdlib only,
+  shared by API and host): mkdir, rename, move, copy, delete, zip, unzip
+  (zip-slip/links/.git refused, size caps, never overwrites: "x (2)").
+  Data: POST /api/projects/<id>/files/data/op runs them at once. Code: the
+  same endpoint on /code queues project_commit_upload with op/path/dest and
+  the host runs sid-project.py code-change, which commits the result to
+  main (shared change_main(): lock, clean main, "SID operator", hooks off).
+  New deploy keys live in /etc/sid-ai/project-keys/
   <id>/ (older ones stay in the project dir). Backups include every project
   repo bundle and a tarball of /opt/sid-project-data.
+- SID's own project page ("SID · this system"): goals and importance only;
+  GitHub push setup is refused for "sid" by API, operator and CLI (it would
+  replace SID's remote/key). The watchdog publishes sid:system-info (JSON:
+  remote, branch, head; https credentials stripped) for that page.
 - Delete: sid-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
   Refuses SID and projects with running work; removes queued work,

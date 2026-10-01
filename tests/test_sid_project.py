@@ -342,3 +342,28 @@ def test_upload_refuses_symlinked_parents_dirty_main_and_a_held_lock(uploadable,
     code, captured, _ = invoke(["commit-upload", "shop", "--path", "a.txt", "--upload", "upload-0005"], capsys)
     assert code == 1 and "approval" in captured.err and fake.strings["sid:approval-lock:shop"] == "someone"
     assert invoke(["commit-upload", "sid", "--path", "a.txt", "--upload", "upload-0006"], capsys)[0] == 1
+
+
+def test_code_change_commits_each_operation(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    steps = [(["--op", "mkdir", "--path", "docs"], "Create folder docs"),
+             (["--op", "rename", "--path", "README.md", "--dest", "INTRO.md"], "Rename README.md to INTRO.md"),
+             (["--op", "move", "--path", "INTRO.md", "--dest", "docs"], "Move INTRO.md to docs/INTRO.md"),
+             (["--op", "copy", "--path", "docs/INTRO.md", "--dest", ""], "Copy docs/INTRO.md to INTRO.md"),
+             (["--op", "zip", "--path", "docs"], "Zip docs into docs.zip"),
+             (["--op", "unzip", "--path", "docs.zip"], "Unzip docs.zip into docs (2)"),
+             (["--op", "delete", "--path", "docs.zip"], "Delete docs.zip")]
+    for extra, message in steps:
+        code, captured, out = invoke(["code-change", "shop", *extra], capsys)
+        assert code == 0 and out["status"] == "committed", captured.err
+        subject = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout
+        assert subject.strip() == f"{message} from the dashboard"
+    assert (repo / "docs (2)" / "docs" / "INTRO.md").read_text() == "hi\n"
+    assert not fake.strings  # lock released
+    code, captured, _ = invoke(["code-change", "shop", "--op", "delete", "--path", ".git"], capsys)
+    assert code == 1
+
+
+def test_push_setup_refuses_sid(capsys):
+    code, captured, _ = invoke(["push-setup", "sid", "git@github.com:me/x.git"], capsys)
+    assert code == 1 and "by hand" in captured.err

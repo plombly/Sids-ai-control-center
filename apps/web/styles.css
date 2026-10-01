@@ -690,3 +690,13 @@ label {
 .file-table td:last-child > * + * {
   margin-left: 6px;
 }
+select.file-action {
+  width: auto;
+  padding: 4px 8px;
+}
+.system-info {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
