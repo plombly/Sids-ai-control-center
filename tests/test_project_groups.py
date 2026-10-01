@@ -117,6 +117,8 @@ def orch(group):
 def test_parent_planner_sees_every_member_and_names_the_project(orch):
     prompt = orch.planner_prompt("Add a loyalty program", project=sid_projects.load(orch.r, "shop"))
     assert "PROJECT GROUP" in prompt
+    assert "High-level goal:\nAdd a loyalty program" in prompt and "ATOMIC MODE: disabled" in prompt
+    assert "Plan from the goal" in prompt
     for member in ("shop", "shop-app", "shop-admin"):
         assert f"id: {member};" in prompt
     assert '"project": "member id"' in prompt and prompt.count("README.md") >= 3

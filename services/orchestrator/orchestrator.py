@@ -210,7 +210,9 @@ def group_planner_prompt(goal, atomic, project, members):
     """The normal planner prompt with the single repository replaced by the
     group's members and a "project" field on every job."""
     single = single_planner_prompt(goal, atomic, project)
-    start = single.index("Repository:\n")
+    # The parent's single repository line and manifest become the group's members.
+    single = single.replace(f"Repository:\n{project.repo}\n", "Repositories: one per group member (below).\n", 1)
+    start = single.index("Repository manifest:\n")
     end = single.index("Break the goal into")
     prompt = single[:start] + group_section(project, members) + "\n\n" + single[end:]
     prompt = prompt.replace(f"- Files currently being changed by other in-flight jobs (work touching them\n  will wait until they finish):\n{busy_files_summary(project.id)}\n", "")
