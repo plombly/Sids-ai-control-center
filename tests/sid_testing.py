@@ -83,6 +83,12 @@ class MemoryRedis:
         self.values.setdefault(key, []).append(value)
         return len(self.values[key])
 
+    def smembers(self, key):
+        return set(self.values.get(key) or set())
+
+    def sadd(self, key, *members):
+        self.values.setdefault(key, set()).update(members)
+
     def lpush(self, key, value):
         self.values.setdefault(key, []).insert(0, value)
         return len(self.values[key])

@@ -4,6 +4,7 @@ import { registerPanel, registerClick, onRoute } from './registry.js';
 import { projectsMarkup as homeProjectsMarkup } from './home.js';
 import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
 import { assistantMarkup } from './goal-assistant.js';
+import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
 
 const requestId = newRequestId;
 
@@ -85,14 +86,15 @@ function overviewMarkup(project) {
   const jobRows = jobs
     .map(job => `<tr><td><button type="button" class="detail-button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${esc(firstLine(job.title) || '')}</td><td>${pill(job.status)}</td><td class="subtle">${esc(job.provider)}/${esc(job.model)}</td></tr>`)
     .join('');
-  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should SID do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should SID do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
 const ACTIVITY = {
   goal_started: ['•', 'info'], goal_done: ['✓', 'ok'], goal_failed: ['✕', 'bad'], merged: ['✓', 'ok'],
   rejected: ['✕', 'muted'], stuck: ['!', 'warn'], undo: ['↶', 'warn'], code_change: ['✎', 'info'],
-  deployed: ['▲', 'ok'], app_problem: ['!', 'bad'], preview: ['◐', 'info'], restored: ['↺', 'info']
+  deployed: ['▲', 'ok'], app_problem: ['!', 'bad'], preview: ['◐', 'info'], restored: ['↺', 'info'],
+  build: ['⚙', 'ok'], build_failed: ['⚙', 'bad'], network: ['⇄', 'warn'], group: ['⧉', 'info']
 };
 
 export function activityMarkup(events, now = Date.now() / 1000) {
@@ -150,7 +152,7 @@ export function historyMarkup(history, now = Date.now() / 1000) {
 function settingsMarkup(project) {
   const id = text(project?.id, '');
   if (id === 'sid') return systemInfoMarkup(project.system);
-  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
 export function projectDetailMarkup(project, tab = 'overview') {
@@ -165,7 +167,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
     : '';
   const body =
     tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events) : tab === 'builds' ? buildsMarkup(id, project.builds) : tab === 'files' ? '' : overviewMarkup(project);
-  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2></div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}<label class="importance-select">Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
+  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}<label class="importance-select"${project.parent ? ` title="Follows ${escValue(project.parent_name || project.parent)}"` : ''}>Importance <select id="project-importance" data-project="${esc(id)}"${project.parent ? ' disabled' : ''}><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
     project.importance === 'low' ? ' selected' : ''
@@ -346,7 +348,7 @@ if (typeof document !== 'undefined') {
       const id = encodeURIComponent(route.projectId);
       const tab = route.tab || 'overview';
       const optional = path => requestJSON(path).catch(() => null);
-      const [project, extra, catalog] = await Promise.all([
+      const [project, extra, catalog, allProjects] = await Promise.all([
         requestJSON(`/api/projects/${id}?limit=25`),
         tab === 'settings' && route.projectId !== 'sid' ? optional(`/api/projects/${id}/env`)
           : tab === 'history' ? optional(`/api/projects/${id}/history`)
@@ -354,7 +356,8 @@ if (typeof document !== 'undefined') {
           : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
           : tab === 'builds' ? optional(`/api/projects/${id}/builds`)
           : null,
-        tab === 'overview' || tab === 'settings' ? loadCatalog().catch(() => null) : null
+        tab === 'overview' || tab === 'settings' ? loadCatalog().catch(() => null) : null,
+        tab === 'settings' ? optional('/api/projects') : null
       ]);
       if (project) {
         if (tab === 'settings') project.env = extra;
@@ -363,6 +366,7 @@ if (typeof document !== 'undefined') {
         if (tab === 'overview') project.usage = extra;
         if (tab === 'builds') project.builds = extra;
         project.catalog = catalog;
+        project.allProjects = Array.isArray(allProjects) ? allProjects : [];
       }
       if (version === renderVersion) {
         detailMain().innerHTML = projectDetailMarkup(project, tab);

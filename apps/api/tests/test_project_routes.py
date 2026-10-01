@@ -391,3 +391,62 @@ def test_internet_access_settings(builds):
     assert client.patch("/api/projects/game", json={"gate_network": "sometimes"}).status_code == 422
     client.patch("/api/projects/sid", json={"gate_network": "always"})
     assert "gate_network" not in fake.hashes["sid:projects:sid"]
+
+
+class GroupRedis(BuildRedis):
+    def hdel(self, key, *fields):
+        for field in fields:
+            self.hashes.get(key, {}).pop(field, None)
+
+    def lpush(self, key, value):
+        self.lists.setdefault(key, []).insert(0, value)
+
+    def ltrim(self, key, start, end):
+        self.lists[key] = self.lists.get(key, [])[start:end + 1]
+
+
+@pytest.fixture
+def groups(monkeypatch):
+    fake = GroupRedis({
+        "sid:projects:shop": {"id": "shop", "name": "Shop", "status": "active", "importance": "high", "gate_network": "always"},
+        "sid:projects:app": {"id": "app", "name": "App", "status": "active", "importance": "low"},
+        "sid:projects:blog": {"id": "blog", "name": "Blog", "status": "active"},
+    }, members=["shop", "app", "blog"])
+    monkeypatch.setattr(main, "redis", fake)
+    return TestClient(main.app), fake
+
+
+def test_attach_inherit_and_detach(groups):
+    client, fake = groups
+    joined = client.post("/api/projects/app/parent", json={"parent": "shop"})
+    assert joined.status_code == 200
+    item = joined.json()
+    assert (item["parent"], item["parent_name"], item["importance"], item["gate_network"]) == ("shop", "Shop", "high", "always")
+    assert item["managed"] == ["importance", "gate_network"]
+    parent = client.get("/api/projects/shop").json()
+    assert parent["children"] == [{"id": "app", "name": "App", "status": "active"}]
+    # Inherited settings cannot be changed on the child.
+    assert client.patch("/api/projects/app", json={"importance": "medium"}).status_code == 409
+    assert client.patch("/api/projects/app", json={"run_command": "npm start"}).status_code == 200
+    # Archiving the parent archives the group.
+    fake.hashes["sid:projects:shop"]["status"] = "archived"
+    assert client.get("/api/projects/app").json()["status"] == "archived"
+    fake.hashes["sid:projects:shop"]["status"] = "active"
+    assert "joined" in json.loads(fake.lists["sid:events:app"][0])["title"].lower()
+    left = client.post("/api/projects/app/parent", json={"parent": ""}).json()
+    assert left["parent"] == "" and left["importance"] == "low"
+
+
+@pytest.mark.parametrize("child,parent,status", [
+    ("app", "sid", 409), ("sid", "app", 409), ("app", "app", 409), ("app", "nope", 409), ("app", "Bad!", 422), ("nope", "shop", 404),
+])
+def test_attach_rules(groups, child, parent, status):
+    client, _ = groups
+    assert client.post(f"/api/projects/{child}/parent", json={"parent": parent}).status_code == status
+
+
+def test_groups_have_one_level(groups):
+    client, _ = groups
+    assert client.post("/api/projects/app/parent", json={"parent": "shop"}).status_code == 200
+    assert client.post("/api/projects/blog/parent", json={"parent": "app"}).status_code == 409  # app is a child
+    assert client.post("/api/projects/shop/parent", json={"parent": "blog"}).status_code == 409  # shop has children

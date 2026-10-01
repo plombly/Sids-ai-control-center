@@ -105,9 +105,16 @@ def claude_budget(role):
     return float(os.getenv(f"CLAUDE_{role.upper()}_BUDGET_USD") or DEFAULT_CLAUDE_BUDGET_USD[role])
 
 
+# Extra directories Claude may read (--add-dir), e.g. the read-only copies
+# of the other members of a project group (services/project_reference.py).
+# Set per job by the worker; empty everywhere else.
+EXTRA_DIRS = []
+
+
 def claude_command(role, model, budget_usd, allowed_bash=(), tools=None, system_prompt=AGENT_CONTRACT):
     command = [
         "claude", "-p",
+        *(["--add-dir", *EXTRA_DIRS] if EXTRA_DIRS else []),  # variadic: a flag follows
         # Streamed events (one JSON line each) so the dashboard can show the
         # run live; the last line is the same result object "json" gave.
         "--output-format", "stream-json", "--verbose",

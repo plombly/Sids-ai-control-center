@@ -101,8 +101,42 @@ def repository_manifest(repo=None):
     except Exception:
         return "manifest unavailable"
 
+def project_type_label(project_id):
+    try:
+        found = json.loads(r.get(f"sid:project-type:{project_id}") or "{}")
+    except (TypeError, ValueError):
+        found = {}
+    chosen = r.hget(f"sid:projects:{project_id}", "type") if project_id != sid_projects.SID_PROJECT else ""
+    kind = chosen or found.get("type") or "unknown"
+    return kind + (f", stack {found['stack']}" if found.get("stack") else "")
+
+
+def group_section(project, members):
+    """The planner's view of a project group: every member's manifest."""
+    parts = [f"""This is a PROJECT GROUP. "{project.name}" ({project.id}) is the parent; each member
+below is its own repository with its own tests and approvals. Every job changes
+exactly ONE member: set "project" to that member's id. A job may depend on jobs in
+other members (e.g. change the API first, then the app that uses it). Put work in
+the member it belongs to; do not duplicate it across members."""]
+    for member in members:
+        role = "parent" if member.id == project.id else "child"
+        parts.append(f"""### {member.name} (id: {member.id}; {role}; type: {project_type_label(member.id)})
+Repository manifest:
+{repository_manifest(member.repo)}
+Files being changed by in-flight jobs in {member.id}:
+{busy_files_summary(member.id)}""")
+    return "\n\n".join(parts)
+
+
 def planner_prompt(goal, atomic=False, project=None):
     project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
+    members = sid_projects.group(r, project)
+    if len(members) > 1:
+        return group_planner_prompt(goal, atomic, project, members)
+    return single_planner_prompt(goal, atomic, project)
+
+
+def single_planner_prompt(goal, atomic, project):
     sid_rules = """- Web UI features: put new dashboard behavior in its own module under
   apps/web/lib/ that registers itself via apps/web/lib/registry.js
   (registerPanel / registerClick) plus one import line in
@@ -170,6 +204,17 @@ Return ONLY valid JSON using this exact shape:
   ]
 }}
 """.strip()
+
+
+def group_planner_prompt(goal, atomic, project, members):
+    """The normal planner prompt with the single repository replaced by the
+    group's members and a "project" field on every job."""
+    single = single_planner_prompt(goal, atomic, project)
+    start = single.index("Repository:\n")
+    end = single.index("Break the goal into")
+    prompt = single[:start] + group_section(project, members) + "\n\n" + single[end:]
+    prompt = prompt.replace(f"- Files currently being changed by other in-flight jobs (work touching them\n  will wait until they finish):\n{busy_files_summary(project.id)}\n", "")
+    return prompt.replace('      "title": "short title",', '      "project": "member id",\n      "title": "short title",')
 
 
 def planner_model(atomic):
@@ -287,7 +332,8 @@ def run_codex_planner(goal, atomic=False, project=None):
     return extract_json(messages[-1])
 
 
-def validate_plan(plan, atomic=False):
+def validate_plan(plan, atomic=False, members=None):
+    """members: the project ids a group goal may plan in (first = default)."""
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
 
@@ -328,6 +374,14 @@ def validate_plan(plan, atomic=False):
             raise ValueError(f"job {number} scope is too broad")
         if job.get("size", "M") not in SIZE_POINTS:
             job["size"] = "M"  # an estimate, not a contract: never reject a plan over it
+
+        if members:
+            target = job.get("project") or members[0]
+            if target not in members:
+                raise ValueError(f"job {number} names project {target!r}, which is not in this group")
+            job["project"] = target
+        else:
+            job.pop("project", None)
 
         deps = job.get("depends_on", [])
 
@@ -498,7 +552,8 @@ def process_goal(raw):
     project = sid_projects.load(r, data.get("project_id") or r.hget(key, "project_id"))
     planner = {}
     plan = run_planner(goal, atomic=atomic, info=planner, project=project)
-    jobs = validate_plan(plan, atomic=atomic)
+    members = {member.id: member for member in sid_projects.group(r, project)}
+    jobs = validate_plan(plan, atomic=atomic, members=list(members) if len(members) > 1 else None)
 
     number_to_id = {}
 
@@ -510,6 +565,8 @@ def process_goal(raw):
 
     for item in jobs:
         job_id = number_to_id[item["number"]]
+        # A group goal's job belongs to the member the planner named.
+        target = members.get(item.get("project")) or project
         dependencies = [
             number_to_id[n]
             for n in item.get("depends_on", [])
@@ -519,7 +576,7 @@ def process_goal(raw):
             "id": job_id,
             "goal_id": goal_id,
             "title": item["title"],
-            "prompt": scoped_builder_prompt(item, project.repo),
+            "prompt": scoped_builder_prompt(item, target.repo),
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "role": "builder",
@@ -529,8 +586,8 @@ def process_goal(raw):
             "build_attempt": "1",
             "created_at": now(),
             "updated_at": now(),
-            "prompt_chars": str(len(scoped_builder_prompt(item, project.repo))),
-            "project_id": project.id,
+            "prompt_chars": str(len(scoped_builder_prompt(item, target.repo))),
+            "project_id": target.id,
             "scope": json.dumps(item.get("scope", [])),
             "size": item.get("size", "M"),
         }
@@ -549,8 +606,8 @@ def process_goal(raw):
             dispatch_job_once(record, {
                     "id": job_id,
                     "goal_id": goal_id,
-                    "prompt": scoped_builder_prompt(item, project.repo),
-                    "project_id": project.id,
+                    "prompt": scoped_builder_prompt(item, target.repo),
+                    "project_id": target.id,
                     "provider": DEFAULT_PROVIDER,
                     "model": DEFAULT_MODEL,
                     "role": "builder",

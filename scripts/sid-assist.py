@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "services"))
 sys.path.append(str(ROOT / "apps/api"))
 import agent_cli  # noqa: E402
 import goal_assist  # noqa: E402
+import project_reference  # noqa: E402
 import project_sandbox  # noqa: E402
 import sid_projects  # noqa: E402
 import sid_redis  # noqa: E402
@@ -62,9 +63,34 @@ def kind_of(r, project_id):
     return kind
 
 
+def group_note(r, project):
+    """For a project group: the other members' read-only copies (Claude may
+    read them) and a note naming them; a parent's brief says which member
+    each part of the work belongs to."""
+    agent_cli.EXTRA_DIRS = []
+    if project.is_sid:
+        return ""
+    head = sid_projects.load(r, project.parent) if project.parent else project
+    members = sid_projects.group(r, head)
+    if len(members) < 2:
+        return ""
+    copies = project_reference.prepare(project, members)
+    agent_cli.EXTRA_DIRS = [str(path) for _, path in copies]
+    note = project_reference.note(project, head.name, copies)
+    if not project.parent and note:
+        note += ("A goal given here can plan work in any member. In the brief, say which member "
+                 "(by id) each part of the work belongs to.\n")
+    return note
+
+
 def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
+    try:
+        note = group_note(r, project)
+    except Exception as exc:  # the group is context, never a reason to fail
+        print(f"[assist] group context: {exc}", flush=True)
+        note = ""
     prompt = goal_assist.build_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
-                                      recent_goals(r, project.id), force_brief=force_brief)
+                                      recent_goals(r, project.id), force_brief=force_brief, group_note=note)
     log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}{'-retry' if force_brief else ''}.json"
     return runner("assistant", prompt, project.repo, log_path, TIMEOUT, model=MODEL, budget_usd=BUDGET_USD,
                   tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.SYSTEM_PROMPT,

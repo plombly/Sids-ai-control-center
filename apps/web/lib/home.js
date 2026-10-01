@@ -7,6 +7,7 @@ import { requestJSON } from './api.js';
 import { esc, escValue, text } from './format.js';
 import { registerPanel } from './registry.js';
 import { assistantMarkup } from './goal-assistant.js';
+import { nestProjects } from './project-groups.js';
 import { previewMarkup } from './markup.js';
 
 const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
@@ -83,9 +84,15 @@ export function inProgressMarkup({ goals = [], jobs = [] }, names = {}, now = Da
 
 // --- projects ----------------------------------------------------------------------------
 
+// A parent's children, listed inside its card (each opens its own page).
+const membersMarkup = (members = []) =>
+  members.length
+    ? `<ul class="card-children">${members.map(child => `<li><a class="child-link" href="#/projects/${encodeURIComponent(child.id)}">↳ ${esc(child.name || child.id)}</a></li>`).join('')}</ul>`
+    : '';
+
 export function projectsMarkup(projects = [], hostname = globalThis.location?.hostname || 'localhost') {
   if (!projects.length) return '<div class="home-empty">No projects yet. <a href="#/projects/new">Create one</a>.</div>';
-  return `<div class="home-projects">${projects
+  return `<div class="home-projects">${nestProjects(projects)
     .map(project => {
       const counts = project.counts || {};
       const busy = (counts.jobs_running || 0) + (counts.jobs_queued || 0);
@@ -97,7 +104,7 @@ export function projectsMarkup(projects = [], hostname = globalThis.location?.ho
             ? `<span class="app-link warn">App ${esc(app.state.replace('_', ' '))}</span>`
             : '';
       // The whole card opens the project (stretched link); the app link sits above it.
-      return `<article class="home-project"><div class="card-top"><a class="project-link" href="#/projects/${encodeURIComponent(project.id)}"><strong>${esc(project.name || project.id)}</strong></a><span class="importance imp-${escValue(project.importance)}">${esc(project.importance || '')}</span></div><span class="subtle">${busy ? `${esc(busy)} job${busy === 1 ? '' : 's'} in progress` : 'Idle'}${counts.jobs_awaiting_approval ? ` · ${esc(counts.jobs_awaiting_approval)} to approve` : ''}</span>${appLine}</article>`;
+      return `<article class="home-project"><div class="card-top"><a class="project-link" href="#/projects/${encodeURIComponent(project.id)}"><strong>${esc(project.name || project.id)}</strong></a><span class="importance imp-${escValue(project.importance)}">${esc(project.importance || '')}</span></div><span class="subtle">${busy ? `${esc(busy)} job${busy === 1 ? '' : 's'} in progress` : 'Idle'}${counts.jobs_awaiting_approval ? ` · ${esc(counts.jobs_awaiting_approval)} to approve` : ''}</span>${appLine}${membersMarkup(project.members)}</article>`;
     })
     .join('')}<article class="home-project add"><a class="project-link" href="#/projects/new"><strong>+ New project</strong></a><span class="subtle">Start empty or import from GitHub</span></article></div>`;
 }

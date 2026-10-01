@@ -43,6 +43,8 @@ class Project:
         self.worktrees = Path(fields["worktrees"])
         self.logs = Path(fields["logs"])
         self.default_branch = fields.get("default_branch") or "main"
+        # Project groups (one level): a child names its parent; see effective_fields().
+        self.parent = fields.get("parent") or ""
         self.gate_command = fields.get("gate_command") or ""
         # Installs dependencies (with network) before builds and gates; empty
         # means detect from the worktree (detect_setup).
@@ -119,7 +121,87 @@ def load(redis_client, project_id):
         return Project(merged)
     if not fields:
         raise LookupError(f"unknown project: {project_id}")
-    return Project(fields)
+    return Project(inherit(redis_client, fields))
+
+
+# --- project groups -----------------------------------------------------------------
+# A parent project controls its children (one level, one parent per child,
+# SID is never part of a group for now): children follow the parent's
+# importance and test internet access, and an archived parent archives the
+# group. Each child stays its own repository with its own gate, builds and
+# approvals; a goal given to the parent may plan jobs in any member.
+
+INHERITED = ("importance", "gate_network")
+
+
+def inherit(redis_client, fields):
+    """A child's registry fields with what its parent controls applied."""
+    parent_id = fields.get("parent") or ""
+    if not parent_id or parent_id == fields.get("id"):
+        return fields
+    try:
+        parent = redis_client.hgetall(f"sid:projects:{parent_id}") or {}
+    except Exception:
+        parent = {}
+    if not parent:
+        return fields
+    merged = dict(fields)
+    for key in INHERITED:
+        merged[key] = parent.get(key) or ""
+    if parent.get("status") == "archived" and merged.get("status") == "active":
+        merged["status"] = "archived"
+    return merged
+
+
+def effective_fields(redis_client, project_id):
+    return inherit(redis_client, redis_client.hgetall(f"sid:projects:{project_id}") or {})
+
+
+def children(redis_client, project_id):
+    """Ids of the projects whose parent is project_id, sorted."""
+    found = []
+    try:
+        ids = redis_client.smembers("sid:projects") or []
+    except Exception:
+        return []
+    for other in ids:
+        if other != project_id and redis_client.hget(f"sid:projects:{other}", "parent") == project_id:
+            found.append(other)
+    return sorted(found)
+
+
+def group(redis_client, project):
+    """The members a goal of this project may plan work in: the project and,
+    for a parent, its active children (the project first)."""
+    members = [project]
+    if project.is_sid or project.parent:
+        return members
+    for child_id in children(redis_client, project.id):
+        try:
+            child = load(redis_client, child_id)
+        except LookupError:
+            continue
+        if child.status == "active":
+            members.append(child)
+    return members
+
+
+def check_parent(redis_client, child_id, parent_id):
+    """Why child_id cannot become a child of parent_id, or "" if it can."""
+    if child_id == SID_PROJECT or parent_id == SID_PROJECT:
+        return "SID itself cannot be part of a group yet"
+    if child_id == parent_id:
+        return "a project cannot be its own parent"
+    parent = redis_client.hgetall(f"sid:projects:{parent_id}") or {}
+    if not parent:
+        return f"unknown project: {parent_id}"
+    if parent.get("status") not in ("active", None, ""):
+        return f"{parent_id} is {parent.get('status')}"
+    if parent.get("parent"):
+        return f"{parent_id} is itself a child project (groups have one level)"
+    if children(redis_client, child_id):
+        return f"{child_id} has child projects of its own (groups have one level)"
+    return ""
 
 
 def job_project_id(redis_client, job):

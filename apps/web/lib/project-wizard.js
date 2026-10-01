@@ -1,6 +1,7 @@
 import { requestJSON, operatorRequest, newRequestId } from './api.js';
 import { esc, escValue, pill, text } from './format.js';
 import { registerClick, onRoute } from './registry.js';
+import { setParent, takePendingParent } from './project-groups.js';
 
 const STEP_LABELS = ['Name', 'Starting point', 'Importance', 'Extras', 'Review'];
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -81,11 +82,11 @@ export function stepMarkup(step, state = {}) {
         : ''
     }`;
   if (step === 3)
-    return `<div class="choice-grid">${choice('importance', 'high', 'High', 'Gets workers first', state.importance === 'high')}${choice('importance', 'medium', 'Medium', 'Normal priority', state.importance === 'medium')}${choice('importance', 'low', 'Low', 'Runs when there is spare capacity', state.importance === 'low')}</div>`;
+    return `${state.parent ? `<p class="subtle">This project will be a child of ${esc(state.parentName || state.parent)}; once it joins, it follows that project's importance.</p>` : ''}<div class="choice-grid">${choice('importance', 'high', 'High', 'Gets workers first', state.importance === 'high')}${choice('importance', 'medium', 'Medium', 'Normal priority', state.importance === 'medium')}${choice('importance', 'low', 'Low', 'Runs when there is spare capacity', state.importance === 'low')}</div>`;
   if (step === 4)
     return `${field('Push merged work to GitHub', 'push_remote', state.push_remote || '')}<span class="field-hint">Leave blank to keep the project local only</span>${field('Test command', 'gate', state.gate || '')}<span class="field-hint">Leave blank and SID will detect it (npm test, pytest, cargo test, go test, make test)</span>`;
   const starting = state.source === 'clone' ? `Import from GitHub (${text(state.url)})` : 'Start empty';
-  return `<div class="field">${esc(state.name)}<span class="field-hint">Project ID: ${esc(state.id)}</span><span>${esc(starting)}</span><span>${pill(state.importance)}</span><span>Push remote: ${esc(state.push_remote || 'local only')}</span><span>Test command: ${esc(state.gate || 'detect automatically')}</span></div>`;
+  return `<div class="field">${esc(state.name)}<span class="field-hint">Project ID: ${esc(state.id)}</span><span>${esc(starting)}</span><span>${pill(state.importance)}</span><span>Push remote: ${esc(state.push_remote || 'local only')}</span><span>Test command: ${esc(state.gate || 'detect automatically')}</span>${state.parent ? `<span>Part of: ${esc(state.parentName || state.parent)}</span>` : ''}</div>`;
 }
 
 export function resultMarkup(result = {}, projectId) {
@@ -93,7 +94,7 @@ export function resultMarkup(result = {}, projectId) {
   const key = output.public_key;
   const pending = output.status === 'pending_key';
   if (result.status === 'succeeded') {
-    return `<p class="subtle">Project created</p>${key ? `<pre>${esc(key)}</pre><p>${esc('Add this key to the GitHub repository: Settings → Deploy keys → Add deploy key, and tick Allow write access.')}</p><button type="button" class="button" data-wizard-copy-key>Copy key</button>` : ''}${pending ? '<button type="button" class="button" data-wizard-retry-clone>Retry import</button>' : ''}<a class="button" href="#/projects/${esc(encodeURIComponent(projectId))}">Open project</a>`;
+    return `<p class="subtle">Project created${result.groupError ? `, but it could not join the group: ${esc(result.groupError)}` : ''}</p>${key ? `<pre>${esc(key)}</pre><p>${esc('Add this key to the GitHub repository: Settings → Deploy keys → Add deploy key, and tick Allow write access.')}</p><button type="button" class="button" data-wizard-copy-key>Copy key</button>` : ''}${pending ? '<button type="button" class="button" data-wizard-retry-clone>Retry import</button>' : ''}<a class="button" href="#/projects/${esc(encodeURIComponent(projectId))}">Open project</a>`;
   }
   return `<div class="form-status">${esc(result.message || 'Project setup failed')}</div><button type="button" class="button" data-wizard-back>Back</button>`;
 }
@@ -149,6 +150,13 @@ const create = async () => {
     const response = await requestJSON('/api/projects', { method: 'POST', body: JSON.stringify(buildCreateBody(state)) });
     state.requestId = response.request_id || state.requestId;
     state.result = await poll(state.requestId);
+    if (state.result.status === 'succeeded' && state.parent) {
+      try {
+        await setParent(state.id, state.parent);
+      } catch (error) {
+        state.result = { ...state.result, groupError: error.message };
+      }
+    }
     state.busy = false;
     state.error = '';
     renderResult();
@@ -212,7 +220,7 @@ onRoute(async route => {
   if (!entering) { active = false; return; }
   if (active) return;
   active = true;
-  state = { step: 1, importance: 'medium', source: '', existingIds: [], requestId: newRequestId() };
+  state = { step: 1, importance: 'medium', source: '', existingIds: [], requestId: newRequestId(), parent: takePendingParent() };
   if (typeof document === 'undefined') return;
   root = document.getElementById('projects-root');
   if (!root) return;
@@ -220,6 +228,7 @@ onRoute(async route => {
   try {
     const projects = await requestJSON('/api/projects');
     state.existingIds = Array.isArray(projects) ? projects.map(project => project.id) : [];
+    state.parentName = (Array.isArray(projects) ? projects : []).find(project => project.id === state.parent)?.name || '';
     state.id = slugify(state.name, state.existingIds);
     render();
   } catch (error) {

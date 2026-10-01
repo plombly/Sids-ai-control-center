@@ -322,6 +322,9 @@ def delete(args):
         raise ProjectError("confirmation does not match the project id")
     r = get_redis()
     record = project(r, args.id)
+    kids = sid_projects.children(r, args.id)
+    if kids:
+        raise ProjectError(f"{args.id} has child projects ({', '.join(kids)}); detach or delete them first")
     previous = record.get("status") or "active"
     # Stop new work first: workers drop jobs of a deleting project.
     r.hset(key_for(args.id), mapping={"status": "deleting", "updated_at": now()})
@@ -417,6 +420,9 @@ def restore(args):
     if port and any(r.hget(key_for(other), "run_port") == port for other in r.smembers(PROJECT_SET)):
         record.pop("run_port")
     record["updated_at"] = now()
+    parent = record.get("parent")
+    if parent and (parent == project_id or not r.hgetall(key_for(parent))):
+        record.pop("parent")  # its parent is gone: it comes back on its own
     r.hset(key_for(project_id), mapping=record)
     if saved.get("stats"):
         r.hset(f"sid:project-stats:{project_id}", mapping=saved["stats"])

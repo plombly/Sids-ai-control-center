@@ -2003,3 +2003,47 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Project groups (lib/project-groups.js) */
+.part-of {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.group-card {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.group-card .item-head h3 {
+  margin: 0;
+}
+.group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.group-children li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.card-children {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--line);
+  list-style: none;
+}
+.card-children .child-link {
+  color: var(--accent);
+  font-size: 0.85rem;
+}

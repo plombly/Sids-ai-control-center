@@ -360,6 +360,24 @@ Internet access (2026-10-01):
   grants one more rebuild/repair. Allowed gates share the host network
   (like SID_SANDBOX_GATE_NETWORK).
 
+Project groups (2026-10-01; phases 1-2 of SID's plan): a project may have
+a `parent` (registry field; one level, one parent, SID never in a group
+until SID decides how SID-as-parent works). sid_projects.inherit(): a
+child follows the parent's importance and gate_network, and is archived
+with it (API: PATCH of those on a child = 409, item has parent/
+parent_name/children/managed). POST /api/projects/<id>/parent {parent}
+attaches/detaches (rules mirror sid_projects.check_parent). Deleting a
+parent with children is refused; a restored child whose parent is gone
+loses the link. A goal on a parent: the planner sees every active member
+(group_planner_prompt) and each job names its "project"; jobs are created
+in that member and may depend on jobs in other members (scope conflicts
+stay per project). Agents in a member (and the goal assistant) get
+read-only copies of the other members' main (services/project_reference.py:
+git archive into <member root>/reference/<id>, visible in the sandbox;
+Claude via --add-dir, agent_cli.EXTRA_DIRS) and a prompt note naming them.
+Web: lib/project-groups.js (Part of, Child projects, New child project via
+the wizard, Settings "Part of"/detach), children nested in project lists.
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

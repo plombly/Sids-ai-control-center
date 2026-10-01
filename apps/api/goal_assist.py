@@ -81,7 +81,7 @@ def transcript(turns):
     return "\n\n".join(lines)
 
 
-def build_prompt(project_name, project_id, kind, turns, recent_goals=(), force_brief=False):
+def build_prompt(project_name, project_id, kind, turns, recent_goals=(), force_brief=False, group_note=""):
     """kind: the detected/chosen type as the dashboard shows it ({type, stack, ...})."""
     may_ask = not asked_before(turns) and not force_brief and not any(t.get("feedback") for t in turns)
     kind = kind or {}
@@ -99,7 +99,8 @@ Questions format:
         "Write the brief now (no more questions). Where something is still open, choose a sensible "
         "default and state it in the brief."
     )
-    return f"""Project: "{project_name}" ({project_id}). Type: {kind_line}.
+    group = f"\n{group_note.strip()}\n" if group_note else ""
+    return f"""Project: "{project_name}" ({project_id}). Type: {kind_line}.{group}
 Your working directory is the project's code at its latest main. Use Read/Grep/Glob briefly
 (a handful of lookups) to ground the brief in the real code: name the files, functions, routes
 or screens involved. Do not plan the jobs; the planner does that.

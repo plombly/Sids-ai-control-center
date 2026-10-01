@@ -88,7 +88,9 @@ export function networkFieldsMarkup(project) {
   const option = (value, label, current) => `<option value="${escValue(value)}"${current === value ? ' selected' : ''}>${esc(label)}</option>`;
   const gate = project?.gate_network === 'always' ? 'always' : '';
   const build = project?.build_network === 'none' ? 'none' : 'internet';
-  return `<h4>Internet access</h4><label class="field">Tests<select name="gate_network">${option('', 'Offline; ask me when they need it', gate)}${option('always', 'Always allowed', gate)}</select></label><label class="field">Builds<select name="build_network">${option('internet', 'Internet, but not this server or your network', build)}${option('none', 'No network at all', build)}</select></label>`;
+  const managed = project?.parent ? ` disabled title="Set by ${escValue(project.parent_name || project.parent)}"` : '';
+  const hint = project?.parent ? `<span class="field-hint">Tests follow the parent project, ${esc(project.parent_name || project.parent)}.</span>` : '';
+  return `<h4>Internet access</h4><label class="field">Tests<select name="gate_network"${managed}>${option('', 'Offline; ask me when they need it', gate)}${option('always', 'Always allowed', gate)}</select></label>${hint}<label class="field">Builds<select name="build_network">${option('internet', 'Internet, but not this server or your network', build)}${option('none', 'No network at all', build)}</select></label>`;
 }
 
 export function kindRequest(values) {

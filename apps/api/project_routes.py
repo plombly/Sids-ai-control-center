@@ -195,10 +195,40 @@ def _app_status(project_id):
             "log": _text(status.get("log")), "updated_at": _numeric(status.get("updated_at"))}
 
 
+# --- project groups (services/sid_projects.py: one level, the parent controls
+# its children's importance and test internet access) -------------------------
+_INHERITED = ("importance", "gate_network")
+
+
+def _group_info(project_id, data):
+    """(effective data, group fields) for a project."""
+    main = _redis()
+    parent_id = _text(data.get("parent"), "")
+    group = {"parent": parent_id, "parent_name": "", "children": [], "managed": []}
+    effective = dict(data)
+    if parent_id:
+        parent = _project_data(parent_id)
+        if parent:
+            group["parent_name"] = _text(parent.get("name"), parent_id)
+            group["managed"] = list(_INHERITED)
+            for key in _INHERITED:
+                effective[key] = parent.get(key) or ""
+            if parent.get("status") == "archived" and effective.get("status", "active") == "active":
+                effective["status"] = "archived"
+    else:
+        for other in sorted(_members(main)):
+            if other != project_id and main.redis.hget(f"sid:projects:{other}", "parent") == project_id:
+                child = _project_data(other)
+                group["children"].append({"id": other, "name": _text(child.get("name"), other),
+                                          "status": _text(child.get("status"), "active")})
+    return effective, group
+
+
 def _item(project_id, data=None):
     import build_routes
     main = _redis()
     data = data if data is not None else _project_data(project_id)
+    data, group = _group_info(project_id, data)
     stats = _data(main.redis.hgetall(f"sid:project-stats:{project_id}"))
     return {
         "id": project_id,
@@ -224,6 +254,7 @@ def _item(project_id, data=None):
         "push_remote": _text(data.get("push_remote")),
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
+        **group,
         "stats": {key: _numeric(stats.get(key)) for key in ("remaining_effort", "waiting_jobs", "running_jobs")},
     }
 
@@ -294,6 +325,10 @@ def patch_project(project_id: str, payload: ProjectPatch):
         # SID's commands are its own gate and control plane: never editable.
         changes = {k: v for k, v in changes.items() if k in ("importance", "type", "type_description")}
     _check_build_fields(changes)
+    managed = sorted(set(changes) & set(_INHERITED))
+    parent_id = _text(_project_data(project_id).get("parent"), "")
+    if managed and parent_id:
+        raise HTTPException(status_code=409, detail=f"{', '.join(managed)} is managed by the parent project {parent_id}")
     if "run_port" in changes:
         for other in _members(main):
             if other != project_id and _project_data(other).get("run_port") == str(changes["run_port"]):
@@ -313,6 +348,62 @@ def _check_build_fields(changes):
     output = (changes.get("build_output") or "").strip()
     if output and (output.startswith("/") or ".." in output.split("/") or "\\" in output):
         raise HTTPException(status_code=422, detail="Build output must be a folder inside the project")
+
+
+class ProjectParent(BaseModel):
+    parent: str = Field(default="", max_length=40, pattern=r"^([a-z0-9][a-z0-9-]{0,39})?$")
+
+
+@router.post("/api/projects/{project_id}/parent")
+def set_parent(project_id: str, payload: ProjectParent):
+    """Make the project a child of parent (attach), or a normal project again ("")."""
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    main = _redis()
+    key = f"sid:projects:{project_id}"
+    current = _text(_project_data(project_id).get("parent"), "")
+    if payload.parent:
+        reason = _parent_problem(project_id, payload.parent)
+        if reason:
+            raise HTTPException(status_code=409, detail=reason)
+        main.redis.hset(key, mapping={"parent": payload.parent, "updated_at": str(time.time())})
+        _event(project_id, "group", f"Joined the group of {payload.parent}")
+        _event(payload.parent, "group", f"{project_id} joined this group as a child project")
+    elif current:
+        main.redis.hdel(key, "parent")
+        main.redis.hset(key, "updated_at", str(time.time()))
+        _event(project_id, "group", f"Left the group of {current}")
+        _event(current, "group", f"{project_id} left this group")
+    return _item(project_id)
+
+
+def _parent_problem(child_id, parent_id):
+    """Mirrors services/sid_projects.check_parent (the host's rules)."""
+    if "sid" in (child_id, parent_id):
+        return "SID itself cannot be part of a group yet"
+    if child_id == parent_id:
+        return "A project cannot be its own parent"
+    if parent_id not in _members(_redis()):
+        return f"Unknown project: {parent_id}"
+    parent = _project_data(parent_id)
+    if parent.get("status", "active") != "active":
+        return f"{parent_id} is {parent.get('status')}"
+    if parent.get("parent"):
+        return f"{parent_id} is itself a child project (groups have one level)"
+    main = _redis()
+    if any(main.redis.hget(f"sid:projects:{other}", "parent") == child_id for other in _members(main) if other != child_id):
+        return f"{child_id} has child projects of its own (groups have one level)"
+    return ""
+
+
+def _event(project_id, kind, title):
+    entry = {"at": time.time(), "kind": kind, "title": title[:200], "detail": "", "ref": ""}
+    try:
+        _redis().redis.lpush(f"sid:events:{project_id}", json.dumps(entry))
+        _redis().redis.ltrim(f"sid:events:{project_id}", 0, 499)
+    except Exception:
+        pass
 
 
 @router.post("/api/projects/{project_id}/app/restart", status_code=202)

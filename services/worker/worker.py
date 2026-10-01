@@ -16,6 +16,7 @@ from redis import Redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
+import project_reference  # noqa: E402  (services/project_reference.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import sid_redis  # noqa: E402  (services/sid_redis.py)
@@ -75,7 +76,7 @@ def efficiency_prefix(role):
 - For focused Python tests, use {SID_PYTHON} -m pytest; do not probe python/pytest executables.
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
-{network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_sid else ""}
+{network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_sid else ""}{GROUP_NOTE}
 """
 
 redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
@@ -188,10 +189,38 @@ def run_git(*args, cwd=None, check=True):
 PROJECT = None
 
 
+# The current job's project group: read-only copies of the other members
+# (services/project_reference.py) and the prompt note naming them.
+GROUP_NOTE = ""
+
+
+def prepare_group_context():
+    """For a job in a project group: refresh the other members' read-only
+    copies, tell the agents about them and let Claude read them."""
+    global GROUP_NOTE
+    GROUP_NOTE = ""
+    agent_cli.EXTRA_DIRS = []
+    if PROJECT is None or PROJECT.is_sid:
+        return
+    try:
+        head = sid_projects.load(redis, PROJECT.parent) if PROJECT.parent else PROJECT
+        members = sid_projects.group(redis, head)
+        if len(members) < 2:
+            return
+        copies = project_reference.prepare(PROJECT, members)
+    except Exception as exc:  # never fail a job over its context
+        print(f"[{WORKER_ID}] group context for {PROJECT.id}: {exc}", flush=True)
+        return
+    GROUP_NOTE = project_reference.note(PROJECT, head.name, copies)
+    agent_cli.EXTRA_DIRS = [str(path) for _, path in copies]
+
+
 def use_project(project):
     """Point every path at this project (None: back to SID's defaults)."""
-    global PROJECT, REPO_ROOT, WORKTREE_ROOT, LOG_ROOT
+    global PROJECT, REPO_ROOT, WORKTREE_ROOT, LOG_ROOT, GROUP_NOTE
     PROJECT = project
+    GROUP_NOTE = ""
+    agent_cli.EXTRA_DIRS = []
     if project is None:
         defaults = sid_projects.sid_defaults()
         REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = (
@@ -307,7 +336,7 @@ def gate_network(builder_id):
     allowed it for the change or the project; services/network_access.py)."""
     if PROJECT is None or PROJECT.is_sid or not builder_id:
         return False
-    return network_access.allowed(redis.hgetall(f"sid:projects:{PROJECT.id}"),
+    return network_access.allowed(sid_projects.effective_fields(redis, PROJECT.id),
                                   redis.hgetall(f"sid:jobs:{builder_id}"))
 
 
@@ -329,7 +358,7 @@ def note_network_need(builder_id, gate_output, step, agent_text=""):
         return
     key = f"sid:jobs:{builder_id}"
     fields = network_access.request(redis.hgetall(key), gate_output, step, agent_text,
-                                    redis.hgetall(f"sid:projects:{PROJECT.id}"))
+                                    sid_projects.effective_fields(redis, PROJECT.id))
     if fields:
         redis.hset(key, mapping={**fields, "network_request_at": str(time.time())})
 
@@ -1930,6 +1959,7 @@ def _process_job(raw_job):
         return
     use_project(project)
     redis.hsetnx(key, "project_id", project.id)
+    prepare_group_context()
 
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
     log_path = LOG_ROOT / f"{job_id}.jsonl"
