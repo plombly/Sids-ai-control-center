@@ -107,6 +107,9 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
         cache = project_root / "cache"
         cache.mkdir(exist_ok=True)
         args += ["--bind", str(cache), str(cache), "--setenv", "HOME", str(cache)]
+    if kind in ("agent", "gate"):
+        # No caches in the worktree (they would end up in the candidate).
+        args += ["--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider"]
     args += ["--setenv", "TMPDIR", "/tmp", "--unsetenv", "REDIS_URL", "--chdir", str(workdir), "--"]
     return args + list(argv)
 

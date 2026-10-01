@@ -222,3 +222,24 @@ def test_worker_wraps_codex_for_projects(worker, monkeypatch):
     with pytest.raises(Stop):
         module.run_codex({"id": "j1", "prompt": "x", "role": "builder"}, wt, wt.parent / "j1.jsonl")
     assert seen[0][0] == project_sandbox.BWRAP and "--dangerously-bypass-approvals-and-sandbox" in seen[0]
+
+
+def test_caches_and_installed_dependencies_are_never_committed(worker):
+    module, project, wt = worker
+    module.ensure_standard_excludes(wt)
+    module.ensure_standard_excludes(wt)  # idempotent
+    for path in ("__pycache__/a.cpython-314.pyc", "tests/__pycache__/t.pyc", ".pytest_cache/v", "node_modules/x/i.js", ".venv/bin/python", "kept.txt"):
+        target = wt / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x")
+    status = module.run_git("status", "--porcelain", "--untracked-files=all", cwd=wt).stdout
+    assert status.strip() == "?? kept.txt", status
+    exclude = (project.repo / ".git" / "info" / "exclude").read_text()
+    assert exclude.count("__pycache__/") == 1
+
+
+def test_agents_and_gates_write_no_python_caches(tmp_path, hidden):
+    project, wt = make_project(tmp_path)
+    for kind in ("agent", "gate"):
+        argv = " ".join(project_sandbox.command(["true"], project, wt, kind=kind))
+        assert "--setenv PYTHONDONTWRITEBYTECODE 1" in argv

@@ -137,6 +137,7 @@ def test_worktree_branches_from_the_projects_default_branch(worker, tmp_path):
     worker.use_project(worker.sid_projects.load(worker.redis, "web-shop"))
     calls = []
     worker.run_git = lambda *a, cwd=None, check=True: calls.append(a) or type("R", (), {"returncode": 1})()
+    worker.ensure_standard_excludes = lambda path: None  # covered in test_project_sandbox.py
     worker.create_worktree("b1")
     assert calls[-1][-1] == "trunk"
 

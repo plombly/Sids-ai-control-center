@@ -233,6 +233,26 @@ def _exclude_pattern(name):
     return "/" + escaped
 
 
+STANDARD_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".venv/")
+STANDARD_EXCLUDE_HEADER = "# sid: caches and installed dependencies (never committed)"
+
+
+def ensure_standard_excludes(worktree):
+    """Keep caches and installed dependencies out of every commit of a
+    project, whoever creates them (the builder now has network and may run
+    npm install / pytest itself): the repository's shared info/exclude,
+    which only SID writes (sandboxes see .git read-only)."""
+    common = run_git("rev-parse", "--git-common-dir", cwd=worktree).stdout.strip()
+    exclude = (Path(worktree) / common).resolve() / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text().splitlines() if exclude.exists() else []
+    missing = [pattern for pattern in STANDARD_EXCLUDES if pattern not in existing]
+    if missing:
+        header = [] if STANDARD_EXCLUDE_HEADER in existing else [STANDARD_EXCLUDE_HEADER]
+        with exclude.open("a") as handle:
+            handle.write("\n".join(["", *header, *missing]) + "\n")
+
+
 def ignore_setup_output(worktree, created):
     """Keep what setup installed (node_modules, .venv, lock files it wrote)
     out of every commit: its top-level names go into the repository's shared
@@ -465,6 +485,7 @@ def create_worktree(job_id, suffix=""):
 
     run_git("worktree", "add", "-b", branch, str(path), PROJECT.default_branch if PROJECT else "main")
     if PROJECT is not None and not PROJECT.is_sid:
+        ensure_standard_excludes(path)
         # Dependencies before the builder starts, so it can run the tests.
         # A failure is reported again (and retried) by the gate.
         try:
