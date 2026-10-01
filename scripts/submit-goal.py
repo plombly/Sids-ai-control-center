@@ -18,6 +18,7 @@ def main():
     )
     parser.add_argument("goal")
     parser.add_argument("--atomic", action="store_true", help="Require exactly one implementation job")
+    parser.add_argument("--project", default="", help="Project id (default: SID itself)")
     args = parser.parse_args()
 
     r = redis.Redis.from_url(
@@ -25,6 +26,9 @@ def main():
         password=sid_redis.password(), decode_responses=True,
     )
 
+    project_id = args.project.strip()
+    if project_id and project_id != "sid" and not r.sismember("sid:projects", project_id):
+        parser.error(f"unknown project: {project_id}")
     goal_id = uuid.uuid4().hex[:8]
     created = str(time.time())
 
@@ -36,21 +40,18 @@ def main():
         "updated_at": created,
         "atomic": "1" if args.atomic else "0",
     }
+    queued = {"id": goal_id, "goal": args.goal, "created_at": created, "atomic": args.atomic}
+    if project_id:
+        record["project_id"] = queued["project_id"] = project_id
 
     r.hset(f"sid:goals:{goal_id}", mapping=record)
-    r.rpush(
-        "sid:goals",
-        json.dumps({
-            "id": goal_id,
-            "goal": args.goal,
-            "created_at": created,
-            "atomic": args.atomic,
-        }),
-    )
+    r.rpush("sid:goals", json.dumps(queued))
 
     print(f"Goal queued: {goal_id}")
     print(f"Goal: {args.goal}")
     print(f"Atomic: {args.atomic}")
+    if project_id:
+        print(f"Project: {project_id}")
 
 
 if __name__ == "__main__":
