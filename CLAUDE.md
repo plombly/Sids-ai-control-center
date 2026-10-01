@@ -298,6 +298,30 @@ Parallelism (2026-09-30):
   registering via lib/registry.js plus one import in lib/features.js, with
   their own apps/web/<name>.test.js (the gate runs all of them).
 
+Project types and builds (2026-10-01):
+- apps/api/project_catalog.py: the type catalogue (web, API, iOS, Android,
+  cross-platform, desktop, games, CLI, library, networking, bots, browser
+  extensions, data/ML, embedded, infra, docs, other) with goal templates
+  ("___" blanks), and build RECIPES per stack (Docker image + command +
+  output; xcode/unity/unreal/tauri marked unsupported). resolve_recipe():
+  project fields build_command/build_image/build_output override the stack.
+- services/project_detect.py reads main (git ls-tree + a few manifests);
+  the apps service stores the result in sid:project-type:<id> (JSON incl.
+  head), re-detects when main moves, hourly while "unknown", and when the
+  key is deleted (POST /api/projects/<id>/recheck). Owner's `type` /
+  `type_description` (PATCH) win over detection.
+- Builds: POST /api/projects/<id>/builds sets sid:build-request:<id>; the
+  apps service starts scripts/sid-build.py as unit sid-build-<id>-<bid>
+  (one per project, RuntimeMaxSec 45 min): detached checkout of main in
+  /opt/sid-projects/<id>/builds/work-<bid>, `docker run --rm` with only that
+  checkout + volume sid-build-cache-<id> mounted (4g/2cpu/2048 pids),
+  output zipped (symlinks skipped) to builds/<bid>.zip + .log, status in
+  sid:build:<id>:<bid>, list sid:builds:<id>, newest 5 kept. The checkout
+  is deleted as plain files (never git inside it). Deleting a project stops
+  its builds and removes those keys and the cache volume.
+- Web: lib/project-kinds.js (type card + template chips on Overview, Builds
+  tab, type/build fields in Settings).
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

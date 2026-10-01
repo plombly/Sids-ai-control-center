@@ -292,3 +292,91 @@ def test_history_and_undo(client):
     assert test_client.post("/api/projects/alpha/undo", json={"request_id": "undo-00002"}).status_code == 422
     assert test_client.post("/api/projects/sid/undo", json={"commit": "abc1234", "request_id": "undo-00003"}).status_code == 403
     assert test_client.post("/api/projects/alpha/undo", json={"commit": "--hard", "request_id": "undo-00004"}).status_code == 422
+
+
+# --- project types and builds ------------------------------------------------------
+
+class BuildRedis(FakeRedis):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.lists = {}
+
+    def lrange(self, key, start, end):
+        items = self.lists.get(key, [])
+        return items[start:] if end == -1 else items[start:end + 1]
+
+    def delete(self, key):
+        self.strings.pop(key, None)
+
+
+@pytest.fixture
+def builds(monkeypatch, tmp_path):
+    import build_routes
+    fake = BuildRedis({"sid:projects:game": {"id": "game", "name": "Game", "status": "active"}}, members=["game"])
+    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(build_routes, "PROJECTS_MOUNT", tmp_path)
+    return TestClient(main.app), fake, tmp_path
+
+
+def test_type_comes_from_choice_detection_or_description(builds):
+    client, fake, _ = builds
+    assert client.get("/api/projects/game").json()["project_type"]["type"] == "checking"
+    fake.strings["sid:project-type:game"] = json.dumps({"type": "unknown", "stack": "", "evidence": []})
+    assert client.get("/api/projects/game").json()["project_type"]["type"] == "unknown"
+    assert client.patch("/api/projects/game", json={"type_description": "a discord bot for my server"}).status_code == 200
+    kind = client.get("/api/projects/game").json()["project_type"]
+    assert (kind["type"], kind["source"]) == ("bot", "described")
+    fake.strings["sid:project-type:game"] = json.dumps({"type": "game", "stack": "love2d", "evidence": ["main.lua"]})
+    kind = client.get("/api/projects/game").json()["project_type"]
+    assert (kind["type"], kind["stack"], kind["evidence"]) == ("game", "love2d", ["main.lua"])
+    assert client.patch("/api/projects/game", json={"type": "desktop_app"}).json()["project_type"]["source"] == "chosen"
+    assert client.patch("/api/projects/game", json={"type": "spaceship"}).status_code == 422
+    assert client.post("/api/projects/game/recheck").status_code == 202
+    assert "sid:project-type:game" not in fake.strings
+    catalog = client.get("/api/project-catalog").json()
+    assert "game" in catalog["types"] and "keywords" not in catalog["types"]["game"]
+    assert catalog["types"]["game"]["templates"]
+
+
+def test_build_fields_are_validated(builds):
+    client, fake, _ = builds
+    for body in ({"build_image": "--privileged"}, {"build_image": "a b"}, {"build_output": "../x"},
+                 {"build_output": "/etc"}, {"build_command": "a\nb"}):
+        assert client.patch("/api/projects/game", json=body).status_code == 422, body
+    ok = client.patch("/api/projects/game", json={"build_image": "node:22", "build_command": "npm run dist", "build_output": "out"})
+    assert ok.status_code == 200 and ok.json()["build_image"] == "node:22"
+    # SID itself only takes descriptive fields.
+    client.patch("/api/projects/sid", json={"build_command": "rm -rf /", "type": "api_service"})
+    assert "build_command" not in fake.hashes["sid:projects:sid"] and fake.hashes["sid:projects:sid"]["type"] == "api_service"
+
+
+def test_build_request_list_download_and_log(builds):
+    client, fake, folder = builds
+    assert client.post("/api/projects/game/builds").status_code == 409  # nothing detected: no recipe
+    fake.strings["sid:project-type:game"] = json.dumps({"type": "game", "stack": "unity"})
+    refused = client.post("/api/projects/game/builds")
+    assert refused.status_code == 409 and "Unity" in refused.json()["detail"]
+    fake.strings["sid:project-type:game"] = json.dumps({"type": "game", "stack": "love2d"})
+    first = client.post("/api/projects/game/builds")
+    assert first.status_code == 202
+    assert client.post("/api/projects/game/builds").status_code == 409  # already requested
+    request = json.loads(fake.strings["sid:build-request:game"])
+    assert request["build_id"] == first.json()["build_id"]
+    listing = client.get("/api/projects/game/builds").json()
+    assert listing["requested"] and listing["recipe"]["label"].startswith("LÖVE")
+    fake.strings.pop("sid:build-request:game")
+    fake.lists["sid:builds:game"] = ["b2", "b1"]
+    fake.hashes["sid:build:game:b2"] = {"status": "running"}
+    fake.hashes["sid:build:game:b1"] = {"status": "succeeded", "commit": "abcdef1234567", "size": "3"}
+    assert client.post("/api/projects/game/builds").status_code == 409  # one at a time
+    items = client.get("/api/projects/game/builds").json()["builds"]
+    assert [(b["id"], b["status"]) for b in items] == [("b2", "running"), ("b1", "succeeded")]
+    (folder / "game/builds").mkdir(parents=True)
+    (folder / "game/builds/b1.zip").write_bytes(b"PK")
+    (folder / "game/builds/b1.log").write_text("built ok\n")
+    got = client.get("/api/projects/game/builds/b1/download")
+    assert got.status_code == 200 and got.content == b"PK" and "game-b1-abcdef12.zip" in got.headers["content-disposition"]
+    assert client.get("/api/projects/game/builds/b1/log").text == "built ok\n"
+    assert client.get("/api/projects/game/builds/b2/download").status_code == 404  # not finished
+    assert client.get("/api/projects/game/builds/..%2Fx/log").status_code == 404
+    assert client.get("/api/projects/sid/builds").status_code == 404

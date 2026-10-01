@@ -30,6 +30,7 @@ from pathlib import Path
 from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import project_detect  # noqa: E402
 import project_history  # noqa: E402
 import project_sandbox  # noqa: E402
 import sid_projects  # noqa: E402
@@ -385,8 +386,76 @@ def publish_histories(projects):
             print(f"[sid-apps] history of {project.id}: {exc}", flush=True)
 
 
+TYPE_PREFIX = "sid:project-type:"
+BUILD_REQUEST_PREFIX = "sid:build-request:"
+BUILD_SCRIPT = Path(__file__).resolve().parents[2] / "scripts/sid-build.py"
+BUILD_MAX_SECONDS = int(os.getenv("BUILD_MAX_SECONDS", "2700"))
+UNKNOWN_RECHECK = 3600  # an undetected project is looked at again hourly
+
+
+def publish_types(projects):
+    """Re-detect each project's type and stack when main moved, when the
+    dashboard asked for a recheck (stored result removed), and hourly while
+    nothing was recognised."""
+    for project in projects:
+        key = TYPE_PREFIX + project.id
+        try:
+            current = project_history.head(project.repo, project.default_branch)
+        except RuntimeError:
+            current = ""
+        try:
+            stored = json.loads(redis.get(key) or "{}")
+        except ValueError:
+            stored = {}
+        fresh = stored.get("type") != "unknown" or time.time() - float(stored.get("checked_at") or 0) < UNKNOWN_RECHECK
+        if stored.get("head") == current and current and fresh:
+            continue
+        try:
+            result = project_detect.detect_repo(project.repo, f"refs/heads/{project.default_branch}")
+        except Exception as exc:
+            print(f"[sid-apps] detect {project.id}: {exc}", flush=True)
+            continue
+        result.update(head=current, checked_at=time.time())
+        redis.set(key, json.dumps(result))
+
+
+def unit_is_running(unit):
+    return unit_state_of(unit) in ("active", "activating")
+
+
+def launch_builds(projects):
+    """Start requested builds (one at a time per project) as their own units:
+    scripts/sid-build.py does the work and reports in sid:build:<id>:<build>."""
+    for project in projects:
+        raw = redis.get(BUILD_REQUEST_PREFIX + project.id)
+        if not raw:
+            continue
+        running = [b for b in (redis.lrange(f"sid:builds:{project.id}", 0, 4) or [])
+                   if redis.hget(f"sid:build:{project.id}:{b}", "status") in ("queued", "running")]
+        if any(unit_is_running(f"sid-build-{project.id}-{b}") for b in running):
+            continue
+        try:
+            request = json.loads(raw)
+        except ValueError:
+            redis.delete(BUILD_REQUEST_PREFIX + project.id)
+            continue
+        build_id = request.get("build_id") or time.strftime("%Y%m%d%H%M%S")
+        redis.delete(BUILD_REQUEST_PREFIX + project.id)
+        redis.hset(f"sid:build:{project.id}:{build_id}", mapping={"id": build_id, "status": "queued",
+                                                                   "requested_at": str(time.time())})
+        redis.lpush(f"sid:builds:{project.id}", build_id)
+        result = run([SYSTEMD_RUN, f"--unit=sid-build-{project.id}-{build_id}", "--quiet", "--collect",
+                      f"--property=RuntimeMaxSec={BUILD_MAX_SECONDS}", f"--description=SID build {project.id} {build_id}",
+                      "/opt/sid-venv/bin/python", str(BUILD_SCRIPT), project.id, build_id])
+        if result.returncode:
+            redis.hset(f"sid:build:{project.id}:{build_id}", mapping={"status": "failed",
+                       "error": f"could not start the build: {(result.stderr or result.stdout).strip()[:300]}"})
+
+
 def loop_once():
     publish_histories(sid_projects.all_projects(redis))  # SID too (read-only history)
+    publish_types(sid_projects.all_projects(redis))
+    launch_builds([p for p in sid_projects.all_projects(redis) if not p.is_sid])
     projects = [p for p in sid_projects.all_projects(redis) if not p.is_sid]
     known = set(redis.smembers("sid:projects") or [])
     for project in projects:

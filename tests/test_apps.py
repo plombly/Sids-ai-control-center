@@ -18,8 +18,8 @@ class AppsRedis(MemoryRedis):
         prefix = pattern.rstrip("*")
         return iter([k for k in list(self.records) if k.startswith(prefix)])
 
-    def delete(self, key):
-        self.records.pop(key, None)
+    def delete(self, *keys):
+        return super().delete(*keys)
 
 
 def git(*args, cwd):
@@ -242,3 +242,69 @@ def test_stop_request_and_expiry(apps):
     request_preview(module, repo, "j3")
     module.reconcile_previews(project(), now=1000 + 5 * 3600)  # older than PREVIEW_HOURS
     assert "sid:preview:j3" not in module.redis.records and not preview_runs(calls)
+
+
+# --- project types and builds ------------------------------------------------------------
+
+def test_type_is_detected_once_per_main_commit_and_on_recheck(apps, monkeypatch):
+    module, repo, root, calls, units = apps
+    seen = []
+    real = module.project_detect.detect_repo
+    monkeypatch.setattr(module.project_detect, "detect_repo", lambda *a: seen.append(a) or real(*a))
+    projects = [p for p in module.sid_projects.all_projects(module.redis) if not p.is_sid]
+    module.publish_types(projects)
+    stored = module.json.loads(module.redis.get("sid:project-type:shop"))
+    assert stored["head"] == head(repo) and "type" in stored and stored["checked_at"]
+    module.publish_types(projects)
+    assert len(seen) == 1  # unchanged main: no new detection
+    (repo / "index.html").write_text("<html></html>\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "page", cwd=repo)
+    module.publish_types(projects)
+    assert len(seen) == 2
+    # "Recheck now" removes the stored result.
+    module.redis.delete("sid:project-type:shop")
+    module.publish_types(projects)
+    assert len(seen) == 3
+    # Unrecognised projects are looked at again every hour.
+    stored = module.json.loads(module.redis.get("sid:project-type:shop"))
+    module.redis.set("sid:project-type:shop", module.json.dumps({**stored, "type": "unknown"}))
+    module.publish_types(projects)
+    assert len(seen) == 3
+    module.redis.set("sid:project-type:shop", module.json.dumps({**stored, "type": "unknown", "checked_at": 1}))
+    module.publish_types(projects)
+    assert len(seen) == 4
+
+
+def build_runs(calls):
+    return [c for c in started(calls) if any(a.startswith("--unit=sid-build-") for a in c)]
+
+
+def test_a_build_request_starts_one_build_unit(apps):
+    module, repo, root, calls, units = apps
+    module.redis.set("sid:build-request:shop", module.json.dumps({"build_id": "b1"}))
+    projects = [p for p in module.sid_projects.all_projects(module.redis) if not p.is_sid]
+    module.launch_builds(projects)
+    runs = build_runs(calls)
+    assert len(runs) == 1 and runs[0][-3:] == [str(module.BUILD_SCRIPT), "shop", "b1"]
+    assert any(a.startswith("--property=RuntimeMaxSec=") for a in runs[0])
+    assert module.redis.get("sid:build-request:shop") is None
+    assert module.redis.records["sid:build:shop:b1"]["status"] == "queued"
+    assert module.redis.lrange("sid:builds:shop", 0, -1) == ["b1"]
+    # A second request waits while the first build runs.
+    module.redis.set("sid:build-request:shop", module.json.dumps({"build_id": "b2"}))
+    module.launch_builds(projects)
+    assert len(build_runs(calls)) == 1 and module.redis.get("sid:build-request:shop")
+    units["sid-build-shop-b1"] = "inactive"
+    module.redis.records["sid:build:shop:b1"]["status"] = "succeeded"
+    module.launch_builds(projects)
+    assert len(build_runs(calls)) == 2
+
+
+def test_a_build_that_cannot_start_is_reported(apps, monkeypatch):
+    module, repo, root, calls, units = apps
+    monkeypatch.setattr(module, "run", lambda args, **k: subprocess.CompletedProcess(args, 1, "", "no systemd"))
+    module.redis.set("sid:build-request:shop", module.json.dumps({"build_id": "b1"}))
+    module.launch_builds([p for p in module.sid_projects.all_projects(module.redis) if not p.is_sid])
+    record = module.redis.records["sid:build:shop:b1"]
+    assert record["status"] == "failed" and "no systemd" in record["error"]

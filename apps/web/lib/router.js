@@ -6,8 +6,8 @@
 import { routeHandlers } from './registry.js';
 
 const PROJECT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
-// A project page's tabs: #/projects/<id>[/files|/history|/settings].
-export const TABS = ['overview', 'activity', 'files', 'history', 'settings'];
+// A project page's tabs: #/projects/<id>[/activity|/files|/builds|/history|/settings].
+export const TABS = ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
 
 export function parseRoute(hash) {
   const parts = String(hash || '')

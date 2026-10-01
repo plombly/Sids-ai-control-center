@@ -5,6 +5,7 @@ import './pipeline-insights.js';
 import './providers.js';
 import './system-health.js';
 import './projects.js';
+import './project-kinds.js';
 import './project-overview.js';
 import './project-wizard.js';
 import './project-files.js';

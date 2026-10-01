@@ -1819,3 +1819,81 @@ pre {
 .settings-row select {
   width: auto;
 }
+
+/* Project type card, goal ideas and builds */
+.kind-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.kind-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.kind-head > span:nth-child(2) {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.kind-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.kind-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kind-why summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.kind-why ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.template-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.template-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.kind-settings {
+  margin-bottom: 8px;
+}
+.kind-settings h4 {
+  margin: 10px 0 0;
+}
+.kind-settings select,
+.kind-settings textarea {
+  width: 100%;
+}
+.builds .item-head h3 {
+  margin: 0;
+}
+.builds code {
+  overflow-wrap: anywhere;
+}
+.build-item .form-row {
+  margin-top: 6px;
+}

@@ -238,6 +238,16 @@ def verify_worktree_pointer(top, repo):
         raise RuntimeError(f"worktree {top.name} .git pointer was tampered with ({exc}); refusing to run git in it")
 
 
+PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
+
+
+def builds_dir(project_id):
+    """<PROJECTS_BASE>/<id>/builds: downloadable build results (scripts/sid-build.py)."""
+    if not PROJECT_ID.fullmatch(project_id or "") or project_id == SID_PROJECT:
+        raise ValueError(f"invalid project id: {project_id!r}")
+    return PROJECTS_BASE / project_id / "builds"
+
+
 def data_dir(project_id):
     """<DATA_BASE>/<id>: the project's app data (HOME/DATA_DIR of its app,
     the "Data" area of the dashboard file browser)."""

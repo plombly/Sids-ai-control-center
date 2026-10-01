@@ -23,6 +23,7 @@ PROJECT_SET = "sid:projects"
 # Directories under this base are the only ones delete ever removes.
 PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
 SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
+DOCKER = os.environ.get("SID_DOCKER", "docker")
 KEYS_BASE = Path(os.environ.get("SID_PROJECT_KEYS", "/etc/sid-ai/project-keys"))
 UPLOADS_BASE = Path(os.environ.get("SID_UPLOADS", "/opt/sid-uploads"))
 # Deleted projects wait here (root-only) for TRASH_HOURS before purge-trash
@@ -267,6 +268,19 @@ def busy_work(redis_client, project_id, job_ids, goal_ids):
     return busy
 
 
+def forget_builds(r, project_id):
+    """Build records, the detected type and the package cache volume. The
+    build zips live in the project directory and go to the trash with it."""
+    build_ids = r.lrange(f"sid:builds:{project_id}", 0, -1) or []
+    for key in [f"sid:build:{project_id}:{b}" for b in build_ids] + [
+            f"sid:builds:{project_id}", f"sid:build-request:{project_id}", f"sid:project-type:{project_id}"]:
+        r.delete(key)
+    try:
+        subprocess.run([DOCKER, "volume", "rm", "-f", f"sid-build-cache-{project_id}"], capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def owned_root(record):
     """The project's directory if SID created it (exactly <PROJECTS_BASE>/<id>,
     a real directory, not a symlink), else None. Registered existing
@@ -317,12 +331,14 @@ def delete(args):
         r.hset(key_for(args.id), mapping={"status": previous, "updated_at": now()})
         raise ProjectError("still running: " + ", ".join(busy) + ". Nothing was deleted; try again when it finishes")
 
-    # Its running app (services/apps/sid_apps.py), if any.
+    # Its running app (services/apps/sid_apps.py) and builds, if any.
     for verb in ("stop", "reset-failed"):  # a crashed app's unit stays "failed" until reset
-        try:
-            subprocess.run([SYSTEMCTL, verb, f"sid-app-{args.id}"], capture_output=True, timeout=60)
-        except (OSError, subprocess.SubprocessError):
-            pass
+        for unit in (f"sid-app-{args.id}", f"sid-build-{args.id}-*"):
+            try:
+                subprocess.run([SYSTEMCTL, verb, unit], capture_output=True, timeout=60)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    forget_builds(r, args.id)
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     trash_id = f"{args.id}-{stamp}"

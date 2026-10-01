@@ -34,6 +34,13 @@ class ProjectPatch(BaseModel):
     run_memory_mb: Optional[int] = Field(default=None, ge=64, le=65536)
     run_cpus: Optional[float] = Field(default=None, ge=0.1, le=64)
     run_tasks: Optional[int] = Field(default=None, ge=16, le=32768)
+    # What the project is ("" = detect automatically) and how to build it
+    # ("" = the detected stack's recipe, apps/api/project_catalog.py).
+    type: Optional[str] = Field(default=None, max_length=40)
+    type_description: Optional[str] = Field(default=None, max_length=500, pattern=_COMMAND)
+    build_command: Optional[str] = Field(default=None, max_length=500, pattern=_COMMAND)
+    build_image: Optional[str] = Field(default=None, max_length=300)
+    build_output: Optional[str] = Field(default=None, max_length=200, pattern=_COMMAND)
 
 
 _REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"
@@ -184,6 +191,7 @@ def _app_status(project_id):
 
 
 def _item(project_id, data=None):
+    import build_routes
     main = _redis()
     data = data if data is not None else _project_data(project_id)
     stats = _data(main.redis.hgetall(f"sid:project-stats:{project_id}"))
@@ -200,6 +208,10 @@ def _item(project_id, data=None):
         "run_cpus": _numeric(data.get("run_cpus")) or 1,
         "run_tasks": _numeric(data.get("run_tasks")) or 512,
         "app": _app_status(project_id),
+        "project_type": build_routes.type_info(project_id, data),
+        "build_command": _text(data.get("build_command")),
+        "build_image": _text(data.get("build_image")),
+        "build_output": _text(data.get("build_output")),
         # SID itself: the control plane, configured on the host.
         "system": _system_info() if project_id == "sid" else None,
         "push_remote": _text(data.get("push_remote")),
@@ -273,7 +285,8 @@ def patch_project(project_id: str, payload: ProjectPatch):
     changes = payload.model_dump(exclude_none=True)
     if project_id == "sid":
         # SID's commands are its own gate and control plane: never editable.
-        changes = {k: v for k, v in changes.items() if k == "importance"}
+        changes = {k: v for k, v in changes.items() if k in ("importance", "type", "type_description")}
+    _check_build_fields(changes)
     if "run_port" in changes:
         for other in _members(main):
             if other != project_id and _project_data(other).get("run_port") == str(changes["run_port"]):
@@ -282,6 +295,17 @@ def patch_project(project_id: str, payload: ProjectPatch):
         raise HTTPException(status_code=422, detail="Nothing to change")
     main.redis.hset(key, mapping={**{k: str(v).strip() for k, v in changes.items()}, "updated_at": str(time.time())})
     return _item(project_id)
+
+
+def _check_build_fields(changes):
+    import project_catalog
+    if changes.get("type") and changes["type"] not in project_catalog.TYPES:
+        raise HTTPException(status_code=422, detail="Unknown project type")
+    if changes.get("build_image") and not project_catalog.valid_image(changes["build_image"].strip()):
+        raise HTTPException(status_code=422, detail="Build image must be a Docker image name like node:22-bookworm")
+    output = (changes.get("build_output") or "").strip()
+    if output and (output.startswith("/") or ".." in output.split("/") or "\\" in output):
+        raise HTTPException(status_code=422, detail="Build output must be a folder inside the project")
 
 
 @router.post("/api/projects/{project_id}/app/restart", status_code=202)

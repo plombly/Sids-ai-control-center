@@ -172,6 +172,7 @@ def deletable(monkeypatch, tmp_path):
     base = tmp_path / "projects"
     monkeypatch.setattr(sid_project, "PROJECTS_BASE", base)
     monkeypatch.setattr(sid_project, "SYSTEMCTL", "true")
+    monkeypatch.setattr(sid_project, "DOCKER", "true")
     monkeypatch.setattr(sid_project, "KEYS_BASE", tmp_path / "keys")
     monkeypatch.setattr(sid_project.sid_projects, "DATA_BASE", tmp_path / "project-data")
     monkeypatch.setattr(sid_project, "TRASH_BASE", tmp_path / "trash")

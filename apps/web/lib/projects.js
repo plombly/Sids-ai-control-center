@@ -2,6 +2,7 @@ import { requestJSON, operatorRequest, newRequestId } from './api.js';
 import { esc, escValue, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
 import { projectsMarkup as homeProjectsMarkup } from './home.js';
+import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
 
 const requestId = newRequestId;
 
@@ -42,11 +43,11 @@ export function systemInfoMarkup(system) {
   )}</div></div>`;
 }
 
-const TAB_LABELS = { overview: 'Overview', activity: 'Activity', files: 'Files', history: 'History', settings: 'Settings' };
+const TAB_LABELS = { overview: 'Overview', activity: 'Activity', files: 'Files', builds: 'Builds', history: 'History', settings: 'Settings' };
 const GOAL_DONE = /^(completed|failed|planning_failed|cancelled)$/;
 
 export function tabsMarkup(id, tab) {
-  const tabs = id === 'sid' ? ['overview', 'activity', 'history'] : ['overview', 'activity', 'files', 'history', 'settings'];
+  const tabs = id === 'sid' ? ['overview', 'activity', 'history'] : ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
   return `<nav class="project-tabs" aria-label="Project sections">${tabs
     .map(key => `<a href="#/projects/${encodeURIComponent(id)}${key === 'overview' ? '' : `/${key}`}" class="${key === tab ? 'active' : ''}"${key === tab ? ' aria-current="page"' : ''}>${TAB_LABELS[key]}</a>`)
     .join('')}</nav>`;
@@ -83,7 +84,7 @@ function overviewMarkup(project) {
   const jobRows = jobs
     .map(job => `<tr><td><button type="button" class="detail-button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${esc(firstLine(job.title) || '')}</td><td>${pill(job.status)}</td><td class="subtle">${esc(job.provider)}/${esc(job.model)}</td></tr>`)
     .join('');
-  return `<form id="project-goal-form" class="goal-form project-composer"><label class="composer-label" for="project-goal-text">What should SID do in ${esc(name)}?</label><textarea id="project-goal-text" name="goal" placeholder="Describe the change you want" required></textarea><div class="composer-row"><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="project-goal-status" class="form-status" role="status"></span></form>${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}<form id="project-goal-form" class="goal-form project-composer"><label class="composer-label" for="project-goal-text">What should SID do in ${esc(name)}?</label><textarea id="project-goal-text" name="goal" placeholder="Describe the change you want" required></textarea><div class="composer-row"><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="project-goal-status" class="form-status" role="status"></span></form>${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
@@ -148,7 +149,7 @@ export function historyMarkup(history, now = Date.now() / 1000) {
 function settingsMarkup(project) {
   const id = text(project?.id, '');
   if (id === 'sid') return systemInfoMarkup(project.system);
-  return `${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
 export function projectDetailMarkup(project, tab = 'overview') {
@@ -162,7 +163,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
     ? `<a class="button" href="http://${escValue(globalThis.location?.hostname || 'localhost')}:${escValue(app.port)}/" target="_blank" rel="noopener">Open app</a>`
     : '';
   const body =
-    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events) : tab === 'files' ? '' : overviewMarkup(project);
+    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events) : tab === 'builds' ? buildsMarkup(id, project.builds) : tab === 'files' ? '' : overviewMarkup(project);
   return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2></div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}<label class="importance-select">Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
@@ -344,19 +345,23 @@ if (typeof document !== 'undefined') {
       const id = encodeURIComponent(route.projectId);
       const tab = route.tab || 'overview';
       const optional = path => requestJSON(path).catch(() => null);
-      const [project, extra] = await Promise.all([
+      const [project, extra, catalog] = await Promise.all([
         requestJSON(`/api/projects/${id}?limit=25`),
         tab === 'settings' && route.projectId !== 'sid' ? optional(`/api/projects/${id}/env`)
           : tab === 'history' ? optional(`/api/projects/${id}/history`)
           : tab === 'activity' ? optional(`/api/projects/${id}/activity`)
           : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
-          : null
+          : tab === 'builds' ? optional(`/api/projects/${id}/builds`)
+          : null,
+        tab === 'overview' || tab === 'settings' ? loadCatalog().catch(() => null) : null
       ]);
       if (project) {
         if (tab === 'settings') project.env = extra;
         if (tab === 'history') project.history = extra;
         if (tab === 'activity') project.activity = extra;
         if (tab === 'overview') project.usage = extra;
+        if (tab === 'builds') project.builds = extra;
+        project.catalog = catalog;
       }
       if (version === renderVersion) {
         detailMain().innerHTML = projectDetailMarkup(project, tab);
@@ -388,6 +393,7 @@ if (typeof document !== 'undefined') {
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
   });
+  window.addEventListener('sid:project-refresh', () => activeRoute && render(activeRoute, true));
   const undo = async button => {
     const title = button.dataset.undoTitle || 'this change';
     if (!globalThis.confirm?.(`Undo "${title}"? SID adds a new commit to main that reverses it.`)) return;

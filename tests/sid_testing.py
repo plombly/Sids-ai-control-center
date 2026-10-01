@@ -83,6 +83,13 @@ class MemoryRedis:
         self.values.setdefault(key, []).append(value)
         return len(self.values[key])
 
+    def lpush(self, key, value):
+        self.values.setdefault(key, []).insert(0, value)
+        return len(self.values[key])
+
+    def ltrim(self, key, start, end):
+        self.values[key] = self.lrange(key, start, end)
+
     def lrem(self, key, count, value):
         items = self.values.get(key, [])
         kept = [item for item in items if item != value]

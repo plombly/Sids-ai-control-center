@@ -1212,6 +1212,7 @@ from usage_routes import router as usage_router
 from preview_routes import router as preview_router
 from activity_routes import router as activity_router
 from notify_routes import router as notify_router
+from build_routes import router as build_router
 
 app.include_router(agent_router)
 app.include_router(project_router)
@@ -1222,3 +1223,4 @@ app.include_router(usage_router)
 app.include_router(preview_router)
 app.include_router(activity_router)
 app.include_router(notify_router)
+app.include_router(build_router)
