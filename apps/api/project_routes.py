@@ -343,6 +343,38 @@ def push_setup(project_id: str, payload: ProjectPushSetup):
                              {"project_id": project_id, "url": payload.url})
 
 
+@router.get("/api/projects-trash")
+def trash():
+    """Deleted projects that can still be restored (newest first)."""
+    main = _redis()
+    items = []
+    for trash_id in main.redis.smembers("sid:trash") or []:
+        info = _data(main.redis.hgetall(f"sid:trash:{_text(_clean(trash_id))}"))
+        if info:
+            items.append({"trash_id": _text(info.get("trash_id")), "project_id": _text(info.get("project_id")),
+                          "name": _text(info.get("name")), "deleted_at": _numeric(info.get("deleted_at")),
+                          "expires_at": _numeric(info.get("expires_at"))})
+    return sorted(items, key=lambda item: -(item["deleted_at"] or 0))
+
+
+class ProjectRestore(BaseModel):
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
+@router.post("/api/projects-trash/{trash_id}/restore", status_code=202)
+def restore(trash_id: str, payload: ProjectRestore):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z", trash_id or ""):
+        raise HTTPException(status_code=422, detail="Invalid trash id")
+    main = _redis()
+    info = _data(main.redis.hgetall(f"sid:trash:{trash_id}"))
+    if not info:
+        raise HTTPException(status_code=404, detail="Not in the trash (it may have been emptied)")
+    project_id = _text(info.get("project_id"))
+    if _known(project_id):
+        raise HTTPException(status_code=409, detail=f"A project named {project_id} exists now")
+    return _operator_request("restore_project", payload.request_id, {"project_id": project_id, "trash_id": trash_id})
+
+
 @router.post("/api/projects/{project_id}/delete", status_code=202)
 def delete_project(project_id: str, payload: ProjectDelete):
     """Wipe a project from the server (host runs sid-project.py delete)."""

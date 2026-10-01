@@ -109,9 +109,24 @@ export function buildSettingsRequest(values) {
 }
 
 // Deleting wipes the project from the server; SID itself cannot be deleted.
+// Deleted projects still restorable (GET /api/projects-trash).
+export function trashMarkup(items, now = Date.now() / 1000) {
+  if (!Array.isArray(items) || !items.length) return '';
+  const hours = seconds => Math.max(0, Math.round(seconds / 3600));
+  const rows = items
+    .map(item => {
+      const left = hours((item.expires_at || 0) - now);
+      return `<div class="item"><div class="item-head"><div class="item-title">${esc(item.name)} <span class="subtle">${esc(item.project_id)}</span></div><button type="button" data-restore-trash="${escValue(
+        item.trash_id
+      )}">Restore</button></div><div class="subtle">Deleted ${esc(new Date((item.deleted_at || 0) * 1000).toLocaleString())} · removed for good in ${left <= 1 ? 'under an hour' : `${left} hours`}</div></div>`;
+    })
+    .join('');
+  return `<section class="panel wide trash-panel"><div class="panel-heading"><div><p class="eyebrow">TRASH</p><h2>Recently deleted</h2></div></div><div class="stack">${rows}</div></section>`;
+}
+
 export function deleteProjectMarkup(id) {
   if (!id || id === 'sid') return '';
-  return `<form id="project-delete-form" class="goal-form danger-zone"><h3>Delete project</h3><p class="subtle">Removes the project from this server: its repository, worktrees, logs, deploy key, goals and jobs. Work that is running must finish first. This cannot be undone.</p><div class="form-row"><input name="confirm" autocomplete="off" placeholder="Type ${esc(
+  return `<form id="project-delete-form" class="goal-form danger-zone"><h3>Delete project</h3><p class="subtle">Moves the project to the trash with its repository, app data, deploy key, goals and jobs, and stops its app. You can restore it from the Projects page for 1 day; after that it is removed for good. Work that is running must finish first.</p><div class="form-row"><input name="confirm" autocomplete="off" placeholder="Type ${esc(
     id
   )} to confirm" aria-label="Project ID to confirm"><button type="submit" class="danger-button">Delete project</button></div><span id="project-delete-status" class="form-status" role="status"></span></form>`;
 }
@@ -194,8 +209,11 @@ if (typeof document !== 'undefined') {
     const version = ++renderVersion;
     if (route.projectId === null) {
       try {
-        const projects = await requestJSON('/api/projects?limit=25');
-        if (version === renderVersion) container.innerHTML = `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECTS</p><h2>Projects</h2></div><div><a class="button" href="#/projects/new">Create a project</a></div></div><div class="stack">${projectListMarkup(projects)}</div></section>`;
+        const [projects, trashed] = await Promise.all([
+          requestJSON('/api/projects?limit=25'),
+          requestJSON('/api/projects-trash').catch(() => [])
+        ]);
+        if (version === renderVersion) container.innerHTML = `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECTS</p><h2>Projects</h2></div><div><a class="button" href="#/projects/new">Create a project</a></div></div><div class="stack">${projectListMarkup(projects)}</div></section>${trashMarkup(trashed)}`;
       } catch (error) {
         container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
       }
@@ -221,6 +239,23 @@ if (typeof document !== 'undefined') {
   });
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
+  });
+  registerClick('restoreTrash', async button => {
+    button.disabled = true;
+    button.textContent = 'Restoring…';
+    try {
+      const request_id = requestId();
+      const response = await requestJSON(`/api/projects-trash/${encodeURIComponent(button.dataset.restoreTrash)}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ request_id })
+      });
+      const result = await poll(response.request_id || request_id);
+      if (result.status !== 'succeeded') throw new Error(resultMessage(result));
+      await render(activeRoute, true);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = `Restore failed: ${error.message}`;
+    }
   });
   registerClick('appRestart', async button => {
     button.disabled = true;

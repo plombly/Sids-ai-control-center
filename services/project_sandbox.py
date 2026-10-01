@@ -35,7 +35,7 @@ BWRAP = os.environ.get("SID_BWRAP", "/usr/bin/bwrap")
 # Hidden from every sandbox (replaced by an empty tmpfs when present).
 HIDDEN = (
     "/opt/sids-ai-command-center", "/opt/sid-dev", "/opt/sid-worktrees",
-    "/opt/sid-projects", "/opt/sid-project-data", "/opt/sid-uploads", "/etc/sid-ai",
+    "/opt/sid-projects", "/opt/sid-project-data", "/opt/sid-uploads", "/opt/sid-trash", "/etc/sid-ai",
     "/var/backups", "/var/log/sid-ai",
     "/root", "/home", "/srv", "/mnt", "/media",
 )

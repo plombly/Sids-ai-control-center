@@ -59,11 +59,12 @@ OUTPUT_LIMIT = 8000
 
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
-           "project_commit_upload")
+           "project_commit_upload", "restore_project")
 # Project-level actions run scripts/sid-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
 PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project",
-                   "project_commit_upload")
+                   "project_commit_upload", "restore_project")
+TRASH_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z")
 # Actions that carry the exact integrated candidate the human confirmed.
 CANDIDATE_ACTIONS = ("approve", "queue_approve")
 DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
@@ -72,7 +73,7 @@ REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
     "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
-    "batch", "on_conflict",
+    "batch", "on_conflict", "trash_id",
 )
 # project_commit_upload commits one dashboard file change to a project's main:
 # an upload (op "upload", the default) or a file-browser operation.
@@ -244,6 +245,10 @@ def validate_project_request(action, fields):
         if fields.get("confirm", "") != project_id:
             raise Invalid("type the project id to confirm deletion")
         request["confirm"] = project_id
+    elif action == "restore_project":
+        if not TRASH_ID.fullmatch(fields.get("trash_id", "")) or not fields["trash_id"].startswith(project_id + "-"):
+            raise Invalid("invalid trash id")
+        request["trash_id"] = fields["trash_id"]
     elif action == "project_commit_upload":
         if project_id == "sid":
             raise Invalid("SID's own code cannot be changed by upload")
@@ -290,6 +295,8 @@ def project_cli_args(request):
         return ["retry-clone", project_id]
     if action == "delete_project":
         return ["delete", project_id, "--confirm", request["confirm"]]
+    if action == "restore_project":
+        return ["restore", request["trash_id"]]
     if action == "project_commit_upload":
         # --opt=value: a name starting with "-" must not read as an option.
         if request.get("op", "upload") == "upload":

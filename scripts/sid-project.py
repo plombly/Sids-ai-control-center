@@ -25,6 +25,11 @@ PROJECTS_BASE = Path(os.environ.get("SID_PROJECTS_BASE", "/opt/sid-projects"))
 SYSTEMCTL = os.environ.get("SYSTEMCTL", "systemctl")
 KEYS_BASE = Path(os.environ.get("SID_PROJECT_KEYS", "/etc/sid-ai/project-keys"))
 UPLOADS_BASE = Path(os.environ.get("SID_UPLOADS", "/opt/sid-uploads"))
+# Deleted projects wait here (root-only) for TRASH_HOURS before purge-trash
+# removes them for good.
+TRASH_BASE = Path(os.environ.get("SID_TRASH", "/opt/sid-trash"))
+TRASH_HOURS = float(os.environ.get("SID_TRASH_HOURS", "24"))
+TRASH_SET = "sid:trash"
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -274,10 +279,27 @@ def owned_root(record):
     return root
 
 
+TRASH_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z$")
+
+
+def _move_into(source, target):
+    """Move a directory (same filesystem: an instant rename)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+
+
+def _owned_dir(base, project_id):
+    target = base / project_id
+    if target.is_dir() and not target.is_symlink() and target.resolve().parent == base.resolve():
+        return target
+    return None
+
+
 def delete(args):
-    """Remove a project from the server: its queued work, job/goal records,
-    Redis keys and (only if SID created it) its directory with repo,
-    worktrees, logs and deploy key. Refuses while its work is running."""
+    """Move a project to the trash (TRASH_BASE, kept TRASH_HOURS): its
+    records, queued work and (only if SID created them) its directory, app
+    data and deploy key, so `restore` can bring it all back. Refuses while
+    its work is running. The trash is emptied by purge-trash."""
     validate_id(args.id)
     if args.id == "sid":
         raise ProjectError("SID itself cannot be deleted")
@@ -299,11 +321,39 @@ def delete(args):
         subprocess.run([SYSTEMCTL, "stop", f"sid-app-{args.id}"], capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         pass
+
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    trash_id = f"{args.id}-{stamp}"
+    trash = TRASH_BASE / trash_id
+    trash.mkdir(parents=True, mode=0o700)
+    saved = {"project": {**record, "status": previous}, "stats": r.hgetall(f"sid:project-stats:{args.id}"),
+             "jobs": {jid: r.hgetall(f"sid:jobs:{jid}") for jid in sorted(job_ids)},
+             "goals": {gid: r.hgetall(f"sid:goals:{gid}") for gid in sorted(goal_ids)},
+             "merge_queue": r.lrange(f"sid:merge-queue:{args.id}", 0, -1), "queued": {}}
     for queue, owned in (("sid:jobs", job_ids), ("sid:goals", goal_ids)):
         for raw in r.lrange(queue, 0, -1):
             payload = _json(raw)
             if payload.get("id") in owned or payload.get("project_id") == args.id:
+                saved["queued"].setdefault(queue, []).append(raw)
                 r.lrem(queue, 0, raw)
+
+    result = {"id": args.id, "status": "trashed", "trash_id": trash_id,
+              "jobs_removed": len(job_ids), "goals_removed": len(goal_ids)}
+    moved = {}
+    root = owned_root(record)
+    if root is not None:
+        _move_into(root, trash / "project")
+        moved["project"] = str(root)
+    else:
+        result["kept_paths"] = sorted({record.get(k, "") for k in ("repo", "worktrees", "logs") if record.get(k)})
+    for base, name in ((sid_projects.DATA_BASE, "data"), (KEYS_BASE, "key")):
+        target = _owned_dir(base, args.id)
+        if target is not None:
+            _move_into(target, trash / name)
+            moved[name] = str(target)
+    saved["moved"] = moved
+    (trash / "records.json").write_text(json.dumps(saved))
+
     keys = [f"sid:jobs:{jid}" for jid in job_ids] + [f"sid:integration-lock:{jid}" for jid in job_ids]
     keys += [f"sid:goals:{gid}" for gid in goal_ids]
     keys += [key_for(args.id), f"sid:project-stats:{args.id}", f"sid:merge-queue:{args.id}",
@@ -311,23 +361,94 @@ def delete(args):
     for key in keys:
         r.delete(key)
     r.srem(PROJECT_SET, args.id)
-
-    result = {"id": args.id, "status": "deleted", "jobs_removed": len(job_ids), "goals_removed": len(goal_ids)}
-    root = owned_root(record)
-    if root is not None:
-        shutil.rmtree(root)
-        result["removed_path"] = str(root)
-    else:
-        result["kept_paths"] = sorted({record.get(k, "") for k in ("repo", "worktrees", "logs") if record.get(k)})
-    # Its app data and deploy key: exactly <base>/<id>, real directories only.
-    for base, name in ((sid_projects.DATA_BASE, "data"), (KEYS_BASE, "key")):
-        target = base / args.id
-        if target.is_dir() and not target.is_symlink() and target.resolve().parent == base.resolve():
-            shutil.rmtree(target)
-            result[f"removed_{name}"] = str(target)
+    deleted_at = time.time()
+    r.hset(f"sid:trash:{trash_id}", mapping={
+        "trash_id": trash_id, "project_id": args.id, "name": record.get("name") or args.id,
+        "deleted_at": str(deleted_at), "expires_at": str(deleted_at + TRASH_HOURS * 3600)})
+    r.sadd(TRASH_SET, trash_id)
+    result["expires_in_hours"] = TRASH_HOURS
     if record.get("push_remote"):
-        result["note"] = "Remove the project's deploy key from the GitHub repository settings"
+        result["note"] = "If you restore nothing, remove the project's deploy key from GitHub afterwards"
     return result
+
+
+def restore(args):
+    """Bring a trashed project back exactly as it was deleted."""
+    if not TRASH_ID.fullmatch(args.trash_id or ""):
+        raise ProjectError("invalid trash id")
+    r = get_redis()
+    trash = TRASH_BASE / args.trash_id
+    if not r.sismember(TRASH_SET, args.trash_id) or not (trash / "records.json").is_file():
+        raise ProjectError("not in the trash (it may have been emptied)")
+    saved = json.loads((trash / "records.json").read_text())
+    record = saved["project"]
+    project_id = record["id"]
+    if duplicate(r, project_id):
+        raise ProjectError(f"a project named {project_id} exists now; delete or rename it first")
+    for name, original in saved.get("moved", {}).items():
+        if os.path.lexists(original):
+            raise ProjectError(f"{original} exists now; move it away first")
+    for name, original in saved.get("moved", {}).items():
+        _move_into(trash / name, Path(original))
+    # A port taken by another project meanwhile is given up (reassigned).
+    port = record.get("run_port")
+    if port and any(r.hget(key_for(other), "run_port") == port for other in r.smembers(PROJECT_SET)):
+        record.pop("run_port")
+    record["updated_at"] = now()
+    r.hset(key_for(project_id), mapping=record)
+    if saved.get("stats"):
+        r.hset(f"sid:project-stats:{project_id}", mapping=saved["stats"])
+    for prefix, items in (("sid:jobs", saved.get("jobs", {})), ("sid:goals", saved.get("goals", {}))):
+        for item_id, data in items.items():
+            if data:
+                r.hset(f"{prefix}:{item_id}", mapping=data)
+    for job_id in saved.get("merge_queue", []):
+        r.rpush(f"sid:merge-queue:{project_id}", job_id)
+    for queue, entries in saved.get("queued", {}).items():
+        for raw in entries:
+            r.rpush(queue, raw)
+    r.sadd(PROJECT_SET, project_id)
+    r.delete(f"sid:trash:{args.trash_id}")
+    r.srem(TRASH_SET, args.trash_id)
+    shutil.rmtree(trash)
+    return {"id": project_id, "status": "restored", "trash_id": args.trash_id,
+            "jobs_restored": len(saved.get("jobs", {})), "goals_restored": len(saved.get("goals", {}))}
+
+
+def purge_trash(args=None, clock=time.time):
+    """Permanently remove trash older than its expiry (and stray trash
+    directories with no record, after TRASH_HOURS). Only names that look
+    like trash ids, directly inside TRASH_BASE, are ever removed."""
+    r = get_redis()
+    removed = []
+    known = set(r.smembers(TRASH_SET))
+    for trash_id in sorted(known):
+        info = r.hgetall(f"sid:trash:{trash_id}")
+        try:
+            expired = float(info.get("expires_at") or 0) <= clock()
+        except ValueError:
+            expired = True
+        if not expired:
+            continue
+        target = TRASH_BASE / trash_id
+        if TRASH_ID.fullmatch(trash_id) and target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+        r.delete(f"sid:trash:{trash_id}")
+        r.srem(TRASH_SET, trash_id)
+        removed.append(trash_id)
+    if TRASH_BASE.is_dir():
+        for entry in TRASH_BASE.iterdir():
+            if (entry.name not in known and TRASH_ID.fullmatch(entry.name) and entry.is_dir() and not entry.is_symlink()
+                    and entry.stat().st_mtime < clock() - TRASH_HOURS * 3600):
+                shutil.rmtree(entry)
+                removed.append(entry.name)
+    return {"status": "purged", "removed": removed}
+
+
+def list_trash(args=None):
+    r = get_redis()
+    items = [r.hgetall(f"sid:trash:{trash_id}") for trash_id in sorted(r.smembers(TRASH_SET))]
+    return [item for item in items if item]
 
 
 UPLOAD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
@@ -580,6 +701,9 @@ def main(argv=None):
     p = sub.add_parser("set-importance"); p.add_argument("id"); p.add_argument("level")
     p = sub.add_parser("archive"); p.add_argument("id")
     p = sub.add_parser("delete"); p.add_argument("id"); p.add_argument("--confirm", required=True, help="the project id again")
+    p = sub.add_parser("restore"); p.add_argument("trash_id")
+    sub.add_parser("purge-trash")
+    sub.add_parser("trash")
     p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"])
     p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
     p = sub.add_parser("code-batch"); p.add_argument("id"); p.add_argument("--spec", required=True, help="JSON batch from the dashboard")
@@ -600,6 +724,12 @@ def main(argv=None):
             validate_id(args.id); r = get_redis(); record = project(r, args.id); record["status"] = "archived"; record["updated_at"] = now(); r.hset(key_for(args.id), mapping=record); result = record
         elif args.command == "delete":
             result = delete(args)
+        elif args.command == "restore":
+            result = restore(args)
+        elif args.command == "purge-trash":
+            result = purge_trash(args)
+        elif args.command == "trash":
+            result = list_trash(args)
         elif args.command == "commit-upload":
             result = commit_upload(args)
         elif args.command == "code-change":

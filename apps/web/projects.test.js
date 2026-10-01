@@ -10,7 +10,8 @@ import {
   buildSettingsMarkup,
   appStatusMarkup,
   buildSettingsRequest,
-  systemInfoMarkup
+  systemInfoMarkup,
+  trashMarkup
 } from './lib/projects.js';
 
 test('project list markup renders projects and empty state', () => {
@@ -124,4 +125,14 @@ test('SID: labelled as this system, no GitHub push form, shows its host setup', 
   assert.match(page, /project-goal-form/);
   assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }), /project-push-form/);
   assert.match(systemInfoMarkup(null), /not reported yet/);
+});
+
+test('trash: restorable projects with time left, nothing when empty', () => {
+  const html = trashMarkup([{ trash_id: 'shop-20260930T220000Z', project_id: 'shop', name: '<Shop>', deleted_at: 1000, expires_at: 1000 + 86400 }], 1000 + 3600);
+  assert.match(html, /Recently deleted/);
+  assert.match(html, /data-restore-trash="shop-20260930T220000Z"/);
+  assert.match(html, /removed for good in 23 hours/);
+  assert.match(html, /&lt;Shop&gt;/);
+  assert.equal(trashMarkup([]), '');
+  assert.match(deleteProjectMarkup('shop'), /restore it from the Projects page for 1 day/);
 });

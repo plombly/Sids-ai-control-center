@@ -250,3 +250,22 @@ def test_sid_project_shows_its_system_info_and_real_gate(client):
     sid = test_client.get("/api/projects/sid").json()
     assert sid["system"]["remote"] == "git@github.com:me/sid.git" and sid["gate_command"] == "scripts/integration-check.py"
     assert test_client.get("/api/projects/alpha").json()["system"] is None
+
+
+def test_trash_listing_and_restore_request(client):
+    test_client, fake = client
+    fake.smembers = lambda key: {"shop-20260930T220000Z"} if key == "sid:trash" else (fake.members if key == "sid:projects" else set())
+    fake.hashes["sid:trash:shop-20260930T220000Z"] = {"trash_id": "shop-20260930T220000Z", "project_id": "shop",
+                                                      "name": "Shop", "deleted_at": "100", "expires_at": "86500"}
+    listed = test_client.get("/api/projects-trash").json()
+    assert listed == [{"trash_id": "shop-20260930T220000Z", "project_id": "shop", "name": "Shop",
+                       "deleted_at": 100, "expires_at": 86500}]
+    _operator_ready(fake, allowed="restore_project")
+    ok = test_client.post("/api/projects-trash/shop-20260930T220000Z/restore", json={"request_id": "restore-0001"})
+    assert ok.status_code == 202 and fake.stream[-1][1]["action"] == "restore_project"
+    assert test_client.post("/api/projects-trash/..%2Fx/restore", json={"request_id": "restore-0002"}).status_code in (404, 422)
+    assert test_client.post("/api/projects-trash/gone-20260930T220000Z/restore",
+                            json={"request_id": "restore-0003"}).status_code == 404
+    fake.members.add("shop")
+    assert test_client.post("/api/projects-trash/shop-20260930T220000Z/restore",
+                            json={"request_id": "restore-0004"}).status_code == 409

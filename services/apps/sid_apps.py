@@ -44,6 +44,24 @@ JOURNALCTL = os.getenv("JOURNALCTL", "journalctl")
 
 redis = None
 stopping = False
+PROJECT_CLI = Path(__file__).resolve().parents[2] / "scripts/sid-project.py"
+PURGE_EVERY = float(os.getenv("APPS_PURGE_SECONDS", "600"))
+last_purge = 0.0
+
+
+def purge_trash(now=None):
+    """Empty expired project trash (sid-project.py purge-trash) every
+    PURGE_EVERY seconds; this service is the host's always-on loop."""
+    global last_purge
+    now = time.time() if now is None else now
+    if now - last_purge < PURGE_EVERY:
+        return
+    last_purge = now
+    result = run(["/usr/bin/python3", str(PROJECT_CLI), "purge-trash"], timeout=600)
+    if result.returncode:
+        print(f"[sid-apps] purge-trash failed: {result.stderr.strip()[-300:]}", flush=True)
+    elif '"removed": []' not in result.stdout:
+        print(f"[sid-apps] {result.stdout.strip()}", flush=True)
 
 
 def unit_name(project_id):
@@ -235,6 +253,7 @@ def main():
     while not stopping:
         try:
             loop_once()
+            purge_trash()
             redis.set("sid:apps-service", json.dumps({"updated_at": time.time()}), ex=60)
         except Exception as exc:
             print(f"[sid-apps] loop error: {exc}", flush=True)

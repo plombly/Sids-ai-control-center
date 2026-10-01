@@ -529,3 +529,12 @@ def test_batch_requests_are_rechecked(op):
         with pytest.raises(op.Invalid):
             op.validate({"action": "project_commit_upload", "project_id": "web", "op": "batch", "path": "a",
                          "batch": _json.dumps(bad)}, f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_restore_request_must_name_that_projects_trash(op):
+    stamp = f"{int(NOW * 1000)}-0"
+    request = op.validate({"action": "restore_project", "project_id": "shop", "trash_id": "shop-20260930T220000Z"}, stamp, NOW)
+    assert op.project_cli_args(request) == ["restore", "shop-20260930T220000Z"]
+    for bad in ("other-20260930T220000Z", "shop-../../x", ""):
+        with pytest.raises(op.Invalid):
+            op.validate({"action": "restore_project", "project_id": "shop", "trash_id": bad}, stamp, NOW)

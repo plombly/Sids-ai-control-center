@@ -162,6 +162,8 @@ class DeleteRedis(FakeRedis):
         items = self.lists.get(key, [])
         self.lists[key] = [item for item in items if item != value]
 
+    def rpush(self, key, value): self.lists.setdefault(key, []).append(value)
+
 
 @pytest.fixture
 def deletable(monkeypatch, tmp_path):
@@ -172,6 +174,7 @@ def deletable(monkeypatch, tmp_path):
     monkeypatch.setattr(sid_project, "SYSTEMCTL", "true")
     monkeypatch.setattr(sid_project, "KEYS_BASE", tmp_path / "keys")
     monkeypatch.setattr(sid_project.sid_projects, "DATA_BASE", tmp_path / "project-data")
+    monkeypatch.setattr(sid_project, "TRASH_BASE", tmp_path / "trash")
     root = base / "shop"
     for sub in ("repo", "worktrees", "logs"):
         (root / sub).mkdir(parents=True)
@@ -194,12 +197,12 @@ def deletable(monkeypatch, tmp_path):
     return fake, root
 
 
-def test_delete_wipes_the_project_and_only_the_project(deletable, capsys):
+def test_delete_moves_the_project_and_only_the_project_to_the_trash(deletable, capsys, tmp_path):
     fake, root = deletable
     code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
-    assert code == 0 and out["status"] == "deleted"
+    assert code == 0 and out["status"] == "trashed" and out["expires_in_hours"] == 24
     assert (out["jobs_removed"], out["goals_removed"]) == (2, 1)
-    assert not root.exists() and out["removed_path"] == str(root)
+    assert not root.exists() and (tmp_path / "trash" / out["trash_id"] / "project" / "repo").is_dir()
     assert "deploy key" in out["note"]
     assert "sid:projects:shop" not in fake.hashes and "shop" not in fake.sets["sid:projects"]
     assert not {"sid:jobs:b1", "sid:jobs:rv1", "sid:goals:g1", "sid:project-stats:shop"} & set(fake.hashes)
@@ -230,7 +233,7 @@ def test_delete_never_removes_directories_it_did_not_create(deletable, capsys, t
     (outside / "repo").mkdir(parents=True)
     fake.hashes["sid:projects:shop"].update(root=str(tmp_path), repo=str(outside / "repo"))
     code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
-    assert code == 0 and "removed_path" not in out
+    assert code == 0 and "project" not in json.loads((tmp_path / "trash" / out["trash_id"] / "records.json").read_text())["moved"]
     assert outside.exists() and tmp_path.exists() and root.exists()
     assert str(outside / "repo") in out["kept_paths"]
 
@@ -244,10 +247,10 @@ def test_delete_ignores_a_symlinked_project_root(deletable, capsys, tmp_path):
     link.symlink_to(target)
     fake.hashes["sid:projects:linked"] = {"id": "linked", "root": str(link), "repo": str(link / "repo"), "status": "active"}
     code, _, out = invoke(["delete", "linked", "--confirm", "linked"], capsys)
-    assert code == 0 and "removed_path" not in out and (target / "keep.txt").exists()
+    assert code == 0 and (target / "keep.txt").exists() and link.is_symlink()
 
 
-def test_delete_also_removes_app_data_and_the_key_dir(deletable, capsys, tmp_path):
+def test_delete_also_trashes_app_data_and_the_key_dir(deletable, capsys, tmp_path):
     fake, root = deletable
     data = tmp_path / "project-data" / "shop"
     data.mkdir(parents=True)
@@ -256,6 +259,8 @@ def test_delete_also_removes_app_data_and_the_key_dir(deletable, capsys, tmp_pat
     keys.mkdir(parents=True)
     code, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
     assert code == 0 and not data.exists() and not keys.exists()
+    trashed = tmp_path / "trash" / out["trash_id"]
+    assert (trashed / "data" / "app.db").read_text() == "x" and (trashed / "key").is_dir()
     assert (tmp_path / "project-data").exists()
 
 
@@ -454,3 +459,47 @@ def test_upload_conflict_choices(uploadable, capsys):
     stage("upload-c003", b"newer")
     assert invoke(["commit-upload", "shop", "--path=README.md", "--upload=upload-c003", "--on-conflict=overwrite"], capsys)[0] == 0
     assert (repo / "README.md").read_bytes() == b"newer"
+
+
+
+# --- trash: restore within the day, purge after --------------------------------------
+
+def test_restore_brings_everything_back(deletable, capsys, tmp_path):
+    fake, root = deletable
+    data = tmp_path / "project-data" / "shop"
+    data.mkdir(parents=True)
+    (data / "app.db").write_text("rows")
+    before_jobs = list(fake.lists["sid:jobs"])
+    _, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    listed = invoke(["trash"], capsys)[2]
+    assert [item["project_id"] for item in listed] == ["shop"]
+    code, captured, back = invoke(["restore", out["trash_id"]], capsys)
+    assert code == 0, captured.err
+    assert back["status"] == "restored" and (back["jobs_restored"], back["goals_restored"]) == (2, 1)
+    assert (root / "repo").is_dir() and (data / "app.db").read_text() == "rows"
+    assert fake.hashes["sid:projects:shop"]["status"] == "active" and "shop" in fake.sets["sid:projects"]
+    assert fake.hashes["sid:jobs:b1"]["status"] == "queued" and fake.hashes["sid:goals:g1"]["id"] == "g1"
+    assert sorted(fake.lists["sid:jobs"]) == sorted(before_jobs)
+    assert not (tmp_path / "trash" / out["trash_id"]).exists() and not fake.sets["sid:trash"]
+
+
+def test_restore_refuses_when_the_name_was_reused(deletable, capsys):
+    fake, root = deletable
+    _, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    fake.hashes["sid:projects:shop"] = {"id": "shop"}
+    fake.sets["sid:projects"].add("shop")
+    code, captured, _ = invoke(["restore", out["trash_id"]], capsys)
+    assert code == 1 and "exists now" in captured.err
+    assert invoke(["restore", "../etc"], capsys)[0] == 1
+
+
+def test_purge_removes_only_expired_trash(deletable, capsys, tmp_path, monkeypatch):
+    fake, root = deletable
+    _, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
+    trashed = tmp_path / "trash" / out["trash_id"]
+    stray = tmp_path / "trash" / "keepme"  # not a trash id: never touched
+    stray.mkdir()
+    assert sid_project.purge_trash()["removed"] == [] and trashed.exists()
+    later = lambda: __import__("time").time() + 25 * 3600
+    assert sid_project.purge_trash(clock=later)["removed"] == [out["trash_id"]]
+    assert not trashed.exists() and stray.exists() and not fake.sets["sid:trash"]
