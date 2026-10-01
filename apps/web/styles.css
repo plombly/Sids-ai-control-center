@@ -941,3 +941,40 @@ label {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.usage-headline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.usage-headline > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.usage-big {
+  font-size: 26px;
+  font-weight: 700;
+}
+.usage-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 64px;
+  margin: 12px 0;
+}
+.usage-bar {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+}
+.usage-bar span {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.8;
+}
+.usage-range {
+  justify-content: flex-end;
+}
