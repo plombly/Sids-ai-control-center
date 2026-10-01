@@ -14,8 +14,10 @@ old news.
 Where to: /etc/sid-ai/notify.env (root-only), either or both of
   NTFY_URL=https://ntfy.sh/<a long random topic>   (ntfy phone/desktop app)
   DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
-plus optional DASHBOARD_URL=http://10.0.0.59:8080. With neither set nothing
-is sent. `sid-notify.py --test` sends a test message.
+plus optional DASHBOARD_URL=http://10.0.0.59:8080 and DISCORD_MENTION=<user
+id> (that user is pinged on Discord for major issues: something that needs
+you, a failed goal, a crashed app, a failed backup, red health; not for
+approvals or finished goals). With neither target set nothing is sent. `sid-notify.py --test` sends a test message.
 """
 
 import json
@@ -49,7 +51,7 @@ def load_config(path=CONFIG_FILE):
                 config[key.strip()] = value.strip().strip("'\"")
     except OSError:
         pass
-    for key in ("NTFY_URL", "DISCORD_WEBHOOK", "DASHBOARD_URL"):
+    for key in ("NTFY_URL", "DISCORD_WEBHOOK", "DASHBOARD_URL", "DISCORD_MENTION"):
         if os.environ.get(key):
             config[key] = os.environ[key]
     if not config.get("DASHBOARD_URL"):
@@ -79,7 +81,7 @@ def _title(job):
 
 
 def events(r, dashboard):
-    """Every current event as (key, title, message, link, priority)."""
+    """Every current event as (key, title, message, link, priority, major)."""
     found = []
     queued = set()
     for key in list(r.scan_iter("sid:merge-queue*")):
@@ -93,18 +95,19 @@ def events(r, dashboard):
                 and job.get("reviewed_commit") and job.get("reviewed_commit") == job.get("integrated_candidate_commit")
                 and job_id not in queued):
             found.append((f"approval:{job_id}:{job['integrated_candidate_commit']}", f"Ready for approval · {project}",
-                          _title(job), f"{dashboard}/#/", "high"))
+                          _title(job), f"{dashboard}/#/", "high", False))
         elif job.get("status") == "needs_human":
             kind = job.get("needs_human_kind") or "repair"
             found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", f"Needs you · {project}",
-                          f"{_title(job)} (gave up after {kind} attempts)", link, "high"))
+                          f"{_title(job)} (gave up after {kind} attempts)", link, "high", True))
     for goal_id, goal in _hashes(r, "sid:goals:*"):
         status = goal.get("status")
         if status in FINAL_GOAL:
             project = goal.get("project_id") or "sid"
             text = (goal.get("summary") or goal.get("prompt") or goal_id).strip().splitlines()[0][:90]
+            failed = status != "completed"
             found.append((f"goal:{goal_id}:{status}", f"Goal {FINAL_GOAL[status]} · {project}", text,
-                          f"{dashboard}/#/projects/{project}", "default" if status == "completed" else "high"))
+                          f"{dashboard}/#/projects/{project}", "high" if failed else "default", failed))
     for key in r.scan_iter("sid:app-status:*"):
         app = r.hgetall(key)
         state = app.get("state")
@@ -112,14 +115,14 @@ def events(r, dashboard):
             project = key.split(":", 2)[2]
             found.append((f"app:{project}:{state}:{app.get('commit', '')}", f"App {APP_PROBLEMS[state]} · {project}",
                           (app.get("error") or "See the log on its project page")[:200],
-                          f"{dashboard}/#/projects/{project}", "high"))
+                          f"{dashboard}/#/projects/{project}", "high", True))
     try:
         backup = json.loads(r.get("sid:backup:last") or "{}")
     except ValueError:
         backup = {}
     if backup and backup.get("ok") is False:
         errors = ", ".join(f"{k}: {v}" for k, v in (backup.get("errors") or {}).items())[:200]
-        found.append((f"backup:{backup.get('at')}", "Backup failed", errors or "See sid:backup:last", f"{dashboard}/#/", "high"))
+        found.append((f"backup:{backup.get('at')}", "Backup failed", errors or "See sid:backup:last", f"{dashboard}/#/", "high", True))
     try:
         health = json.loads(r.get("sid:health") or "{}")
     except ValueError:
@@ -127,11 +130,11 @@ def events(r, dashboard):
     failing = sorted(c["name"] for c in health.get("checks", []) if c.get("level") == "fail")
     if failing:
         details = "; ".join(f"{c['name']}: {c.get('detail', '')}" for c in health["checks"] if c.get("level") == "fail")
-        found.append((f"health:{','.join(failing)}", "SID health is red", details[:300], f"{dashboard}/#/", "high"))
+        found.append((f"health:{','.join(failing)}", "SID health is red", details[:300], f"{dashboard}/#/", "high", True))
     return found
 
 
-def send(config, title, message, link, priority="default", opener=urllib.request.urlopen):
+def send(config, title, message, link, priority="default", major=False, opener=urllib.request.urlopen):
     """Deliver to every configured target; returns how many accepted it."""
     delivered = 0
     if config.get("NTFY_URL"):
@@ -147,7 +150,13 @@ def send(config, title, message, link, priority="default", opener=urllib.request
         except Exception as exc:
             print(f"[sid-notify] ntfy failed: {exc}", flush=True)
     if config.get("DISCORD_WEBHOOK"):
-        body = json.dumps({"content": f"**{title}**\n{message}\n{link}"[:1900]}).encode()
+        mention = config.get("DISCORD_MENTION", "")
+        ping = major and mention.isdigit()
+        content = (f"<@{mention}> " if ping else "") + f"**{title}**\n{message}\n{link}"
+        # allowed_mentions: only that user can ever be pinged (never @everyone
+        # from text in a goal or error message).
+        body = json.dumps({"content": content[:1900],
+                           "allowed_mentions": {"parse": [], "users": [mention] if ping else []}}).encode()
         request = urllib.request.Request(config["DISCORD_WEBHOOK"], data=body, method="POST",
                                          headers={"Content-Type": "application/json", "User-Agent": "sid-notify"})
         try:
@@ -164,13 +173,13 @@ def run(r, config, now=None, sender=send):
     r.zremrangebyscore(SENT_KEY, "-inf", now - KEEP_SECONDS)
     first_run = not r.exists(READY_KEY)
     sent = []
-    for key, title, message, link, priority in current:
+    for key, title, message, link, priority, major in current:
         if r.zscore(SENT_KEY, key) is not None:
             continue
         # Nowhere to send yet: still remember it, so configuring a target
         # later does not flood you with everything that happened before.
         if not first_run and (config.get("NTFY_URL") or config.get("DISCORD_WEBHOOK")):
-            if not sender(config, title, message, link, priority):
+            if not sender(config, title, message, link, priority, major):
                 continue  # try again next minute
             sent.append(key)
         r.zadd(SENT_KEY, {key: now})
@@ -186,7 +195,7 @@ def main(argv=None):
         if not (config.get("NTFY_URL") or config.get("DISCORD_WEBHOOK")):
             print(f"no NTFY_URL or DISCORD_WEBHOOK in {CONFIG_FILE}")
             return 1
-        ok = send(config, "SID test notification", "Notifications from your AI Command Center work.", config["DASHBOARD_URL"])
+        ok = send(config, "SID test notification", "Notifications from your AI Command Center work. Major issues will ping you like this.", config["DASHBOARD_URL"], major=True)
         print("sent" if ok else "failed")
         return 0 if ok else 1
     r = redis_lib.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)

@@ -34,7 +34,7 @@ def notify():
     module = load_module(ROOT / "scripts/sid-notify.py")
     r = NotifyRedis()
     outbox = []
-    sender = lambda config, title, message, link, priority="default": outbox.append((title, message, link, priority)) or 1
+    sender = lambda config, title, message, link, priority="default", major=False: outbox.append((title, message, link, priority, major)) or 1
     return module, r, outbox, sender
 
 
@@ -53,6 +53,7 @@ def test_first_run_is_silent_then_only_new_events_are_sent_once(notify):
     r.records["sid:goals:g1"] = {"id": "g1", "status": "completed", "project_id": "shop", "prompt": "Build the shop"}
     module.run(r, CONFIG, now=1060, sender=sender)
     titles = sorted(title for title, *_ in outbox)
+    assert not any(major for *_, major in outbox)  # approvals and finished goals do not ping
     assert titles == ["Goal finished · shop", "Ready for approval · shop"]
     module.run(r, CONFIG, now=1120, sender=sender)
     assert len(outbox) == 2  # not repeated
@@ -77,7 +78,8 @@ def test_needs_human_app_crash_backup_and_health(notify):
     r.values["sid:backup:last"] = json.dumps({"at": "20261001T033000Z", "ok": False, "errors": {"postgres": "dump failed"}})
     r.values["sid:health"] = json.dumps({"status": "fail", "checks": [{"name": "disk", "level": "fail", "detail": "95% used"}]})
     module.run(r, CONFIG, now=2, sender=sender)
-    by_title = {title: (message, priority) for title, message, link, priority in outbox}
+    by_title = {title: (message, priority) for title, message, link, priority, major in outbox}
+    assert all(major for *_, major in outbox)  # every one of these is a major issue
     assert by_title["Needs you · sid"][0] == "Fix login (gave up after build attempts)"
     assert by_title["App crashed · shop"] == ("the app keeps exiting", "high")
     assert "postgres: dump failed" in by_title["Backup failed"][0]
@@ -117,4 +119,11 @@ def test_send_formats_ntfy_and_discord():
     assert ntfy.full_url == "https://ntfy.example/"
     assert json.loads(ntfy.data) == {"topic": "t", "title": "Ready · shop", "message": "Add page",
                                      "click": "http://sid:8080/#/", "priority": 4, "tags": ["robot"]}
-    assert json.loads(discord.data)["content"] == "**Ready · shop**\nAdd page\nhttp://sid:8080/#/"
+    assert json.loads(discord.data) == {"content": "**Ready · shop**\nAdd page\nhttp://sid:8080/#/",
+                                        "allowed_mentions": {"parse": [], "users": []}}
+    requests.clear()
+    config = {"DISCORD_WEBHOOK": "https://discord.example/hook", "DISCORD_MENTION": "269981261508902923"}
+    module.send(config, "App crashed · shop", "@everyone look", "http://sid", "high", major=True, opener=opener)
+    body = json.loads(requests[0].data)
+    assert body["content"].startswith("<@269981261508902923> **App crashed")
+    assert body["allowed_mentions"] == {"parse": [], "users": ["269981261508902923"]}
