@@ -1662,3 +1662,17 @@ pre {
     text-align: center;
   }
 }
+
+/* Touch screens: every tap target at least ~36px tall. */
+@media (pointer: coarse) {
+  button,
+  .button,
+  .detail-button,
+  select {
+    min-height: 36px;
+  }
+  .detail-button {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
