@@ -281,6 +281,17 @@ Operations (host timers, units in deploy/systemd/):
   backups in /var/backups/sid-ai are never touched (12 were lost once).
 - `sid-ai-watchdog.timer` every 2 min: scripts/sid-watchdog.py -> sid:health.
 - `sid-ai-prune.timer` weekly: scripts/prune-sid-data.py --days 30 --apply.
+- `sid-ai-notify.timer` every minute: scripts/sid-notify.py sends each new
+  event once (approval ready, needs human, goal finished/failed, app
+  crashed/setup failed, backup failed, health red) to ntfy and/or Discord
+  from root-only /etc/sid-ai/notify.env (NTFY_URL, DISCORD_WEBHOOK,
+  DASHBOARD_URL); nothing configured = nothing sent (events are still
+  marked, so configuring later does not flood). `--test` sends a test.
+- Deploying: scripts/sid-restart.sh TARGET... (operator, orchestrator,
+  apps, workers, worker@NN, all) pauses each worker, waits until idle,
+  restarts and verifies; use it instead of systemctl restart.
+- Deleted projects: /opt/sid-trash for 24 h (sid-project.py trash /
+  restore / purge-trash; the apps service purges every 10 min).
 - Claude runs on the operator's claude.ai plan, shared with interactive
   sessions; a limit makes the pipeline fall back to Codex for 30 min.
 

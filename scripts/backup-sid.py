@@ -64,6 +64,8 @@ CONFIG_PATHS = [
     Path("/etc/systemd/system/sid-ai-watchdog.service"),
     Path("/etc/systemd/system/sid-ai-watchdog.timer"),
     Path("/etc/systemd/system/sid-ai-apps.service"),
+    Path("/etc/systemd/system/sid-ai-notify.service"),
+    Path("/etc/systemd/system/sid-ai-notify.timer"),
     REPO_ROOT / ".env",
 ]
 LAST_BACKUP_KEY = "sid:backup:last"
