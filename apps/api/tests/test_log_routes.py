@@ -61,3 +61,16 @@ def test_incremental_reads_only_consume_whole_lines(logs):
     assert client.get("/api/jobs/nope/log").status_code == 404
     fake.hashes["sid:jobs:j2"] = {"id": "j2", "status": "merged", "log": "/elsewhere/j2.jsonl"}
     assert client.get("/api/jobs/j2/log").json()["available"] is False
+
+
+def test_specialist_review_parts(logs):
+    client, folder, fake = logs
+    (folder / "j1.jsonl").write_text("")
+    (folder / "j1.spec.json").write_text(json.dumps({"type": "result", "result": "VERDICT: PASS"}) + "\n")
+    (folder / "j1.safety.json").write_text("")
+    main_log = client.get("/api/jobs/j1/log").json()
+    assert main_log["parts"] == ["safety", "spec"] and main_log["events"] == []
+    spec = client.get("/api/jobs/j1/log?part=spec").json()
+    assert spec["events"][0]["text"] == "VERDICT: PASS"
+    assert client.get("/api/jobs/j1/log?part=missing").status_code == 404
+    assert client.get("/api/jobs/j1/log?part=../x").status_code == 422

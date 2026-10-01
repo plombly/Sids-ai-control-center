@@ -18,10 +18,24 @@ const followers = new Map(); // job id -> {offset, timer}
 
 async function poll(element) {
   const id = element.dataset.jobLog;
-  const state = followers.get(id) || { offset: 0, started: false };
-  followers.set(id, state);
+  const part = element.dataset.jobLogPart || '';
+  const key = part ? `${id}:${part}` : id;
+  const state = followers.get(key) || { offset: 0, started: false };
+  followers.set(key, state);
   try {
-    const result = await requestJSON(`/api/jobs/${encodeURIComponent(id)}/log?after=${state.offset}`);
+    const result = await requestJSON(`/api/jobs/${encodeURIComponent(id)}/log?after=${state.offset}${part ? `&part=${encodeURIComponent(part)}` : ''}`);
+    // Specialist reviews: one panel per reviewer (spec, safety, ...).
+    if (!part && result.parts?.length) {
+      for (const name of result.parts) {
+        if (!element.parentElement.querySelector(`[data-job-log-part="${name}"]`)) {
+          element.insertAdjacentHTML('afterend', `<h4 class="log-part">${esc(name)} review</h4><div class="job-log" data-job-log="${esc(id)}" data-job-log-part="${esc(name)}"></div>`);
+        }
+      }
+      if (!result.events?.length && !state.started) {
+        element.hidden = true;
+        state.started = true;
+      }
+    }
     if (!state.started) {
       element.innerHTML = result.available ? '' : '<div class="subtle">No log for this job (yet).</div>';
       state.started = true;
@@ -43,8 +57,9 @@ async function poll(element) {
 function tick() {
   const open = new Set();
   document.querySelectorAll('[data-job-log]').forEach(element => {
-    open.add(element.dataset.jobLog);
-    const state = followers.get(element.dataset.jobLog);
+    const key = element.dataset.jobLogPart ? `${element.dataset.jobLog}:${element.dataset.jobLogPart}` : element.dataset.jobLog;
+    open.add(key);
+    const state = followers.get(key);
     if (!state || !state.started || state.running || !state.finalFetched) {
       if (state && state.started && !state.running) state.finalFetched = true;
       poll(element);
@@ -56,7 +71,8 @@ function tick() {
 if (typeof document !== 'undefined') {
   setInterval(tick, 2000);
   new MutationObserver(() => {
-    if (document.querySelector('[data-job-log]') && [...document.querySelectorAll('[data-job-log]')].some(e => !followers.has(e.dataset.jobLog))) tick();
+    const keyOf = e => (e.dataset.jobLogPart ? `${e.dataset.jobLog}:${e.dataset.jobLogPart}` : e.dataset.jobLog);
+    if ([...document.querySelectorAll('[data-job-log]')].some(e => !followers.has(keyOf(e)))) tick();
   }).observe(document.body, { childList: true, subtree: true });
 }
 

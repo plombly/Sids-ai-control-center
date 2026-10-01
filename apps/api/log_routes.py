@@ -135,8 +135,17 @@ def read_events(path, offset):
     return events, offset + end + 1
 
 
+def parts_of(path):
+    """Specialist reviews (spec, safety, ...) log to <stem>.<part>.json."""
+    if path is None:
+        return []
+    stem = path.name[: -len(".jsonl")] if path.name.endswith(".jsonl") else path.stem
+    return sorted(p.name[len(stem) + 1: -len(".json")] for p in path.parent.glob(f"{stem}.*.json"))
+
+
 @router.get("/api/jobs/{job_id}/log")
-def job_log(job_id: str, after: int = Query(default=0, ge=0), tests: bool = False):
+def job_log(job_id: str, after: int = Query(default=0, ge=0), tests: bool = False,
+            part: str = Query(default="", pattern=r"^[a-z0-9_-]{0,20}$")):
     import main
     if not job_id.replace("-", "").isalnum() or len(job_id) > 64:
         raise HTTPException(status_code=422, detail="Invalid job id")
@@ -148,11 +157,18 @@ def job_log(job_id: str, after: int = Query(default=0, ge=0), tests: bool = Fals
         log = log[: -len(".jsonl")] + "-tests.log" if log.endswith(".jsonl") else ""
     path = container_path(log)
     running = job.get("status") in RUNNING
+    parts = [] if tests else parts_of(path)
+    if part:
+        if part not in parts:
+            raise HTTPException(status_code=404, detail="No such part")
+        stem = path.name[: -len(".jsonl")] if path.name.endswith(".jsonl") else path.stem
+        path = path.parent / f"{stem}.{part}.json"
     if path is None or not path.exists():
-        return {"job_id": job_id, "events": [], "next": after, "running": running, "available": False}
+        return {"job_id": job_id, "events": [], "next": after, "running": running, "available": False, "parts": parts}
     if tests:
         text = path.read_bytes()[after:after + CHUNK].decode(errors="replace")
         return {"job_id": job_id, "events": [{"kind": "output", "text": text}] if text else [],
                 "next": after + len(text.encode()), "running": running, "available": True}
     events, next_offset = read_events(path, after)
-    return {"job_id": job_id, "events": events, "next": next_offset, "running": running, "available": True}
+    return {"job_id": job_id, "events": events, "next": next_offset, "running": running, "available": True,
+            "parts": parts}
