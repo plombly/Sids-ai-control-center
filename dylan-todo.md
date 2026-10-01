@@ -4,6 +4,13 @@ Things only you can check: on your own devices, with real projects, or by
 waiting for a scheduled event. Tick them off as you go and note anything
 that felt wrong; we'll go through the notes together.
 
+## Internet access (checkpoint 4)
+- [ ] Project Settings → **Internet access**: the two choices read clearly.
+- [ ] When a project's tests need the internet, a **Wants internet** card shows
+      up under Needs you (and on Discord). Try **Allow for this change** once.
+- [ ] A build still downloads its packages (it has internet, just not your
+      network or this server).
+
 ## Goal assistant (checkpoint 3, deployed 2026-10-01)
 - [ ] On a real project, type a rough idea and press **Plan it with me**.
       Are the questions useful, and is the brief right, too long or too short?
