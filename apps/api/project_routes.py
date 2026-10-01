@@ -125,31 +125,42 @@ def _scan_hashes(main, pattern, matcher):
                 yield key, data
 
 
-def _counts(project_id):
+_ZERO_COUNTS = {"goals_active": 0, "jobs_queued": 0, "jobs_running": 0,
+                "jobs_awaiting_approval": 0, "jobs_needs_human": 0, "jobs_merged": 0}
+_counts_cache = {"rows": None, "counts": {}}
+
+
+def _all_counts():
+    """Counts for every project in one pass over goals and jobs, reused while
+    the same 1-second snapshot is served (main._hashes)."""
     main = _redis()
-    counts = {"goals_active": 0, "jobs_queued": 0, "jobs_running": 0,
-              "jobs_awaiting_approval": 0, "jobs_needs_human": 0, "jobs_merged": 0}
+    goal_rows, job_rows = main._hashes("sid:goals:*"), main._hashes("sid:jobs:*")
+    cached = _counts_cache["rows"]
+    if cached and cached[0] is goal_rows and cached[1] is job_rows:
+        return _counts_cache["counts"]
+    counts = {}
+    bucket = lambda pid: counts.setdefault(pid, dict(_ZERO_COUNTS))
     for _, data in _scan_hashes(main, "sid:goals:*", _GOAL_KEY):
-        if _text(data.get("project_id"), "sid") == project_id and data.get("status") in {"queued", "planning", "running"}:
-            counts["goals_active"] += 1
+        if data.get("status") in {"queued", "planning", "running"}:
+            bucket(_text(data.get("project_id"), "sid"))["goals_active"] += 1
     for _, data in _scan_hashes(main, "sid:jobs:*", _JOB_KEY):
         role = _text(data.get("job_role", data.get("role")))
         if role and role != "builder":
             continue
-        if _text(data.get("project_id"), "sid") != project_id:
-            continue
         status = _text(data.get("status"))
-        if status in {"queued", "blocked"}:
-            counts["jobs_queued"] += 1
-        elif status in {"claimed", "running", "testing"}:
-            counts["jobs_running"] += 1
-        elif status == "awaiting_review" and _text(data.get("review_verdict")) == "pass":
-            counts["jobs_awaiting_approval"] += 1
-        elif status == "needs_human":
-            counts["jobs_needs_human"] += 1
-        elif status == "merged":
-            counts["jobs_merged"] += 1
+        field = ("jobs_queued" if status in {"queued", "blocked"}
+                 else "jobs_running" if status in {"claimed", "running", "testing"}
+                 else "jobs_awaiting_approval" if status == "awaiting_review" and _text(data.get("review_verdict")) == "pass"
+                 else "jobs_needs_human" if status == "needs_human"
+                 else "jobs_merged" if status == "merged" else None)
+        if field:
+            bucket(_text(data.get("project_id"), "sid"))[field] += 1
+    _counts_cache.update(rows=(goal_rows, job_rows), counts=counts)
     return counts
+
+
+def _counts(project_id):
+    return dict(_all_counts().get(project_id, _ZERO_COUNTS))
 
 
 def _system_info():
