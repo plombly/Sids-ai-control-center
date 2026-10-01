@@ -125,8 +125,8 @@ def load(redis_client, project_id):
 
 
 # --- project groups -----------------------------------------------------------------
-# A parent project controls its children (one level, one parent per child,
-# SID is never part of a group for now): children follow the parent's
+# A parent project controls its children (one level, one parent per child;
+# SID may be a parent, e.g. of its own app, but never a child): children follow the parent's
 # importance and test internet access, and an archived parent archives the
 # group. Each child stays its own repository with its own gate, builds and
 # approvals; a goal given to the parent may plan jobs in any member.
@@ -174,7 +174,7 @@ def group(redis_client, project):
     """The members a goal of this project may plan work in: the project and,
     for a parent, its active children (the project first)."""
     members = [project]
-    if project.is_sid or project.parent:
+    if project.parent:
         return members
     for child_id in children(redis_client, project.id):
         try:
@@ -188,11 +188,13 @@ def group(redis_client, project):
 
 def check_parent(redis_client, child_id, parent_id):
     """Why child_id cannot become a child of parent_id, or "" if it can."""
-    if child_id == SID_PROJECT or parent_id == SID_PROJECT:
-        return "SID itself cannot be part of a group yet"
+    if child_id == SID_PROJECT:
+        return "SID itself cannot be a child project"
     if child_id == parent_id:
         return "a project cannot be its own parent"
     parent = redis_client.hgetall(f"sid:projects:{parent_id}") or {}
+    if not parent and parent_id == SID_PROJECT:
+        parent = {"id": SID_PROJECT, "status": "active"}  # SID needs no registry entry
     if not parent:
         return f"unknown project: {parent_id}"
     if parent.get("status") not in ("active", None, ""):

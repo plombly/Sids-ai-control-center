@@ -4,3 +4,4 @@ sqlalchemy
 psycopg[binary]
 redis
 pydantic-settings
+segno

@@ -380,11 +380,11 @@ def set_parent(project_id: str, payload: ProjectParent):
 
 def _parent_problem(child_id, parent_id):
     """Mirrors services/sid_projects.check_parent (the host's rules)."""
-    if "sid" in (child_id, parent_id):
-        return "SID itself cannot be part of a group yet"
+    if child_id == "sid":
+        return "SID itself cannot be a child project"
     if child_id == parent_id:
         return "A project cannot be its own parent"
-    if parent_id not in _members(_redis()):
+    if parent_id != "sid" and parent_id not in _members(_redis()):
         return f"Unknown project: {parent_id}"
     parent = _project_data(parent_id)
     if parent.get("status", "active") != "active":

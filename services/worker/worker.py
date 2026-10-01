@@ -200,7 +200,7 @@ def prepare_group_context():
     global GROUP_NOTE
     GROUP_NOTE = ""
     agent_cli.EXTRA_DIRS = []
-    if PROJECT is None or PROJECT.is_sid:
+    if PROJECT is None:
         return
     try:
         head = sid_projects.load(redis, PROJECT.parent) if PROJECT.parent else PROJECT

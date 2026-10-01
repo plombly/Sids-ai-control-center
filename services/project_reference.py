@@ -6,7 +6,9 @@ latest main, e.g. an app's builder reading the API it talks to. The copy is
 a `git archive` of main (tracked files only: no history, no .git, nothing
 untracked such as secrets) under <consumer root>/reference/<member id>,
 which the sandbox shows read-only with the rest of the consumer's project
-directory. It is refreshed when the member's main moves.
+directory. SID itself (a parent, never sandboxed) keeps its copies under
+SID_REFERENCE_DIR, which every project sandbox hides. It is refreshed when
+the member's main moves.
 """
 
 import os
@@ -15,6 +17,11 @@ import subprocess
 from pathlib import Path
 
 MARKER = ".sid-reference-head"
+SID_REFERENCE_DIR = Path(os.environ.get("SID_REFERENCE_DIR", "/var/lib/sid-ai/reference"))
+
+
+def base_dir(consumer):
+    return SID_REFERENCE_DIR if consumer.is_sid else Path(consumer.root) / "reference"
 
 
 def _head(project):
@@ -29,7 +36,7 @@ def refresh(consumer, member):
     head = _head(member)
     if not head:
         return None
-    base = Path(consumer.root) / "reference"
+    base = base_dir(consumer)
     dest = base / member.id
     marker = dest / MARKER
     if marker.is_file() and not marker.is_symlink() and marker.read_text().strip() == head:

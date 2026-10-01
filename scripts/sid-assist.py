@@ -68,8 +68,6 @@ def group_note(r, project):
     read them) and a note naming them; a parent's brief says which member
     each part of the work belongs to."""
     agent_cli.EXTRA_DIRS = []
-    if project.is_sid:
-        return ""
     head = sid_projects.load(r, project.parent) if project.parent else project
     members = sid_projects.group(r, head)
     if len(members) < 2:

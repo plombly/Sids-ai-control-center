@@ -37,7 +37,7 @@ BWRAP = os.environ.get("SID_BWRAP", "/usr/bin/bwrap")
 HIDDEN = (
     "/opt/sids-ai-command-center", "/opt/sid-dev", "/opt/sid-worktrees",
     "/opt/sid-projects", "/opt/sid-project-data", "/opt/sid-uploads", "/opt/sid-trash", "/etc/sid-ai",
-    "/var/backups", "/var/log/sid-ai",
+    "/var/backups", "/var/log/sid-ai", "/var/lib/sid-ai",
     "/root", "/home", "/srv", "/mnt", "/media",
 )
 # Sockets that grant root on the host.

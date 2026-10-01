@@ -23,7 +23,7 @@ export function nestProjects(projects = []) {
 // Overview of a parent (or a project that could become one).
 export function groupOverviewMarkup(project) {
   const id = project?.id;
-  if (!id || id === 'sid' || project.parent) return '';
+  if (!id || project.parent) return '';
   const children = Array.isArray(project.children) ? project.children : [];
   const rows = children
     .map(child => `<li><a href="${escValue(link(child.id))}">${esc(child.name || child.id)}</a>${child.status && child.status !== 'active' ? ` <span class="subtle">${esc(child.status)}</span>` : ''}</li>`)
@@ -45,7 +45,7 @@ export function groupSettingsMarkup(project, projects = []) {
       .join('');
     return `<div class="goal-form group-settings"><h3>Project group</h3><p class="subtle">This project is the parent of:</p><ul class="group-children">${rows}</ul><p class="subtle">A parent cannot also be a child project.</p><span id="group-status" class="form-status" role="status"></span></div>`;
   }
-  const eligible = projects.filter(other => other.id !== id && other.id !== 'sid' && !other.parent && other.status === 'active');
+  const eligible = projects.filter(other => other.id !== id && !other.parent && other.status === 'active');
   const options = eligible.map(other => `<option value="${escValue(other.id)}"${project.parent === other.id ? ' selected' : ''}>${esc(other.name || other.id)}</option>`).join('');
   return `<form id="project-group-form" class="goal-form group-settings"><h3>Project group</h3><label class="field">Part of<select name="parent"><option value="">No group (a normal project)</option>${options}</select></label><span class="field-hint">A child project follows its parent's importance and internet settings, and the parent's goals can plan work in it. It keeps its own code, tests, builds and approvals.</span><div class="form-row"><button type="submit">Save</button><span id="group-status" class="form-status" role="status"></span></div></form>`;
 }

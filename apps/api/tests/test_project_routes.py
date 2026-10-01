@@ -438,7 +438,7 @@ def test_attach_inherit_and_detach(groups):
 
 
 @pytest.mark.parametrize("child,parent,status", [
-    ("app", "sid", 409), ("sid", "app", 409), ("app", "app", 409), ("app", "nope", 409), ("app", "Bad!", 422), ("nope", "shop", 404),
+    ("app", "sid", 200), ("sid", "app", 409), ("app", "app", 409), ("app", "nope", 409), ("app", "Bad!", 422), ("nope", "shop", 404),
 ])
 def test_attach_rules(groups, child, parent, status):
     client, _ = groups

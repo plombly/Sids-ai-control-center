@@ -62,7 +62,7 @@ def test_a_parent_goal_spans_its_active_children_only(group):
 
 
 @pytest.mark.parametrize("child,parent,problem", [
-    ("other", "shop", ""), ("sid", "shop", "SID"), ("other", "sid", "SID"), ("other", "other", "own parent"),
+    ("other", "shop", ""), ("sid", "shop", "cannot be a child"), ("other", "sid", ""), ("other", "other", "own parent"),
     ("other", "nope", "unknown"), ("other", "shop-app", "one level"), ("shop", "other", "one level"),
 ])
 def test_group_rules(group, child, parent, problem):
@@ -168,3 +168,15 @@ def test_assistant_on_a_parent_reads_the_group(group):
     note = assist.group_note(r, sid_projects.load(r, "shop"))
     assert "which member" in note and len(assist.agent_cli.EXTRA_DIRS) == 2
     assert assist.group_note(r, sid_projects.load(r, "other")) == "" and assist.agent_cli.EXTRA_DIRS == []
+
+
+def test_sid_can_be_a_parent_and_keeps_copies_outside_every_sandbox(group, tmp_path, monkeypatch):
+    r, _ = group
+    monkeypatch.setattr(project_reference, "SID_REFERENCE_DIR", tmp_path / "sid-reference")
+    r.records["sid:projects:other"]["parent"] = "sid"
+    sid = sid_projects.load(r, "sid")
+    assert [m.id for m in sid_projects.group(r, sid)] == ["sid", "other"]
+    copy = project_reference.refresh(sid, sid_projects.load(r, "other"))
+    assert copy == tmp_path / "sid-reference" / "other" and (copy / "README.md").exists()
+    import project_sandbox
+    assert "/var/lib/sid-ai" in project_sandbox.HIDDEN
