@@ -206,3 +206,15 @@ def test_long_scopes_are_compressed_to_top_level_entries(orch):
     wide = {"jobs": [{"number": 1, "title": "t", "task": "x", "scope": [f"d{i}/f" for i in range(13)]}]}
     with pytest.raises(ValueError, match="too broad"):
         orch.validate_plan(wide)
+
+
+def test_builders_get_the_goal_verbatim(orch):
+    item = {"task": "Add the servers screen with the exact keys", "scope": []}
+    goal = 'Pairing code contract: {"v":1,"name":"Home SID","url":"http://x","key":"sidk_y"}'
+    prompt = orch.scoped_builder_prompt(item, goal=goal)
+    assert prompt.startswith("Task:\nAdd the servers screen")
+    assert '<goal>\nPairing code contract: {"v":1,"name":"Home SID"' in prompt and "This job is the whole goal." in prompt
+    assert "do only this job's part" in orch.scoped_builder_prompt(item, goal=goal, jobs_in_plan=3)
+    assert "<goal>" not in orch.scoped_builder_prompt(item)
+    long = orch.scoped_builder_prompt(item, goal="x" * 20000)
+    assert "(goal shortened)" in long and len(long) < 16000

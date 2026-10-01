@@ -520,7 +520,32 @@ def scoped_context_packet(item, repo=None):
     return "\n\n".join(chunks) or "(No scoped file content available; inspect only the likely scope below.)"
 
 
-def scoped_builder_prompt(item, repo=None):
+GOAL_IN_PROMPT_CHARS = int(os.getenv("GOAL_IN_PROMPT_CHARS", "12000"))
+
+
+def goal_section(goal, jobs_in_plan):
+    """The operator's goal, verbatim: the planner's task is a summary and
+    loses exact names, contracts and messages (found when a builder never
+    saw a pinned JSON contract and invented field names, and the reviewer,
+    reviewing against the same summary, passed it)."""
+    text = (goal or "").strip()
+    if not text:
+        return ""
+    if len(text) > GOAL_IN_PROMPT_CHARS:
+        text = text[:GOAL_IN_PROMPT_CHARS] + "\n… (goal shortened)"
+    scope = ("This job is the whole goal." if jobs_in_plan == 1 else
+             f"The goal was split into {jobs_in_plan} jobs; do only this job's part, but follow the goal's exact "
+             "names, contracts, texts and messages wherever this job touches them.")
+    return f"""
+
+The operator's goal, verbatim (authoritative for exact names, contracts, texts and messages; where the task above
+summarizes, this wins). {scope}
+<goal>
+{text}
+</goal>"""
+
+
+def scoped_builder_prompt(item, repo=None, goal="", jobs_in_plan=1):
     scope = [p.strip() for p in item.get("scope", []) if p.strip()]
     scope_text = "\n".join(f"- {p}" for p in scope) or "- infer the smallest relevant scope"
     context = scoped_context_packet(item, repo)
@@ -540,7 +565,7 @@ Efficiency requirements:
 - Make the smallest correct change.
 - Run only focused validation; SID runs the deterministic integration gate.
 - Stop when the requested implementation and focused validation are complete.
-""".strip()
+""".strip() + goal_section(goal, jobs_in_plan)
 
 def process_goal(raw):
     data = json.loads(raw)
@@ -600,7 +625,7 @@ def process_goal(raw):
             "id": job_id,
             "goal_id": goal_id,
             "title": item["title"],
-            "prompt": scoped_builder_prompt(item, target.repo),
+            "prompt": scoped_builder_prompt(item, target.repo, goal, len(jobs)),
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "role": "builder",
@@ -610,7 +635,7 @@ def process_goal(raw):
             "build_attempt": "1",
             "created_at": now(),
             "updated_at": now(),
-            "prompt_chars": str(len(scoped_builder_prompt(item, target.repo))),
+            "prompt_chars": str(len(scoped_builder_prompt(item, target.repo, goal, len(jobs)))),
             "project_id": target.id,
             "scope": json.dumps(item.get("scope", [])),
             "size": item.get("size", "M"),
@@ -630,7 +655,7 @@ def process_goal(raw):
             dispatch_job_once(record, {
                     "id": job_id,
                     "goal_id": goal_id,
-                    "prompt": scoped_builder_prompt(item, target.repo),
+                    "prompt": scoped_builder_prompt(item, target.repo, goal, len(jobs)),
                     "project_id": target.id,
                     "provider": DEFAULT_PROVIDER,
                     "model": DEFAULT_MODEL,
