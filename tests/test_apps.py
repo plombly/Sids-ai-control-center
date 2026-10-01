@@ -213,3 +213,58 @@ def test_a_config_nginx_rejects_is_rolled_back(apps, monkeypatch):
                         if args[-1] == "-t" else real(args, **kw))
     module.publish_routes({"shop": "8100"})
     assert not (module.NGINX_DIR / "apps.conf").exists()
+
+
+# --- previews -------------------------------------------------------------------------
+
+def head(repo):
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def request_preview(module, repo, job_id="j1", status="awaiting_review"):
+    module.redis.records[f"sid:jobs:{job_id}"] = {"id": job_id, "project_id": "shop", "status": status,
+                                                  "integrated_candidate_commit": head(repo)}
+    module.redis.records[f"sid:preview:{job_id}"] = {"state": "requested", "project_id": "shop",
+                                                     "candidate": head(repo), "requested_at": "1000"}
+
+
+def preview_runs(calls):
+    return [c for c in calls if c[0] == "systemd-run" and any(a.startswith("--unit=sid-preview-") for a in c)]
+
+
+def test_a_requested_preview_runs_the_candidate_with_its_own_data(apps):
+    module, repo, root, calls, units = apps
+    request_preview(module, repo)
+    module.reconcile_previews({"shop": module.sid_projects.load(module.redis, "shop")}, now=1100)
+    info = module.redis.records["sid:preview:j1"]
+    assert info["state"] == "running" and info["port"] == "8200"
+    workdir, data = module.preview_paths(module.sid_projects.load(module.redis, "shop"), "j1")
+    assert (workdir / "server.js").exists() and data.is_dir()
+    [run] = preview_runs(calls)
+    assert "--setenv=PORT=8200" in run and "--unit=sid-preview-j1" in run
+    assert any("EnvironmentFile" in a for a in run) and "--property=MemoryMax=1024M" in run
+
+
+def test_previews_go_away_when_the_change_is_decided(apps):
+    module, repo, root, calls, units = apps
+    project = lambda: {"shop": module.sid_projects.load(module.redis, "shop")}
+    request_preview(module, repo)
+    module.reconcile_previews(project(), now=1100)
+    workdir, data = module.preview_paths(project()["shop"], "j1")
+    module.redis.records["sid:jobs:j1"]["status"] = "merged"
+    module.reconcile_previews(project(), now=1200)
+    assert "sid:preview:j1" not in module.redis.records
+    assert not workdir.exists() and not data.exists()
+    assert ["systemctl", "stop", "sid-preview-j1"] in calls
+
+
+def test_stop_request_and_expiry(apps):
+    module, repo, root, calls, units = apps
+    project = lambda: {"shop": module.sid_projects.load(module.redis, "shop")}
+    request_preview(module, repo, "j2")
+    module.redis.records["sid:preview:j2"]["state"] = "stop"
+    module.reconcile_previews(project(), now=1100)
+    assert "sid:preview:j2" not in module.redis.records
+    request_preview(module, repo, "j3")
+    module.reconcile_previews(project(), now=1000 + 5 * 3600)  # older than PREVIEW_HOURS
+    assert "sid:preview:j3" not in module.redis.records and not preview_runs(calls)

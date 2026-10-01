@@ -53,7 +53,7 @@ def _exists(path):
     return os.path.lexists(path)
 
 
-def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
+def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None):
     """argv wrapped in bubblewrap for this project (unchanged for SID).
 
     kind: "gate" (no network, no agent state), "setup" (network, package
@@ -100,7 +100,8 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
                 args += ["--bind", path, path]
     if kind == "app":
         import sid_projects
-        data = sid_projects.data_dir(project.id)
+        # A preview gets its own empty data folder, never the app's real data.
+        data = Path(data_dir) if data_dir else sid_projects.data_dir(project.id)
         data.mkdir(parents=True, exist_ok=True)
         args += ["--bind", str(data), str(data), "--setenv", "HOME", str(data), "--setenv", "DATA_DIR", str(data)]
     if kind == "setup" and project_root.is_dir():

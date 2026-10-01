@@ -20,6 +20,7 @@ project itself is never run here.
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -161,13 +162,14 @@ def setup(project, live):
     return result.returncode == 0, (result.stdout + result.stderr)[-3000:]
 
 
-def start_unit(project, live, port):
+def start_unit(project, live, port, unit=None, data_dir=None, description=None):
     env = app_env(live, port)
-    inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app")
+    inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app",
+                                    data_dir=data_dir)
     # No --collect: a unit that gave up must stay "failed" (with its Result)
     # until stop_unit's reset-failed, or the crash would vanish and the app
     # would be redeployed in a loop instead of being reported.
-    args = [SYSTEMD_RUN, f"--unit={unit_name(project.id)}", "--quiet",
+    args = [SYSTEMD_RUN, f"--unit={unit or unit_name(project.id)}", "--quiet",
             # A web app should keep running: restart it whenever it exits,
             # but give up (state "failed" -> dashboard "crashed") after 5
             # quick exits instead of looping forever.
@@ -178,7 +180,7 @@ def start_unit(project, live, port):
             f"--property=CPUQuota={int(project.run_cpus * 100)}%", f"--property=TasksMax={project.run_tasks}",
             f"--property=WorkingDirectory={live}",
             f"--property=EnvironmentFile=-{ENV_DIR / (project.id + '.env')}",
-            f"--description=SID app {project.id}"]
+            f"--description={description or f'SID app {project.id}'}"]
     args += [f"--setenv={k}={v}" for k, v in env.items()]
     result = run([*args, "--", *inner])
     if result.returncode:
@@ -292,6 +294,120 @@ def publish_routes(routes):
     return True
 
 
+# --- previews: a change's app, before it is approved -----------------------------------
+#
+# The dashboard asks for one (sid:preview:<job> state "requested"); this runs
+# the job's exact integrated candidate from <project>/previews/job-<id> as
+# unit sid-preview-<job>, with its own empty data folder, the app's limits and
+# secrets, on a port from PREVIEW_PORTS. It is torn down when the job is
+# approved, rejected or re-integrated, when asked, or after PREVIEW_HOURS.
+
+PREVIEW_PREFIX = "sid:preview:"
+PREVIEW_PORTS = range(int(os.getenv("PREVIEW_PORT_MIN", "8200")), int(os.getenv("PREVIEW_PORT_MAX", "8299")) + 1)
+PREVIEW_HOURS = float(os.getenv("PREVIEW_HOURS", "4"))
+
+
+def preview_unit(job_id):
+    return f"sid-preview-{job_id}"
+
+
+def preview_paths(project, job_id):
+    base = Path(project.root) / "previews"
+    return base / f"job-{job_id}", base / f"job-{job_id}-data"
+
+
+def unit_state_of(unit):
+    return run([SYSTEMCTL, "show", unit, "-p", "ActiveState", "--value"]).stdout.strip() or "inactive"
+
+
+def teardown_preview(job_id, project):
+    for verb in ("stop", "reset-failed"):
+        run([SYSTEMCTL, verb, preview_unit(job_id)])
+    if project is None:
+        return
+    workdir, data = preview_paths(project, job_id)
+    if os.path.lexists(workdir / ".git"):
+        try:
+            sid_projects.verify_worktree_pointer(workdir, project.repo)
+            git(["worktree", "remove", "--force", str(workdir)], project.repo)
+        except RuntimeError as exc:
+            print(f"[sid-apps] preview {job_id}: {exc}", flush=True)
+    if workdir.is_dir() and not workdir.is_symlink():
+        shutil.rmtree(workdir, ignore_errors=True)
+    if data.is_dir() and not data.is_symlink():
+        shutil.rmtree(data, ignore_errors=True)
+    run(["git", "-C", str(project.repo), "worktree", "prune"])
+
+
+def set_preview(job_id, **fields):
+    fields["updated_at"] = str(time.time())
+    redis.hset(PREVIEW_PREFIX + job_id, mapping={k: str(v) for k, v in fields.items()})
+
+
+def preview_port(job_id):
+    taken = set()
+    for key in redis.scan_iter(PREVIEW_PREFIX + "*"):
+        if key != PREVIEW_PREFIX + job_id:
+            port = redis.hget(key, "port")
+            if port and port.isdigit():
+                taken.add(int(port))
+    for port in PREVIEW_PORTS:
+        if port not in taken:
+            return port
+    raise RuntimeError("no free preview port left")
+
+
+def start_preview(job_id, project, candidate):
+    set_preview(job_id, state="starting", error="")
+    workdir, data = preview_paths(project, job_id)
+    teardown_preview(job_id, project)  # a leftover from an earlier try
+    workdir.parent.mkdir(parents=True, exist_ok=True)
+    git(["worktree", "add", "--detach", str(workdir), candidate], project.repo)
+    sid_projects.verify_worktree_pointer(workdir, project.repo)
+    ok, output = setup(project, workdir)
+    if not ok:
+        set_preview(job_id, state="setup_failed", error="dependency setup failed", log=output)
+        return
+    port = preview_port(job_id)
+    data.mkdir(parents=True, exist_ok=True)  # empty: never the app's real data
+    start_unit(project, workdir, port, unit=preview_unit(job_id), data_dir=data,
+               description=f"SID preview {project.id} job {job_id}")
+    set_preview(job_id, state="running", port=port, started_at=time.time())
+
+
+def reconcile_previews(projects_by_id, now=None):
+    now = time.time() if now is None else now
+    for key in list(redis.scan_iter(PREVIEW_PREFIX + "*")):
+        job_id = key[len(PREVIEW_PREFIX):]
+        info = redis.hgetall(key) or {}
+        job = redis.hgetall(f"sid:jobs:{job_id}") or {}
+        project = projects_by_id.get(info.get("project_id"))
+        try:
+            requested = float(info.get("requested_at") or 0)
+        except ValueError:
+            requested = 0
+        stale = (info.get("state") == "stop" or project is None or not project.run_command
+                 or job.get("status") != "awaiting_review"
+                 or job.get("integrated_candidate_commit") != info.get("candidate")
+                 or now - requested > PREVIEW_HOURS * 3600)
+        try:
+            if stale:
+                teardown_preview(job_id, project)
+                redis.delete(key)
+            elif info.get("state") == "requested":
+                start_preview(job_id, project, info["candidate"])
+            elif info.get("state") == "running":
+                state = unit_state_of(preview_unit(job_id))
+                if state == "failed":
+                    result = run([SYSTEMCTL, "show", preview_unit(job_id), "-p", "Result", "--value"]).stdout.strip()
+                    reason = (f"it used more than its {project.run_memory_mb} MB memory limit"
+                              if result == "oom-kill" else "the preview keeps exiting; see the log")
+                    set_preview(job_id, state="crashed", error=reason,
+                                log=run([JOURNALCTL, "-u", preview_unit(job_id), "-n", "30", "--no-pager", "-o", "cat"]).stdout[-4000:])
+        except Exception as exc:
+            set_preview(job_id, state="error", error=str(exc)[:500])
+
+
 def cleanup_removed(known_ids):
     """Stop apps whose project no longer exists (deleted)."""
     for key in redis.scan_iter(STATUS_PREFIX + "*"):
@@ -309,6 +425,7 @@ def loop_once():
             reconcile(project)
         except Exception as exc:
             set_status(project.id, state="error", error=str(exc)[:500])
+    reconcile_previews({p.id: p for p in projects})
     routes = {}
     for project in projects:
         status = redis.hgetall(STATUS_PREFIX + project.id) or {}

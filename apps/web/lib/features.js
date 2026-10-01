@@ -10,3 +10,4 @@ import './project-wizard.js';
 import './project-files.js';
 import './job-log.js';
 import './usage.js';
+import './previews.js';

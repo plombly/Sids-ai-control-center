@@ -26,8 +26,23 @@ export const jobActionsMarkup = job => {
     )
     .join('');
 };
+// Preview of a change's running app, on its approval card.
+export const previewMarkup = (j, hostname = globalThis.location?.hostname || 'localhost') => {
+  if (!j?.previewable) return '';
+  const preview = j.preview;
+  const id = esc(j.id);
+  if (!preview) return `<button type="button" data-preview-start="${id}">Preview</button>`;
+  if (['requested', 'starting'].includes(preview.state))
+    return `<span class="subtle">Starting preview…</span><button type="button" class="detail-button" data-preview-stop="${id}">Cancel</button>`;
+  if (preview.state === 'running' && preview.port) {
+    const url = `http://${hostname}:${preview.port}/`;
+    return `<a class="button" href="${esc(url)}" target="_blank" rel="noopener">Open preview</a><button type="button" class="detail-button" data-preview-stop="${id}">Stop preview</button>`;
+  }
+  return `<span class="form-status">Preview ${esc(preview.state)}: ${esc(preview.error || '')}</span><button type="button" data-preview-start="${id}">Retry preview</button>`;
+};
+
 export const approvalMarkup = j =>
-  `<div class="item approval-item"><div class="item-head"><button class="item-title detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
+  `<div class="item approval-item"><div class="item-head"><button class="item-title detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button>${pill('ready')}</div><p>Review passed · candidate ${esc(j.integrated_candidate_commit || 'state unavailable')}</p><code>python scripts/job-review.py approve ${esc(j.id)}</code><code>python scripts/job-review.py reject ${esc(j.id)}</code>${j.integrated_candidate_commit ? `<button data-op="approve" data-job="${esc(j.id)}" data-status="${esc(j.status)}" data-candidate="${esc(j.integrated_candidate_commit)}">Approve</button>` : ''}${previewMarkup(j)}${jobActionsMarkup(j)}<button data-handoff="${esc(j.goal_id || j.id)}">Copy for ChatGPT</button><button data-download="${esc(j.goal_id || j.id)}">Download handoff</button></div>`;
 
 const detailValue = value => `<span>${esc(value)}</span>`;
 const detailRows = (job, fields) =>

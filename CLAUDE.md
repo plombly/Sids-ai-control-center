@@ -245,6 +245,24 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   GitHub push setup is refused for "sid" by API, operator and CLI (it would
   replace SID's remote/key). The watchdog publishes sid:system-info (JSON:
   remote, branch, head; https credentials stripped) for that page.
+- Secrets: apps/api/env_routes.py writes /etc/sid-ai/project-env/<id>.env
+  (root-only, mounted only into the api; systemd EnvironmentFile syntax);
+  values are write-only via the API and reach only the app/preview unit
+  (EnvironmentFile=). Never through Redis.
+- Live logs: apps/api/log_routes.py (GET /api/jobs/<id>/log?after=&part=
+  &tests=) reads job JSONL logs (Codex --json, Claude stream-json) from
+  /job-logs (/var/log/sid-ai/jobs, ro) and /projects; lib/job-log.js.
+- Usage: GET /api/usage?days=&project= (apps/api/usage_routes.py), panel
+  lib/usage.js.
+- Friendly addresses: services/apps writes /opt/sid-nginx/apps.conf
+  (<project>.<SID_APP_DOMAIN, default sid.lan> -> app port), nginx -t then
+  reload, rolled back if rejected; dashboard also on :80. Needs DNS
+  *.sid.lan -> this server.
+- Previews: POST/DELETE /api/jobs/<id>/preview (ready changes of projects
+  with a run command); services/apps runs the integrated candidate from
+  <root>/previews/job-<id> as sid-preview-<id> (ports 8200-8299, empty data
+  dir, app limits and secrets) and tears it down on approve/reject/
+  re-integration, stop, or after PREVIEW_HOURS (4).
 - Delete: sid-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
   Refuses SID and projects with running work; removes queued work,

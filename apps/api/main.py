@@ -524,8 +524,12 @@ def _approval_ready(job):
 
 @app.get("/api/approvals")
 def api_approvals(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LIMIT)):
-    approvals = [job for job in _all_jobs() if _approval_ready(job)]
-    return approvals[:_limit(limit)]
+    import preview_routes
+    approvals = [job for job in _all_jobs() if _approval_ready(job)][:_limit(limit)]
+    for job in approvals:
+        job["previewable"] = preview_routes.previewable(job)
+        job["preview"] = preview_routes.preview_status(job["id"])
+    return approvals
 
 
 @app.get("/api/jobs/approvals")
@@ -1180,6 +1184,7 @@ from file_routes import router as file_router
 from env_routes import router as env_router
 from log_routes import router as log_router
 from usage_routes import router as usage_router
+from preview_routes import router as preview_router
 
 app.include_router(agent_router)
 app.include_router(project_router)
@@ -1187,3 +1192,4 @@ app.include_router(file_router)
 app.include_router(env_router)
 app.include_router(log_router)
 app.include_router(usage_router)
+app.include_router(preview_router)
