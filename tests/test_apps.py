@@ -308,3 +308,25 @@ def test_a_build_that_cannot_start_is_reported(apps, monkeypatch):
     module.launch_builds([p for p in module.sid_projects.all_projects(module.redis) if not p.is_sid])
     record = module.redis.records["sid:build:shop:b1"]
     assert record["status"] == "failed" and "no systemd" in record["error"]
+
+
+def test_bad_build_ids_are_ignored_and_vanished_builds_fail(apps):
+    module, repo, root, calls, units = apps
+    projects = [p for p in module.sid_projects.all_projects(module.redis) if not p.is_sid]
+    module.redis.set("sid:build-request:shop", module.json.dumps({"build_id": "../x-y"}))
+    module.launch_builds(projects)
+    assert not build_runs(calls) and module.redis.get("sid:build-request:shop") is None
+    # A queued build whose unit never ran (or died) is failed after the grace time.
+    module.redis.lpush("sid:builds:shop", "b9")
+    module.redis.records["sid:build:shop:b9"] = {"status": "queued", "requested_at": str(module.time.time())}
+    module.launch_builds(projects)
+    assert module.redis.records["sid:build:shop:b9"]["status"] == "queued"
+    module.redis.records["sid:build:shop:b9"]["requested_at"] = "1"
+    module.launch_builds(projects)
+    assert module.redis.records["sid:build:shop:b9"]["status"] == "failed"
+    # A running unit is left alone.
+    module.redis.records["sid:build:shop:b8"] = {"status": "running", "requested_at": "1"}
+    module.redis.lpush("sid:builds:shop", "b8")
+    units["sid-build-shop-b8"] = "active"
+    module.launch_builds(projects)
+    assert module.redis.records["sid:build:shop:b8"]["status"] == "running"

@@ -42,6 +42,7 @@ def build(tmp_path, monkeypatch):
         out = __import__("pathlib").Path(work) / "build"
         out.mkdir()
         (out / "game.love").write_text("zip")
+        (out / ".git").write_text("gitdir: /elsewhere\n")
         stdout.write("built\n")
         return subprocess.CompletedProcess(command, 0)
 
@@ -153,6 +154,7 @@ def test_recipes_resolve_overrides_and_placeholders():
     for stack, recipe in project_catalog.RECIPES.items():
         assert recipe.get("unsupported") or (recipe.get("image") and recipe.get("command") and recipe.get("output")), stack
         assert "{{" not in recipe.get("command", ""), stack
+    assert "-x '.git' '.git/*'" in project_catalog.RECIPES["love2d"]["command"]
 
 
 @pytest.mark.parametrize("name,ok", [("node:22-bookworm", True), ("ghcr.io/cirruslabs/flutter:stable", True),

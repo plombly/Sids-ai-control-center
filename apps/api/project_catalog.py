@@ -239,7 +239,7 @@ RECIPES = {
               "command": "mkdir -p build && godot --headless --export-release \"$(sed -n 's/^name=\"\\(.*\\)\"/\\1/p' export_presets.cfg | head -1)\" build/{name}",
               "output": "build", "needs": "an export preset (export_presets.cfg): create one in Godot under Project → Export"},
     "love2d": {"label": "LÖVE (.love file)", "image": "alpine:3",
-               "command": "apk add -q zip && mkdir -p build && zip -9 -q -r build/{name}.love . -x '.git/*' 'build/*'", "output": "build"},
+               "command": "apk add -q zip && mkdir -p build && zip -9 -q -r build/{name}.love . -x '.git' '.git/*' 'build/*'", "output": "build"},
     "pygame": {"label": "pygame (PyInstaller executable)", "image": "python:3.12-bookworm",
                "command": "pip install -q pyinstaller pygame && (pip install -q -r requirements.txt || true) && pyinstaller --onefile --windowed --name {name} {entry}",
                "output": "dist"},

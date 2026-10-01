@@ -20,6 +20,7 @@ project itself is never run here.
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -392,7 +393,9 @@ TYPE_PREFIX = "sid:project-type:"
 BUILD_REQUEST_PREFIX = "sid:build-request:"
 BUILD_SCRIPT = Path(__file__).resolve().parents[2] / "scripts/sid-build.py"
 BUILD_MAX_SECONDS = int(os.getenv("BUILD_MAX_SECONDS", "2700"))
-UNKNOWN_RECHECK = 3600  # an undetected project is looked at again hourly
+UNKNOWN_RECHECK = 3600
+BUILD_ID = re.compile(r"[A-Za-z0-9]{1,40}")
+BUILD_START_GRACE = 60  # seconds a queued build may take to show up as a unit  # an undetected project is looked at again hourly
 
 
 def publish_types(projects):
@@ -430,19 +433,31 @@ def launch_builds(projects):
     scripts/sid-build.py does the work and reports in sid:build:<id>:<build>."""
     for project in projects:
         raw = redis.get(BUILD_REQUEST_PREFIX + project.id)
-        if not raw:
-            continue
-        running = [b for b in (redis.lrange(f"sid:builds:{project.id}", 0, 4) or [])
-                   if redis.hget(f"sid:build:{project.id}:{b}", "status") in ("queued", "running")]
-        if any(unit_is_running(f"sid-build-{project.id}-{b}") for b in running):
+        busy = False
+        for b in redis.lrange(f"sid:builds:{project.id}", 0, 4) or []:
+            record = redis.hgetall(f"sid:build:{project.id}:{b}") or {}
+            if record.get("status") not in ("queued", "running"):
+                continue
+            if unit_is_running(f"sid-build-{project.id}-{b}"):
+                busy = True
+            elif time.time() - float(record.get("requested_at") or 0) > BUILD_START_GRACE:
+                # Its unit is gone (crashed, killed, timed out, server restart): say so,
+                # or the dashboard shows it running forever and refuses new builds.
+                redis.hset(f"sid:build:{project.id}:{b}", mapping={
+                    "status": "failed", "finished_at": str(time.time()),
+                    "error": "the build stopped unexpectedly (time limit, out of memory or a restart); see the log"})
+        if busy or not raw:
             continue
         try:
             request = json.loads(raw)
         except ValueError:
             redis.delete(BUILD_REQUEST_PREFIX + project.id)
             continue
-        build_id = request.get("build_id") or time.strftime("%Y%m%d%H%M%S")
+        build_id = str(request.get("build_id") or time.strftime("%Y%m%d%H%M%S"))
         redis.delete(BUILD_REQUEST_PREFIX + project.id)
+        if not BUILD_ID.fullmatch(build_id):
+            print(f"[sid-apps] ignoring build request with a bad id for {project.id}", flush=True)
+            continue
         redis.hset(f"sid:build:{project.id}:{build_id}", mapping={"id": build_id, "status": "queued",
                                                                    "requested_at": str(time.time())})
         redis.lpush(f"sid:builds:{project.id}", build_id)

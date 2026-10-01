@@ -66,6 +66,8 @@ def zip_output(source, archive):
         for current, dirs, files in os.walk(source, followlinks=False):
             dirs[:] = [d for d in dirs if d not in SKIP_IN_ZIP and not os.path.islink(os.path.join(current, d))]
             for name in files:
+                if name == ".git":  # a checkout's pointer file, never part of a build
+                    continue
                 full = os.path.join(current, name)
                 if os.path.islink(full) or not os.path.isfile(full):
                     continue
