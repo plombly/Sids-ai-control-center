@@ -14,3 +14,4 @@ import './usage.js';
 import './previews.js';
 import './home.js';
 import './settings.js';
+import './devices.js';

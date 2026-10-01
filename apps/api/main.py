@@ -40,9 +40,20 @@ def _token_ok(request):
 
 @app.middleware("http")
 async def require_operator_token(request: Request, call_next):
-    if OPERATOR_TOKEN and request.method not in _READ_METHODS and not _token_ok(request):
-        return JSONResponse(status_code=401, content={
-            "detail": "Operator token required: enter it in the dashboard (X-SID-Token)"})
+    # A device key (apps/api/device_routes.py) may make only the safe writes.
+    import device_routes
+    request.state.device = None
+    if request.headers.get("authorization"):
+        request.state.device = device_routes.device_for(request)
+    if request.method not in _READ_METHODS and not _token_ok(request):
+        device = request.state.device
+        if device is not None:
+            if not device_routes.device_may_write(request.method, request.url.path):
+                return JSONResponse(status_code=403, content={
+                    "detail": "This device may not do that; use the dashboard"})
+        elif OPERATOR_TOKEN:
+            return JSONResponse(status_code=401, content={
+                "detail": "Operator token required: enter it in the dashboard (X-SID-Token)"})
     return await call_next(request)
 
 
@@ -1015,6 +1026,10 @@ def operator_status():
 def request_job_action(job_id: str, payload: OperatorActionRequest, request: Request, response: Response):
     if not _OPERATOR_JOB_ID.fullmatch(job_id):
         raise HTTPException(status_code=422, detail="Invalid job id")
+    import device_routes
+    device = getattr(request.state, "device", None)
+    if device is not None and not _token_ok(request) and payload.action not in device_routes.DEVICE_JOB_ACTIONS:
+        raise HTTPException(status_code=403, detail="Approvals are made on the dashboard, not from a device")
     fields = {
         "request_id": payload.request_id,
         "job_id": job_id,
@@ -1054,6 +1069,8 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
         raise HTTPException(status_code=409, detail="A request with this id is already being submitted")
     # Audit only: forwarded headers are client-controlled without auth.
     requested_from = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
+    if device is not None:
+        requested_from = f"device {device.get('name')} ({device.get('id')}) {requested_from}".strip()
     now = str(time.time())
     redis.hset(key, mapping={**fields, "status": "pending", "requested_from": requested_from, "created_at": now})
     try:
@@ -1217,6 +1234,7 @@ from preview_routes import router as preview_router
 from activity_routes import router as activity_router
 from notify_routes import router as notify_router
 from build_routes import router as build_router
+from device_routes import router as device_router
 from assist_routes import router as assist_router
 
 app.include_router(agent_router)
@@ -1229,4 +1247,5 @@ app.include_router(preview_router)
 app.include_router(activity_router)
 app.include_router(notify_router)
 app.include_router(build_router)
+app.include_router(device_router)
 app.include_router(assist_router)

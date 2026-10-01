@@ -2047,3 +2047,42 @@ pre {
   color: var(--accent);
   font-size: 0.85rem;
 }
+
+/* Settings → Phones & apps (lib/devices.js) */
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.device-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.device-add {
+  display: grid;
+  gap: 10px;
+}
+.pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.pairing-qr svg {
+  width: min(280px, 100%);
+  height: auto;
+  border-radius: 8px;
+}
+.pairing textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
