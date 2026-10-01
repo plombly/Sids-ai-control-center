@@ -29,6 +29,7 @@ def healthy_redis(wd):
     for n in range(1, wd.EXPECTED_WORKERS + 1):
         r.records[f"sid:workers:w{n}"] = {"status": "idle"}
     r.values["sid:backup:last"] = json.dumps({"at": "20260930T100000Z", "ok": True})
+    r.values["sid:backup:restore-check"] = json.dumps({"at": 1790769600 - 86400, "ok": True, "snapshot": "s1", "checks": []})
     return r
 
 
@@ -59,7 +60,7 @@ def test_all_healthy(wd):
     report = run(wd, healthy_redis(wd))
     assert report["status"] == "ok", report
     assert set(levels(report)) == {"units", "redis", "heartbeats", "backup", "pipeline",
-                                   "api", "web", "live_tree", "disk", "memory", "load"}
+                                   "api", "web", "live_tree", "disk", "memory", "load", "restore_check"}
 
 
 def test_backup_age_is_computed_in_utc(wd):
@@ -73,6 +74,10 @@ def test_backup_age_is_computed_in_utc(wd):
     (lambda r: r.records.pop("sid:operator-service:op"), "heartbeats", "fail"),
     (lambda r: r.records.pop("sid:workers:w1"), "heartbeats", "fail"),
     (lambda r: r.values.pop("sid:backup:last"), "backup", "warn"),
+    (lambda r: r.values.pop("sid:backup:restore-check"), "restore_check", "warn"),
+    (lambda r: r.values.update({"sid:backup:restore-check": json.dumps({"at": 1790769600 - 50 * 86400, "ok": True})}), "restore_check", "warn"),
+    (lambda r: r.values.update({"sid:backup:restore-check": json.dumps({"at": 1790769600, "ok": False, "snapshot": "s2",
+                                                                        "checks": [{"name": "redis", "ok": False, "detail": "empty"}]})}), "restore_check", "fail"),
     (lambda r: r.values.update({"sid:backup:last": json.dumps({"at": "20260928T000000Z", "ok": True})}), "backup", "warn"),
     (lambda r: r.values.update({"sid:backup:last": json.dumps({"at": "20260930T100000Z", "ok": False, "errors": {"redis": "x"}})}), "backup", "fail"),
     (lambda r: r.values.update({"sid:provider-cooldown:claude": "limit"}), "pipeline", "warn"),
@@ -106,7 +111,7 @@ def test_unreachable_endpoint(wd):
 def test_publish_logs_only_changes(wd):
     r = healthy_redis(wd)
     first = wd.publish(r, run(wd, r))
-    assert len(first) == 11, "every check is new the first time"
+    assert len(first) == 12, "every check is new the first time"
     assert wd.publish(r, run(wd, r)) == [], "no change, no log lines"
     r.values["sid:provider-cooldown:claude"] = "limit"
     changed = wd.publish(r, run(wd, r))

@@ -259,6 +259,15 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   <root>/previews/job-<id> as sid-preview-<id> (ports 8200-8299, empty data
   dir, app limits and secrets) and tears it down on approve/reject/
   re-integration, stop, or after PREVIEW_HOURS (4).
+- Dashboard home (lib/home.js): status line, goal box, Needs you (approve /
+  preview / reject; stuck jobs: try again / give up), In progress, Projects,
+  Recently finished; the old panels live under a collapsed "Details".
+  Project page tabs (#/projects/<id>[/files|/history|/settings]).
+- History/undo: services/project_history.py (published by services/apps as
+  sid:history:<id> when main moves; a job's commits are one change),
+  GET /api/projects/<id>/history, POST /api/projects/<id>/undo (operator
+  action project_revert -> sid-project.py revert --job|--commit: one
+  "Undo ..." commit via change_main; refuses on conflicts; not for SID).
 - Delete: sid-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
   Refuses SID and projects with running work; removes queued work,
@@ -303,6 +312,12 @@ Operations (host timers, units in deploy/systemd/):
   from root-only /etc/sid-ai/notify.env (NTFY_URL, DISCORD_WEBHOOK,
   DASHBOARD_URL); nothing configured = nothing sent (events are still
   marked, so configuring later does not flood). `--test` sends a test.
+- `sid-ai-restore-check.timer` monthly (1st, 04:30):
+  scripts/backup-restore-check.py restores the newest snapshot into
+  throwaway places (git clone + fsck of every bundle, temporary Redis and
+  Postgres containers without published ports, archives opened) and writes
+  sid:backup:restore-check; the watchdog's restore_check turns red on a
+  failure (so notifications ping) and warns after 40 days.
 - Deploying: scripts/sid-restart.sh TARGET... (operator, orchestrator,
   apps, workers, worker@NN, all) pauses each worker, waits until idle,
   restarts and verifies; use it instead of systemctl restart.

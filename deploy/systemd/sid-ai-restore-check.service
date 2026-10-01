@@ -1,0 +1,13 @@
+[Unit]
+Description=SID AI Command Center: prove the newest backup restores
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/sids-ai-command-center
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/opt/sid-venv/bin/python /opt/sids-ai-command-center/scripts/backup-restore-check.py
+TimeoutStartSec=30min

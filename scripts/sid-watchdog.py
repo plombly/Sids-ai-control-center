@@ -182,6 +182,27 @@ def check_backup(r, now):
     return check("backup", "ok", f"last backup {age_hours:.1f}h ago")
 
 
+RESTORE_CHECK_MAX_DAYS = 40  # monthly timer, with slack
+
+
+def check_restore(r, now):
+    """The monthly backup restore check (scripts/backup-restore-check.py)."""
+    raw = r.get("sid:backup:restore-check")
+    if not raw:
+        return check("restore_check", "warn", "backups have not been test-restored yet")
+    try:
+        last = json.loads(raw)
+        age_days = (now - float(last["at"])) / 86400
+    except (ValueError, KeyError, TypeError):
+        return check("restore_check", "warn", "unreadable restore-check record")
+    if not last.get("ok"):
+        failed = ", ".join(f"{c['name']}: {c['detail']}" for c in last.get("checks", []) if not c.get("ok"))
+        return check("restore_check", "fail", f"backup {last.get('snapshot')} did not restore: {failed}"[:300])
+    if age_days > RESTORE_CHECK_MAX_DAYS:
+        return check("restore_check", "warn", f"last restore check was {age_days:.0f} days ago")
+    return check("restore_check", "ok", f"backup {last.get('snapshot')} restored fine {age_days:.0f} days ago")
+
+
 def check_pipeline(r):
     notes, level = [], "ok"
     cooldown = r.get("sid:provider-cooldown:claude")
@@ -210,7 +231,7 @@ def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shuti
     checks = [check_units(unit_states(runner))]
     try:
         r.ping()
-        checks += [check("redis", "ok", "responding"), check_heartbeats(r), check_backup(r, now),
+        checks += [check("redis", "ok", "responding"), check_heartbeats(r), check_backup(r, now), check_restore(r, now),
                    check_pipeline(r)]
     except Exception as exc:
         checks.append(check("redis", "fail", f"unreachable: {exc}"))
