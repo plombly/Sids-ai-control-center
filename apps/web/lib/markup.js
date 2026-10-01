@@ -65,7 +65,7 @@ export const jobDetailMarkup = job => {
     relatedMarkup = related.length
       ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
       : detailValue(null);
-  return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div>${detailSection(
+  return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div><section class="job-log-section"><h3>Live log</h3><div class="job-log" data-job-log="${esc(job.id)}"><div class="subtle">Loading…</div></div><button type="button" class="detail-button" data-job-log-tests="${esc(job.id)}">Show test output</button><pre class="job-test-log" hidden></pre></section>${detailSection(
     'Summary',
     detailRows(job, [
       ['ID', 'id'],

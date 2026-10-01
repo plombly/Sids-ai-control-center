@@ -108,7 +108,9 @@ def claude_budget(role):
 def claude_command(role, model, budget_usd, allowed_bash=(), tools=None):
     command = [
         "claude", "-p",
-        "--output-format", "json",
+        # Streamed events (one JSON line each) so the dashboard can show the
+        # run live; the last line is the same result object "json" gave.
+        "--output-format", "stream-json", "--verbose",
         "--no-session-persistence",
         "--strict-mcp-config",  # never load the operator's MCP connectors
         "--model", model,

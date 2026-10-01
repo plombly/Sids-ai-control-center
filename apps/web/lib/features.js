@@ -8,3 +8,4 @@ import './projects.js';
 import './project-overview.js';
 import './project-wizard.js';
 import './project-files.js';
+import './job-log.js';

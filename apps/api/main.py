@@ -1178,8 +1178,10 @@ from agent_routes import router as agent_router
 from project_routes import router as project_router
 from file_routes import router as file_router
 from env_routes import router as env_router
+from log_routes import router as log_router
 
 app.include_router(agent_router)
 app.include_router(project_router)
 app.include_router(file_router)
 app.include_router(env_router)
+app.include_router(log_router)

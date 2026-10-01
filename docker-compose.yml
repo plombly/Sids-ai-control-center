@@ -65,6 +65,8 @@ services:
       # Project secrets (apps/api/env_routes.py), written here, read only by
       # each app's systemd unit on the host.
       - /etc/sid-ai/project-env:/project-env
+      # Live job logs (apps/api/log_routes.py), read-only.
+      - /var/log/sid-ai/jobs:/job-logs:ro
     depends_on:
       postgres:
         condition: service_healthy

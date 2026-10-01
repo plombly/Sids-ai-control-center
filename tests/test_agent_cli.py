@@ -135,7 +135,7 @@ def test_every_call_is_headless_bounded_and_isolated(agent_cli):
     argv = agent_cli.claude_command("reviewer", "sonnet", 1.5)
     for required in ("-p", "--no-session-persistence", "--strict-mcp-config"):
         assert required in argv
-    assert flag(argv, "--output-format") == "json"
+    assert flag(argv, "--output-format") == "stream-json" and "--verbose" in argv
     assert flag(argv, "--max-budget-usd") == "1.50"
     assert "Work only in the current working directory" in flag(argv, "--append-system-prompt")
 
