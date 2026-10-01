@@ -248,10 +248,11 @@ def project_cli_args(request):
     if action == "delete_project":
         return ["delete", project_id, "--confirm", request["confirm"]]
     if action == "project_commit_upload":
+        # --opt=value: a name starting with "-" must not read as an option.
         if request.get("op", "upload") == "upload":
-            return ["commit-upload", project_id, "--path", request["path"], "--upload", request["upload"]]
-        return ["code-change", project_id, "--op", request["op"], "--path", request["path"],
-                "--dest", request.get("dest", "")]
+            return ["commit-upload", project_id, f"--path={request['path']}", f"--upload={request['upload']}"]
+        return ["code-change", project_id, f"--op={request['op']}", f"--path={request['path']}",
+                f"--dest={request.get('dest', '')}"]
     return ["push-setup", project_id, request["url"]]
 
 

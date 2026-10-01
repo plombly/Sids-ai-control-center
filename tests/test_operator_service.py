@@ -485,7 +485,7 @@ def test_delete_request_validates_to_its_confirmation(op):
 def test_commit_upload_request(op):
     request = op.validate({"action": "project_commit_upload", "project_id": "web", "path": "static/a.png",
                            "upload": "upload-0001"}, f"{int(NOW * 1000)}-0", NOW)
-    assert op.project_cli_args(request) == ["commit-upload", "web", "--path", "static/a.png", "--upload", "upload-0001"]
+    assert op.project_cli_args(request) == ["commit-upload", "web", "--path=static/a.png", "--upload=upload-0001"]
     for bad in ({"path": "/etc/x", "upload": "upload-0001"}, {"path": "a", "upload": "../x"},
                 {"path": "a\nb", "upload": "upload-0001"}):
         with pytest.raises(op.Invalid):
@@ -498,7 +498,10 @@ def test_commit_upload_request(op):
 def test_code_change_request(op):
     request = op.validate({"action": "project_commit_upload", "project_id": "web", "op": "rename",
                            "path": "a.txt", "dest": "b.txt"}, f"{int(NOW * 1000)}-0", NOW)
-    assert op.project_cli_args(request) == ["code-change", "web", "--op", "rename", "--path", "a.txt", "--dest", "b.txt"]
+    assert op.project_cli_args(request) == ["code-change", "web", "--op=rename", "--path=a.txt", "--dest=b.txt"]
+    dashed = op.validate({"action": "project_commit_upload", "project_id": "web", "op": "rename", "path": "-x",
+                          "dest": "-y"}, f"{int(NOW * 1000)}-0", NOW)
+    assert op.project_cli_args(dashed)[-2:] == ["--path=-x", "--dest=-y"]
     with pytest.raises(op.Invalid, match="unknown"):
         op.validate({"action": "project_commit_upload", "project_id": "web", "op": "chmod", "path": "a"},
                     f"{int(NOW * 1000)}-0", NOW)
