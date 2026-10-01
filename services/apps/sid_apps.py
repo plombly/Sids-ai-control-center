@@ -155,7 +155,10 @@ def setup(project, live):
 def start_unit(project, live, port):
     env = app_env(live, port)
     inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app")
-    args = [SYSTEMD_RUN, f"--unit={unit_name(project.id)}", "--collect", "--quiet",
+    # No --collect: a unit that gave up must stay "failed" (with its Result)
+    # until stop_unit's reset-failed, or the crash would vanish and the app
+    # would be redeployed in a loop instead of being reported.
+    args = [SYSTEMD_RUN, f"--unit={unit_name(project.id)}", "--quiet",
             # A web app should keep running: restart it whenever it exits,
             # but give up (state "failed" -> dashboard "crashed") after 5
             # quick exits instead of looping forever.

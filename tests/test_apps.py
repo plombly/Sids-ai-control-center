@@ -174,3 +174,8 @@ def test_out_of_memory_is_explained(apps, monkeypatch):
                         if args[:2] == ["systemctl", "show"] and "Result" in args else real(args, **kw))
     module.loop_once()
     assert "1024 MB memory limit" in status(module)["error"]
+
+
+def test_failed_units_are_kept_for_the_crash_report():
+    module = load_module(ROOT / "services/apps/sid_apps.py")
+    assert '"--collect"' not in (ROOT / "services/apps/sid_apps.py").read_text().split("def start_unit")[1].split("def deploy")[0]
