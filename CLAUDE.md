@@ -181,8 +181,8 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   SID's trees, /etc/sid-ai, backups, logs, /root and other projects hidden,
   the docker socket and the project's deploy key masked, a private /tmp,
   and only the job's worktree writable (its .git pointer and the repo's
-  .git read-only). Gates also get no network (SID_SANDBOX_GATE_NETWORK=1
-  to allow). SID_PROJECT_SANDBOX=0 turns it off. Codex for projects runs
+  .git read-only). Gates also get no network unless the operator allowed
+  it (see "Internet access"; SID_SANDBOX_GATE_NETWORK=1 allows it everywhere). SID_PROJECT_SANDBOX=0 turns it off. Codex for projects runs
   inside this sandbox with its own sandbox off
   (project_sandbox.codex_command: --dangerously-bypass-approvals-and-
   sandbox): its bubblewrap cannot nest (Ubuntu's userns restriction; tested
@@ -340,6 +340,26 @@ web lib/goal-assistant.js) offer "Plan it with me" and "Send as written".
   that asks again is retried once with "write the brief now". It never
   submits or changes anything; logs in /var/log/sid-ai/assist/.
 
+Internet access (2026-10-01):
+- Builds (scripts/sid-build.py) run on Docker network sid-build-net
+  (bridge sid-build0). ensure_build_network() creates it and the iptables
+  chains SID-BUILD-FWD (from DOCKER-USER: DNS allowed, private/LAN/VPN/
+  Docker ranges dropped) and SID-BUILD-IN (from INPUT: everything to this
+  server dropped) before every build, only ever adding rules (never
+  flushing); a build fails rather than run without them. Project field
+  build_network "none" = --network none.
+- Tests (gates) stay offline. services/network_access.py: when project
+  tests fail with network errors, or the builder ends with
+  "NEEDS_NETWORK: <reason>", the worker records network_request=pending
+  (+ reason/step; URL credentials masked) on the builder; the orchestrator
+  turns that into needs_human kind "network" (network_resume build|repair)
+  instead of rebuilding/repairing. job-review.py network JOB once|always|
+  deny (operator actions network_once/always/deny; dashboard card "Wants
+  internet") sets network_allowed=1 (this change), project gate_network=
+  always, or network_denied=1 (rebuild prompt says: work offline), then
+  grants one more rebuild/repair. Allowed gates share the host network
+  (like SID_SANDBOX_GATE_NETWORK).
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg
@@ -386,6 +406,7 @@ python3 scripts/job-review.py reject JOB        # awaiting_review, needs_human, 
 python3 scripts/job-review.py extend JOB [N]    # needs_human: N more repairs, or N more rebuilds if kind=build
 python3 scripts/job-review.py reintegrate JOB   # fresh integration on current main + fresh review (stale recovery)
 python3 scripts/job-review.py reopen JOB        # un-block blocked_failed_dependency once deps recovered
+python3 scripts/job-review.py network JOB once|always|deny   # answer a project's request for internet in tests
 python3 scripts/submit-goal.py [--atomic] "GOAL"
 ```
 

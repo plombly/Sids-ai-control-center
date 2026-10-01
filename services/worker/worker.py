@@ -15,6 +15,7 @@ from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
+import network_access  # noqa: E402  (services/network_access.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import sid_redis  # noqa: E402  (services/sid_redis.py)
@@ -74,7 +75,7 @@ def efficiency_prefix(role):
 - For focused Python tests, use {SID_PYTHON} -m pytest; do not probe python/pytest executables.
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
-
+{network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_sid else ""}
 """
 
 redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
@@ -301,9 +302,42 @@ def project_setup(worktree, timeout=900):
     return result.returncode == 0, output[-6000:]
 
 
-def project_gate(worktree, timeout=900):
+def gate_network(builder_id):
+    """Tests of this builder's change may use the internet (the operator
+    allowed it for the change or the project; services/network_access.py)."""
+    if PROJECT is None or PROJECT.is_sid or not builder_id:
+        return False
+    return network_access.allowed(redis.hgetall(f"sid:projects:{PROJECT.id}"),
+                                  redis.hgetall(f"sid:jobs:{builder_id}"))
+
+
+def agent_final_text(log_path):
+    result = agent_cli.read_claude_result(log_path)
+    if result is not None:
+        return str(result.get("result") or "")
+    try:
+        return "\n".join(agent_cli.agent_messages(log_path)[-2:])
+    except Exception:
+        return ""
+
+
+def note_network_need(builder_id, gate_output, step, agent_text=""):
+    """After failed tests: record an internet-access request on the builder
+    when the failure points at the network (the orchestrator then asks the
+    operator instead of retrying)."""
+    if PROJECT is None or PROJECT.is_sid or not builder_id:
+        return
+    key = f"sid:jobs:{builder_id}"
+    fields = network_access.request(redis.hgetall(key), gate_output, step, agent_text,
+                                    redis.hgetall(f"sid:projects:{PROJECT.id}"))
+    if fields:
+        redis.hset(key, mapping={**fields, "network_request_at": str(time.time())})
+
+
+def project_gate(worktree, timeout=900, network=False):
     """(ok, output) of a non-SID project's own gate command, run in worktree.
-    An empty gate command is detected from the worktree (detect_gate)."""
+    An empty gate command is detected from the worktree (detect_gate).
+    network=True: the operator allowed internet access for these tests."""
     setup_ok, setup_output = project_setup(worktree)
     if not setup_ok:
         return False, setup_output + "\ndependency setup failed; tests were not run\n"
@@ -317,7 +351,7 @@ def project_gate(worktree, timeout=900):
     # and every tracked file are never touched.
     before = untracked_files(worktree)
     try:
-        argv = project_sandbox.command(["/bin/sh", "-c", command], PROJECT, worktree, kind="gate")
+        argv = project_sandbox.command(["/bin/sh", "-c", command], PROJECT, worktree, kind="gate", network=network)
         result = subprocess.run(argv, cwd=worktree, text=True,
                                 capture_output=True, timeout=timeout, env=gate_env(worktree))
     except subprocess.TimeoutExpired:
@@ -326,7 +360,8 @@ def project_gate(worktree, timeout=900):
         created = sorted(untracked_files(worktree) - before)
         if created:
             run_git("clean", "-f", "-q", "--", *created, cwd=worktree, check=False)
-    return result.returncode == 0, setup_output + f"$ {command}\n{result.stdout}{result.stderr}"
+    note = "(internet access allowed by the operator)\n" if network else ""
+    return result.returncode == 0, setup_output + note + f"$ {command}\n{result.stdout}{result.stderr}"
 
 
 def integration_worktree(job_id):
@@ -421,7 +456,9 @@ def _prepare_integration_locked(job_id, key):
                 raise RuntimeError(f"cannot apply source candidate {source}: {result.stderr.strip()}")
 
         if PROJECT is not None and not PROJECT.is_sid:
-            gate_ok, gate_output = project_gate(path)
+            gate_ok, gate_output = project_gate(path, network=gate_network(job_id))
+            if not gate_ok:
+                note_network_need(job_id, gate_output, "integration tests")
             gate = subprocess.CompletedProcess([], 0 if gate_ok else 1, gate_output, "")
         else:
             env = os.environ.copy()
@@ -832,7 +869,7 @@ def run_best_of(job, worktree, log_path):
     else:
         report["alt"]["error"] = results.get("alt_error", "agent failed")
     for name, path in candidates.items():
-        tests_ok, _ = run_tests(path)
+        tests_ok, _ = run_tests(path, network=gate_network(job.get("id")))
         report[name].update(tests=tests_ok, lines=change_size(path) if tests_ok else None)
     passing = [n for n in ("primary", "alt") if report[n].get("tests")]
     chosen = min(passing, key=lambda n: (report[n]["lines"] or 0, n != "primary")) if passing else "primary"
@@ -941,9 +978,9 @@ def run_agent(job, worktree, log_path):
     return run_codex(job, worktree, log_path)
 
 
-def run_tests(worktree):
+def run_tests(worktree, network=False):
     if PROJECT is not None and not PROJECT.is_sid:
-        return project_gate(worktree)
+        return project_gate(worktree, network=network)
     commands = [
         [
             SID_PYTHON,
@@ -1560,11 +1597,12 @@ def process_repair_job(job, key, log_path, test_log):
 
         redis.hset(key, mapping={"status": "testing"})
 
-        tests_ok, tests_output = run_tests(worktree)
+        tests_ok, tests_output = run_tests(worktree, network=gate_network(builder_job_id))
         test_log.write_text(tests_output)
         redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
 
         if not tests_ok:
+            note_network_need(builder_job_id, tests_output, "repair tests", agent_final_text(log_path))
             redis.hset(
                 key,
                 mapping={
@@ -1979,11 +2017,12 @@ def _process_job(raw_job):
 
         redis.hset(key, mapping={"status": "testing"})
 
-        tests_ok, tests_output = run_tests(worktree)
+        tests_ok, tests_output = run_tests(worktree, network=gate_network(job_id))
         test_log.write_text(tests_output)
         redis.hset(key, mapping={"test_status": "passed" if tests_ok else "failed"})
 
         if not tests_ok:
+            note_network_need(job_id, tests_output, "tests", agent_final_text(log_path))
             redis.hset(
                 key,
                 mapping={

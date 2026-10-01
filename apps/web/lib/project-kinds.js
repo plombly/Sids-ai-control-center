@@ -79,13 +79,21 @@ export function kindSettingsMarkup(project, catalog) {
     .map(([key, value]) => `<option value="${escValue(key)}"${kind.chosen === key ? ' selected' : ''}>${esc(value.icon)} ${esc(value.label)}</option>`)
     .join('');
   const auto = `Automatic (${detected ? esc(detected.label) : 'not recognised'})`;
-  const buildFields = id === 'sid' ? '' : `<h4>Build</h4><p class="subtle">Empty fields use the recipe for the detected stack. The command runs in a Docker container that only sees a copy of main.</p><label class="field">Build command<input name="build_command" value="${escValue(project.build_command)}" placeholder="From the detected stack" autocomplete="off"></label><label class="field">Docker image<input name="build_image" value="${escValue(project.build_image)}" placeholder="e.g. node:22-bookworm" autocomplete="off"></label><label class="field">Output folder<input name="build_output" value="${escValue(project.build_output)}" placeholder="e.g. dist" autocomplete="off"></label>`;
+  const buildFields = id === 'sid' ? '' : `<h4>Build</h4><p class="subtle">Empty fields use the recipe for the detected stack. The command runs in a Docker container that only sees a copy of main.</p><label class="field">Build command<input name="build_command" value="${escValue(project.build_command)}" placeholder="From the detected stack" autocomplete="off"></label><label class="field">Docker image<input name="build_image" value="${escValue(project.build_image)}" placeholder="e.g. node:22-bookworm" autocomplete="off"></label><label class="field">Output folder<input name="build_output" value="${escValue(project.build_output)}" placeholder="e.g. dist" autocomplete="off"></label>${networkFieldsMarkup(project)}`;
   return `<form id="project-type-form" class="goal-form kind-settings"><h3>Project type</h3><label class="field">Type<select name="type"><option value="">${auto}</option>${options}</select></label><label class="field">Describe it<textarea name="type_description" rows="2" maxlength="500" placeholder="e.g. a Discord bot that posts server stats, or a 2D platformer in Godot">${opt(kind.description)}</textarea></label><span class="field-hint">Used when SID cannot tell what the project is, and to pick goal ideas.</span>${buildFields}<div class="form-row"><button type="submit">Save</button>${id === 'sid' ? '' : `<button type="button" data-kind-recheck="${esc(id)}">Recheck now</button>`}<span id="project-type-status" class="form-status" role="status"></span></div></form>`;
+}
+
+// Internet access for tests and builds (services/network_access.py, scripts/sid-build.py).
+export function networkFieldsMarkup(project) {
+  const option = (value, label, current) => `<option value="${escValue(value)}"${current === value ? ' selected' : ''}>${esc(label)}</option>`;
+  const gate = project?.gate_network === 'always' ? 'always' : '';
+  const build = project?.build_network === 'none' ? 'none' : 'internet';
+  return `<h4>Internet access</h4><label class="field">Tests<select name="gate_network">${option('', 'Offline; ask me when they need it', gate)}${option('always', 'Always allowed', gate)}</select></label><label class="field">Builds<select name="build_network">${option('internet', 'Internet, but not this server or your network', build)}${option('none', 'No network at all', build)}</select></label>`;
 }
 
 export function kindRequest(values) {
   const body = { type: text(values.type, '').trim(), type_description: text(values.type_description, '').replace(/\s+/g, ' ').trim() };
-  for (const key of ['build_command', 'build_image', 'build_output']) if (key in values) body[key] = text(values[key], '').trim();
+  for (const key of ['build_command', 'build_image', 'build_output', 'gate_network', 'build_network']) if (key in values) body[key] = text(values[key], '').trim();
   return body;
 }
 

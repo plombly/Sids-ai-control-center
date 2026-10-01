@@ -41,6 +41,11 @@ class ProjectPatch(BaseModel):
     build_command: Optional[str] = Field(default=None, max_length=500, pattern=_COMMAND)
     build_image: Optional[str] = Field(default=None, max_length=300)
     build_output: Optional[str] = Field(default=None, max_length=200, pattern=_COMMAND)
+    # Internet access (services/network_access.py, scripts/sid-build.py):
+    # tests "" = offline, ask when they need it / "always"; builds "" or
+    # "internet" = internet but not this server or the LAN / "none".
+    gate_network: Optional[Literal["", "always"]] = None
+    build_network: Optional[Literal["", "internet", "none"]] = None
 
 
 _REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"
@@ -212,6 +217,8 @@ def _item(project_id, data=None):
         "build_command": _text(data.get("build_command")),
         "build_image": _text(data.get("build_image")),
         "build_output": _text(data.get("build_output")),
+        "gate_network": _text(data.get("gate_network"), ""),
+        "build_network": _text(data.get("build_network"), "") or "internet",
         # SID itself: the control plane, configured on the host.
         "system": _system_info() if project_id == "sid" else None,
         "push_remote": _text(data.get("push_remote")),

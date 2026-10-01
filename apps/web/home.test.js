@@ -73,3 +73,13 @@ test('composer lists projects', () => {
   assert.match(html, /id="assist-home"/);
   assert.match(html, /<option value="shop">&lt;Shop&gt;<\/option>/);
 });
+
+test('a job asking for internet access gets its own card', () => {
+  const html = needsYouMarkup({ ready: [], stuck: [{ id: 'j1', status: 'needs_human', needs_human_kind: 'network', network_request_step: 'tests', network_request_reason: 'getaddrinfo <EAI_AGAIN>', title: 'Add Stripe' }] }, {});
+  assert.match(html, /Wants internet/);
+  assert.match(html, /getaddrinfo &lt;EAI_AGAIN&gt;/);
+  for (const op of ['network_once', 'network_always', 'network_deny']) assert.match(html, new RegExp(`data-op="${op}" data-job="j1" data-status="needs_human"`));
+  assert.doesNotMatch(html, /data-op="extend"/);
+  const stuck = needsYouMarkup({ ready: [], stuck: [{ id: 'j2', status: 'needs_human', needs_human_kind: 'build' }] }, {});
+  assert.match(stuck, /data-op="extend"/);
+});

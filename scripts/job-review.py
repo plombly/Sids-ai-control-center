@@ -552,6 +552,8 @@ def extend(job_id, extra=1):
         fail(f"job status is {data.get('status')!r}; expected one of {sorted(EXHAUSTED)}")
     if not 1 <= extra <= 5:
         fail("extra attempts must be between 1 and 5")
+    if data.get("needs_human_kind") == "network":
+        fail("this job is waiting for an internet-access decision: use 'network JOB once|always|deny'")
     if data.get("needs_human_kind") == "build":
         # The build itself kept failing: allow more rebuilds from main. The
         # orchestrator retries a failed build while attempts remain.
@@ -581,6 +583,54 @@ def extend(job_id, extra=1):
         "updated_at": str(time.time()),
     })
     print(f"EXTENDED: {job_id} may use {extra} more repair attempt(s) (limit {limit})")
+
+
+NETWORK_CHOICES = ("once", "always", "deny")
+
+
+@in_job_project
+def network(job_id, choice):
+    """Answer a job's internet-access request (services/network_access.py)
+    and resume the step it stopped: a rebuild from main or another repair.
+    once: tests of this change may use the internet; always: tests of the
+    whole project may; deny: tests stay offline and the builder is told so."""
+    key = f"sid:jobs:{job_id}"
+    data = job_record(job_id)
+    if data.get("status") != "needs_human" or data.get("needs_human_kind") != "network":
+        fail(f"job {job_id} is not waiting for an internet-access decision")
+    if choice not in NETWORK_CHOICES:
+        fail(f"choice must be one of {', '.join(NETWORK_CHOICES)}")
+    project = current_project()
+    if project.is_sid:
+        fail("SID's own tests do not run in the project sandbox")
+    fields = {"network_request": f"answered:{choice}", "needs_human_reason": "", "needs_human_kind": "",
+              "updated_at": str(time.time())}
+    if choice == "once":
+        fields["network_allowed"] = "1"
+    elif choice == "deny":
+        fields["network_denied"] = "1"
+    else:
+        r.hset(f"sid:projects:{project.id}", mapping={"gate_network": "always", "updated_at": str(time.time())})
+    resume = data.get("network_resume") or "build"
+    if resume == "repair":
+        # Another repair of the same review findings, now with (or without) internet.
+        attempts = int(data.get("repair_attempts", "0") or "0")
+        limit = max(attempts + 1, int(data.get("max_repair_attempts") or 0))
+        fields.update(status="awaiting_review", max_repair_attempts=str(limit), repair_status="network_answered")
+    else:
+        # A rebuild from main: the orchestrator retries a failed build while attempts remain.
+        attempts = int(data.get("build_attempt", "1") or "1")
+        limit = max(attempts + 1, int(data.get("max_build_attempts") or 0))
+        fields.update(status=data.get("failed_status") or "test_failed", max_build_attempts=str(limit))
+    r.hset(key, mapping=fields)
+    words = {"once": "allowed internet for this change's tests", "always": "allowed internet for all of this project's tests",
+             "deny": "kept tests offline"}[choice]
+    try:
+        sid_projects.record_event(r, project.id, "network", f"Internet access: {words}",
+                                  detail=(data.get("network_request_reason") or "")[:500], ref=job_id)
+    except Exception:
+        pass
+    print(f"NETWORK: {job_id}: {words}; resuming the {resume}")
 
 
 def legacy_sources(data):
@@ -700,6 +750,7 @@ USAGE = """Usage:
   job-review.py extend JOB_ID [EXTRA_ATTEMPTS]   grant more repairs (default 1)
   job-review.py reintegrate JOB_ID               fresh integration on current main + fresh review
   job-review.py reopen JOB_ID                    un-block a job whose failed dependency recovered
+  job-review.py network JOB_ID once|always|deny  answer a job's request for internet access in tests
   job-review.py queue JOB_ID --candidate SHA     approve the change; merge when fresh (merge queue)
   job-review.py dequeue JOB_ID                   withdraw a queued approval"""
 
@@ -709,13 +760,14 @@ def is_full_sha(value):
 
 
 def main():
-    actions = {"approve", "reject", "extend", "reintegrate", "reopen", "queue", "dequeue"}
+    actions = {"approve", "reject", "extend", "reintegrate", "reopen", "queue", "dequeue", "network"}
     argv = sys.argv[1:]
     action = argv[0] if argv else None
     rest = argv[2:]
     if len(argv) < 2 or action not in actions or not (
         not rest
         or (action == "extend" and len(rest) == 1)
+        or (action == "network" and len(rest) == 1)
         or (action in ("approve", "queue") and len(rest) == 2 and rest[0] == "--candidate")
     ):
         print(USAGE, file=sys.stderr)
@@ -749,6 +801,8 @@ def main():
         extend(job_id, extra)
     elif action == "reintegrate":
         reintegrate(job_id)
+    elif action == "network":
+        network(job_id, rest[0])
     else:
         reopen(job_id)
 

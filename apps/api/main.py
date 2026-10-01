@@ -241,6 +241,10 @@ def _job(key, data):
         "review_aspects": _json_object(data.get("review_aspects")),
         "merge_queue_state": _text(data.get("merge_queue_state")),
         "merge_queue_reason": _text(data.get("merge_queue_reason")),
+        "needs_human_kind": _text(data.get("needs_human_kind")),
+        # An internet-access request (services/network_access.py); credentials already masked.
+        "network_request_reason": _text(data.get("network_request_reason"), "")[:1200],
+        "network_request_step": _text(data.get("network_request_step")),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
 

@@ -29,7 +29,7 @@ Environment=REDIS_URL=redis://127.0.0.1:6379/0
 Environment=REPO_ROOT=/opt/sids-ai-command-center
 Environment=WORKTREE_ROOT=/opt/sid-worktrees
 Environment=OPERATOR_ID=sid-operator-01
-Environment=OPERATOR_ALLOWED_ACTIONS=reject,extend,reintegrate,reopen,dequeue_approve
+Environment=OPERATOR_ALLOWED_ACTIONS=reject,extend,reintegrate,reopen,dequeue_approve,network_once,network_always,network_deny
 Environment=OPERATOR_REQUEST_TTL=600
 ExecStart=/usr/bin/python3 /opt/sids-ai-command-center/services/operator/sid_operator.py
 Restart=always

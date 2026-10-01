@@ -13,6 +13,7 @@ import redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
+import network_access  # noqa: E402  (services/network_access.py)
 import sid_projects  # noqa: E402  (services/sid_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import sid_redis  # noqa: E402  (services/sid_redis.py)
@@ -641,6 +642,13 @@ def queue_repairs():
             }:
                 continue
 
+        if builder.get("network_request") == "pending":
+            # The last repair's tests failed for lack of internet access:
+            # the operator decides (job-review.py network) before any
+            # further repair is spent on it.
+            r.hset(key, mapping=network_hand_off(builder, "repair"))
+            continue
+
         if attempts >= repair_limit:
             # Exhaustion hands the job to a human instead of failing it.
             # "needs_human" is not a failure state, so dependents keep
@@ -1060,6 +1068,12 @@ def retry_failed_builds():
         attempt = _int(job.get("build_attempt"), 1)
         reason = failure_reason(job)[:3500]
 
+        if job.get("network_request") == "pending":
+            # Tests needed the internet: ask instead of rebuilding blindly.
+            r.hset(key, mapping={**network_hand_off(job, "build"), "failed_status": job["status"]})
+            print(f"[{ORCHESTRATOR_ID}] build job={job_id} needs_human (network)", flush=True)
+            continue
+
         if attempt >= build_limit(job):
             r.hset(key, mapping={
                 "status": "needs_human",
@@ -1081,6 +1095,8 @@ def retry_failed_builds():
             "Start again from current main. Avoid what caused that failure and "
             "keep the change as small as the task allows."
         )
+        if job.get("network_denied") == "1":
+            prompt += "\n" + network_access.DENIED_NOTE
         release_stale_integration_lock(job_id)
         r.hdel(key, *BUILD_DERIVED_FIELDS)
         r.hset(key, mapping={
@@ -1103,6 +1119,15 @@ def retry_failed_builds():
             "created_at": job.get("created_at", now()),
         })
         print(f"[{ORCHESTRATOR_ID}] retry job={job_id} attempt={next_attempt}", flush=True)
+
+
+def network_hand_off(job, resume):
+    """needs_human fields for a pending internet-access request
+    (services/network_access.py); resume: the step to run after the answer."""
+    step = job.get("network_request_step") or "tests"
+    return {"status": "needs_human", "needs_human_kind": "network", "network_resume": resume,
+            "needs_human_reason": f"{step} need internet access: {job.get('network_request_reason', '')}"[:3000],
+            "updated_at": now()}
 
 
 def queue_reintegration(key, builder, fields):

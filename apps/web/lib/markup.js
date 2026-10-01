@@ -12,11 +12,18 @@ export const jobActionsMarkup = job => {
         ['Reject', 'reject'],
         ['Reintegrate', 'reintegrate']
       ],
-      needs_human: [
-        ['Reject', 'reject'],
-        ['Extend (+1)', 'extend'],
-        ['Reintegrate', 'reintegrate']
-      ],
+      needs_human: job.needs_human_kind === 'network'
+        ? [
+            ['Allow internet once', 'network_once'],
+            ['Always allow internet', 'network_always'],
+            ['Keep offline', 'network_deny'],
+            ['Reject', 'reject']
+          ]
+        : [
+            ['Reject', 'reject'],
+            ['Extend (+1)', 'extend'],
+            ['Reintegrate', 'reintegrate']
+          ],
       blocked_failed_dependency: [['Reopen', 'reopen']]
     }[text(job.status, '')] || [];
   return actions

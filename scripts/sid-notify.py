@@ -85,8 +85,15 @@ def events(r, dashboard):
                           f"Ready for approval · {project}", _title(job), f"{dashboard}/#/"))
         elif job.get("status") == "needs_human":
             kind = job.get("needs_human_kind") or "repair"
-            found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
-                          f"Needs you · {project}", f"{_title(job)} (gave up after {kind} attempts)", link))
+            if kind == "network":
+                reason = (job.get("network_request_reason") or "").strip().splitlines()
+                found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
+                              f"Wants internet access · {project}",
+                              f"{_title(job)}: its tests need the internet" + (f" ({reason[0][:160]})" if reason else "")
+                              + ". Allow it once, always, or keep tests offline.", link))
+            else:
+                found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
+                              f"Needs you · {project}", f"{_title(job)} (gave up after {kind} attempts)", link))
     for goal_id, goal in _hashes(r, "sid:goals:*"):
         status = goal.get("status")
         if status in FINAL_GOAL:

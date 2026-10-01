@@ -200,3 +200,10 @@ async function main() {
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });
+
+{
+  const html = jobActionsMarkup({ id: 'job-1', status: 'needs_human', needs_human_kind: 'network' });
+  assert.match(html, /data-op="network_once"/);
+  assert.match(html, /data-op="network_deny"/);
+  assert.doesNotMatch(html, /data-op="extend"/);
+}

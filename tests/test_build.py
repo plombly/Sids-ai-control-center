@@ -21,6 +21,7 @@ def git(*args, cwd):
 @pytest.fixture
 def build(tmp_path, monkeypatch):
     module = load_module(ROOT / "scripts/sid-build.py")
+    monkeypatch.setattr(module, "ensure_build_network", lambda: None)  # tests never touch Docker or the firewall
     base = tmp_path / "projects"
     monkeypatch.setattr(module.sid_projects, "PROJECTS_BASE", base)
     repo = base / "game" / "repo"
@@ -161,3 +162,54 @@ def test_recipes_resolve_overrides_and_placeholders():
                                      ("--privileged", False), ("a b", False), ("x;rm", False), ("", False)])
 def test_image_names(name, ok):
     assert project_catalog.valid_image(name) is ok
+
+
+def test_builds_use_the_firewalled_network_or_none(build):
+    module, r, repo, folder, runs, runner = build
+    start(r, "b1")
+    module.main("game", "b1", r=r, runner=runner)
+    command = runs[0]
+    assert command[command.index("--network") + 1] == "sid-build-net"
+    r.hset("sid:projects:game", mapping={"build_network": "none"})
+    start(r, "b2")
+    calls = []
+    module.main("game", "b2", r=r, runner=runner, network_setup=lambda: calls.append(1))
+    assert runs[1][runs[1].index("--network") + 1] == "none" and not calls
+    assert "no network" in (folder / "b2.log").read_text()
+
+
+def test_a_build_never_runs_when_the_firewall_cannot_be_set_up(build):
+    module, r, repo, folder, runs, runner = build
+    start(r, "b1")
+
+    def broken():
+        raise RuntimeError("could not set up the build firewall (INPUT)")
+    assert module.main("game", "b1", r=r, runner=runner, network_setup=broken) == 1
+    assert "firewall" in r.hgetall("sid:build:game:b1")["error"] and not runs
+
+
+def test_firewall_setup_is_idempotent_and_blocks_private_networks():
+    module = load_module(ROOT / "scripts/sid-build.py")
+    present, calls = set(), []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["docker", "network", "inspect"]:
+            return subprocess.CompletedProcess(argv, 1)
+        if argv[1] == "-C":
+            return subprocess.CompletedProcess(argv, 0 if tuple(argv[2:]) in present else 1)
+        if argv[1] in ("-A", "-I"):
+            rule = argv[2:] if argv[1] == "-A" else [argv[2], *argv[4:]]
+            present.add(tuple(rule))
+        return subprocess.CompletedProcess(argv, 0)
+
+    module.ensure_build_network(run)
+    first = [c for c in calls if c[1:2] in (["-A"], ["-I"])]
+    assert ["docker", "network", "create"] == calls[1][:3] and "com.docker.network.bridge.name=sid-build0" in calls[1]
+    assert any(c[1] == "-I" and c[2] == "INPUT" and c[-1] == "SID-BUILD-IN" for c in first)
+    assert any(c[1] == "-I" and c[2] == "DOCKER-USER" for c in first)
+    assert ["iptables", "-A", "SID-BUILD-FWD", "-d", "10.0.0.0/8", "-j", "DROP"] in first
+    assert not any(c[1] == "-F" for c in calls)  # never flushed while builds may run
+    calls.clear()
+    module.ensure_build_network(run)
+    assert not [c for c in calls if c[1:2] in (["-A"], ["-I"])]  # second run adds nothing

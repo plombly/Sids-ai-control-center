@@ -380,3 +380,14 @@ def test_build_request_list_download_and_log(builds):
     assert client.get("/api/projects/game/builds/b2/download").status_code == 404  # not finished
     assert client.get("/api/projects/game/builds/..%2Fx/log").status_code == 404
     assert client.get("/api/projects/sid/builds").status_code == 404
+
+
+def test_internet_access_settings(builds):
+    client, fake, _ = builds
+    item = client.get("/api/projects/game").json()
+    assert (item["gate_network"], item["build_network"]) == ("", "internet")
+    changed = client.patch("/api/projects/game", json={"gate_network": "always", "build_network": "none"}).json()
+    assert (changed["gate_network"], changed["build_network"]) == ("always", "none")
+    assert client.patch("/api/projects/game", json={"gate_network": "sometimes"}).status_code == 422
+    client.patch("/api/projects/sid", json={"gate_network": "always"})
+    assert "gate_network" not in fake.hashes["sid:projects:sid"]

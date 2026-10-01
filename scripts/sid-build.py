@@ -6,8 +6,11 @@ Started by the apps service as its own unit (sid-build-<project>-<id>):
 1. checks out the project's main into <project>/builds/work-<id>
 2. runs the build recipe (apps/api/project_catalog.resolve_recipe) in the
    stack's Docker image: only that checkout is mounted (at /src), plus a
-   per-project package cache volume; memory, CPU and process limits; network
-   for dependencies; no secrets, no other files of this server
+   per-project package cache volume; memory, CPU and process limits; no
+   secrets, no other files of this server. Network (project build_network):
+   "internet" (default) = the sid-build-net Docker network, whose firewall
+   (ensure_build_network) lets builds reach the internet but nothing on
+   this server or the local network; "none" = no network at all
 3. zips the recipe's output into <project>/builds/<id>.zip, keeps the log in
    <project>/builds/<id>.log, keeps the newest KEEP builds, removes the
    checkout. Status in Redis sid:build:<project>:<id>.
@@ -43,6 +46,53 @@ CACHE_ENV = {"HOME": "/root", "CI": "1", "npm_config_cache": "/root/.cache/npm",
              "GOCACHE": "/root/.cache/go-build", "CARGO_HOME": "/root/.cache/cargo",
              "PUB_CACHE": "/root/.cache/pub", "NUGET_PACKAGES": "/root/.cache/nuget",
              "PLATFORMIO_CORE_DIR": "/root/.cache/platformio"}
+
+
+BUILD_NET = "sid-build-net"
+BRIDGE = "sid-build0"
+IPTABLES = os.getenv("SID_IPTABLES", "iptables")
+# Never reachable from a build: private networks (your LAN, VPN, Docker's
+# own networks with SID's containers), link-local and multicast.
+PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "224.0.0.0/4")
+
+
+def firewall_rules():
+    """(chain, rule) pairs, checked before every build. Forwarded traffic
+    from the build bridge may not go to private addresses (DNS excepted, in
+    case the resolver is on the LAN); traffic to this server itself (INPUT)
+    is dropped entirely: no dashboard, API, Redis or apps."""
+    forward = [["-p", "udp", "--dport", "53", "-j", "RETURN"], ["-p", "tcp", "--dport", "53", "-j", "RETURN"]]
+    forward += [["-d", net, "-j", "DROP"] for net in PRIVATE_NETS]
+    return [("SID-BUILD-FWD", rule) for rule in forward] + [("SID-BUILD-IN", ["-j", "DROP"])]
+
+
+def ensure_build_network(run=subprocess.run):
+    """Create the build network and its firewall if missing (both vanish
+    with a reboot or a Docker reset). Raises if either cannot be set up:
+    a build never runs with open access to the local network."""
+    def call(*argv):
+        return run(list(argv), capture_output=True, text=True)
+
+    if call("docker", "network", "inspect", BUILD_NET).returncode:
+        made = call("docker", "network", "create", "--driver", "bridge", "--label", "sid=build",
+                    "-o", f"com.docker.network.bridge.name={BRIDGE}", BUILD_NET)
+        if made.returncode:
+            raise RuntimeError(f"could not create the build network: {(made.stderr or '').strip()[:200]}")
+    # Rules are only ever added (never flushed), so a build starting while
+    # another one runs never sees the firewall half-built.
+    for chain in ("SID-BUILD-FWD", "SID-BUILD-IN"):
+        call(IPTABLES, "-N", chain)  # fails harmlessly when it exists
+    for chain, rule in firewall_rules():
+        if call(IPTABLES, "-C", chain, *rule).returncode and call(IPTABLES, "-A", chain, *rule).returncode:
+            raise RuntimeError(f"could not set up the build firewall ({chain} {' '.join(rule)})")
+    for parent, chain in (("DOCKER-USER", "SID-BUILD-FWD"), ("INPUT", "SID-BUILD-IN")):
+        if call(IPTABLES, "-C", parent, "-i", BRIDGE, "-j", chain).returncode:
+            if call(IPTABLES, "-I", parent, "1", "-i", BRIDGE, "-j", chain).returncode:
+                raise RuntimeError(f"could not set up the build firewall ({parent})")
+
+
+def network_args(mode):
+    return ["--network", "none"] if mode == "none" else ["--network", BUILD_NET]
 
 
 def cache_volume(project_id):
@@ -92,7 +142,7 @@ def connect():
                                     password=sid_redis.password(), decode_responses=True)
 
 
-def main(project_id, build_id, r=None, runner=subprocess.run):
+def main(project_id, build_id, r=None, runner=subprocess.run, network_setup=None):
     r = r or connect()
     key = f"sid:build:{project_id}:{build_id}"
     status = lambda **fields: r.hset(key, mapping={k: str(v) for k, v in fields.items()})
@@ -121,12 +171,17 @@ def main(project_id, build_id, r=None, runner=subprocess.run):
         if added.returncode:
             raise RuntimeError(f"checkout failed: {added.stderr.strip()[:200]}")
         sid_projects.verify_worktree_pointer(work, project.repo)
+        mode = "none" if fields.get("build_network") == "none" else "internet"
+        if mode == "internet":
+            (network_setup or ensure_build_network)()
         container = f"sid-build-{project_id}-{build_id}"
         command = ["docker", "run", "--rm", "--name", container, "-v", f"{work}:/src", "-w", "/src",
                    "-v", f"{cache_volume(project_id)}:/root/.cache", *env_args(),
-                   "--memory", MEMORY, "--cpus", CPUS, "--pids-limit", "2048", recipe["image"], "sh", "-c", recipe["command"]]
+                   "--memory", MEMORY, "--cpus", CPUS, "--pids-limit", "2048", *network_args(mode),
+                   recipe["image"], "sh", "-c", recipe["command"]]
         with log_path.open("w") as log:
-            log.write(f"$ {recipe['command']}\n(in {recipe['image']}, main {head[:8]})\n\n")
+            access = "internet, not this server or your network" if mode == "internet" else "no network"
+            log.write(f"$ {recipe['command']}\n(in {recipe['image']}, main {head[:8]}, {access})\n\n")
             log.flush()
             result = runner(command, stdout=log, stderr=subprocess.STDOUT)
         if result.returncode != 0:

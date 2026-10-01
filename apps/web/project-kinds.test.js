@@ -85,3 +85,12 @@ test('projects get a Builds tab (not SID) and the overview shows the type card',
   const html = projectDetailMarkup({ id: 'g', name: 'G', catalog, project_type: { type: 'game', stack: 'love2d' } }, 'overview');
   assert.match(html, /kind-card[\s\S]*data-assist-start="project:g"/);
 });
+
+test('internet access settings for tests and builds', () => {
+  const html = kindSettingsMarkup({ id: 'g', gate_network: 'always', build_network: 'none', project_type: {} }, catalog);
+  assert.match(html, /<option value="always" selected>Always allowed/);
+  assert.match(html, /<option value="none" selected>No network at all/);
+  assert.doesNotMatch(kindSettingsMarkup({ id: 'sid', project_type: {} }, catalog), /gate_network/);
+  assert.deepEqual(kindRequest({ type: '', type_description: '', gate_network: 'always', build_network: 'internet' }),
+    { type: '', type_description: '', gate_network: 'always', build_network: 'internet' });
+});

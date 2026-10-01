@@ -1990,3 +1990,16 @@ pre {
     flex-direction: column;
   }
 }
+
+/* Internet-access requests (home "Needs you") */
+.network-reason {
+  max-height: 140px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

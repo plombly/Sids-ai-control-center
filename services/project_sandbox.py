@@ -15,8 +15,9 @@ Inside the sandbox a process sees:
   - a private, empty /tmp;
   - for agents only, their own CLI state (~/.codex, ~/.claude) read-write;
   - for gates, no network at all (a private loopback): tests cannot reach
-    the internet or anything on this server. SID_SANDBOX_GATE_NETWORK=1
-    shares the host network instead;
+    the internet or anything on this server. network=True (the operator
+    allowed it for the job or the project, see services/network_access.py)
+    or SID_SANDBOX_GATE_NETWORK=1 shares the host network instead;
   - for the setup step (dependency install), the host network and a
     persistent per-project package cache (<project>/cache as HOME), because
     npm/pip must download. It is otherwise confined like a gate;
@@ -53,7 +54,7 @@ def _exists(path):
     return os.path.lexists(path)
 
 
-def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None):
+def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None, network=False):
     """argv wrapped in bubblewrap for this project (unchanged for SID).
 
     kind: "gate" (no network, no agent state), "setup" (network, package
@@ -69,7 +70,7 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
     args = [BWRAP, "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc",
             "--unshare-uts", "--unshare-cgroup-try", "--cap-drop", "ALL",
             "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
-    if kind == "gate" and os.environ.get("SID_SANDBOX_GATE_NETWORK") != "1":
+    if kind == "gate" and not network and os.environ.get("SID_SANDBOX_GATE_NETWORK") != "1":
         args.append("--unshare-net")
     for path in HIDDEN:
         if os.path.isdir(path) and not os.path.islink(path):

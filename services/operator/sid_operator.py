@@ -57,7 +57,9 @@ HEARTBEAT_TTL = 30
 READ_BLOCK_MS = 5000
 OUTPUT_LIMIT = 8000
 
-ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
+# network_*: answer a job's internet-access request (job-review.py network).
+NETWORK_ACTIONS = ("network_once", "network_always", "network_deny")
+ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen", *NETWORK_ACTIONS,
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
            "project_commit_upload", "restore_project", "project_revert")
 # Project-level actions run scripts/sid-project.py on the host (directories,
@@ -67,7 +69,7 @@ PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup"
 TRASH_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z")
 # Actions that carry the exact integrated candidate the human confirmed.
 CANDIDATE_ACTIONS = ("approve", "queue_approve")
-DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve"
+DEFAULT_ALLOWED_ACTIONS = "reject,extend,reintegrate,reopen,dequeue_approve,network_once,network_always,network_deny"
 FINAL_STATUSES = {"succeeded", "refused", "error", "expired", "interrupted"}
 REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
@@ -415,6 +417,8 @@ def call_action(request):
         job_review.extend(job_id, request["extra"])
     elif action == "reintegrate":
         job_review.reintegrate(job_id)
+    elif action in NETWORK_ACTIONS:
+        job_review.network(job_id, action.split("_", 1)[1])
     else:
         job_review.reopen(job_id)
 

@@ -74,7 +74,8 @@ class OperatorActionRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen"]
+    action: Literal["approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen",
+                    "network_once", "network_always", "network_deny"]
     request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
     # The job status the human saw; the action is refused if it changed.
     expected_status: str = Field(pattern=r"^[a-z_]{1,64}$")
