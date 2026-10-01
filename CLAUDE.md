@@ -228,6 +228,14 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   project_commit_upload op "batch" -> sid-project.py code-batch: one commit,
   all or nothing (change_main resets the checkout on any failure); data
   originals of a data->code move are deleted only after the commit.
+  Web UI (lib/project-files.js + file-kinds.js + file-dialogs.js): desktop-
+  style selection (click, Ctrl/Shift, Ctrl+A, Esc), right-click / long-press
+  menu, selection bar, Ctrl+X/C/V clipboard across folders and tabs, drag
+  onto folders/breadcrumbs (Ctrl/Option copies), desktop file drops upload,
+  in-row rename (F2), in-page dialogs (conflicts, folder picker), kind
+  colours. Selection changes repaint in place (paint()), never re-render:
+  a re-render between the two clicks of a double-click, or a layout shift
+  during dragstart, breaks dblclick/drag (both found in browser testing).
   New deploy keys live in /etc/sid-ai/project-keys/
   <id>/ (older ones stay in the project dir). Backups include every project
   repo bundle and a tarball of /opt/sid-project-data.

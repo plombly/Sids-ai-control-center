@@ -683,16 +683,199 @@ label {
 .file-actions label.button {
   cursor: pointer;
 }
-.file-table td:last-child {
-  text-align: right;
-  white-space: nowrap;
+/* File browser: selection, kinds, menu, dialogs */
+.file-browser {
+  --kind-folder: #9aa4b2;
+  --kind-code: var(--accent);
+  --kind-archive: var(--red);
+  --kind-image: var(--green);
+  --kind-document: var(--amber);
+  --kind-config: #b48cff;
+  --kind-script: #ff9f5a;
+  --kind-media: #3cc8c8;
+  --kind-link: var(--muted);
 }
-.file-table td:last-child > * + * {
-  margin-left: 6px;
+.file-table tbody tr.file-row {
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
-select.file-action {
-  width: auto;
+.file-table tbody tr.file-row:hover {
+  background: rgba(91, 157, 255, 0.06);
+}
+.file-table tbody tr.file-row.selected {
+  background: rgba(91, 157, 255, 0.18);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.file-table tbody tr.file-row.cut {
+  opacity: 0.45;
+}
+.drop-target,
+.file-table tbody tr.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: rgba(91, 157, 255, 0.12);
+}
+.file-drop {
+  min-height: 80px;
+}
+.file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-icon {
+  flex: none;
+}
+.kind-folder { color: var(--kind-folder); }
+.kind-code { color: var(--kind-code); }
+.kind-archive { color: var(--kind-archive); }
+.kind-image { color: var(--kind-image); }
+.kind-document { color: var(--kind-document); }
+.kind-config { color: var(--kind-config); }
+.kind-script { color: var(--kind-script); }
+.kind-media { color: var(--kind-media); }
+.kind-link { color: var(--kind-link); font-style: italic; }
+.rename-input {
+  width: 100%;
+  max-width: 420px;
   padding: 4px 8px;
+}
+.selection-slot {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+.selection-slot > * {
+  flex: 1;
+}
+.selection-hint {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(91, 157, 255, 0.08);
+}
+.selection-bar > span {
+  margin-right: 8px;
+  font-weight: 600;
+}
+.clipboard-note {
+  align-self: center;
+}
+.file-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.file-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+}
+.file-menu button:hover:not(:disabled),
+.file-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--bg);
+  outline: none;
+}
+.file-menu button.danger {
+  color: var(--red);
+}
+.file-menu button.danger:hover,
+.file-menu button.danger:focus-visible {
+  background: var(--red);
+  color: var(--bg);
+}
+.file-menu hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.sid-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--panel);
+}
+.sid-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+.sid-dialog-body {
+  padding: 18px 20px 8px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.sid-dialog-body h3 {
+  margin-top: 0;
+}
+.sid-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 18px;
+}
+.dialog-items {
+  margin: 8px 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+.conflict-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.conflict-row select,
+.conflict-all select {
+  width: auto;
+}
+.conflict-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 120px;
+  margin-top: 8px;
+}
+.picker-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  text-align: left;
+  color: var(--kind-folder, #9aa4b2);
+  background: transparent;
+}
+.picker-folder:hover {
+  background: rgba(91, 157, 255, 0.12);
+  color: var(--text);
 }
 .system-info {
   margin: 16px 0;
