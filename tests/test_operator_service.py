@@ -538,3 +538,16 @@ def test_restore_request_must_name_that_projects_trash(op):
     for bad in ("other-20260930T220000Z", "shop-../../x", ""):
         with pytest.raises(op.Invalid):
             op.validate({"action": "restore_project", "project_id": "shop", "trash_id": bad}, stamp, NOW)
+
+
+def test_undo_requests(op):
+    stamp = f"{int(NOW * 1000)}-0"
+    job = op.validate({"action": "project_revert", "project_id": "shop", "undo_job": "j1"}, stamp, NOW)
+    assert op.project_cli_args(job) == ["revert", "shop", "--job=j1"]
+    commit = op.validate({"action": "project_revert", "project_id": "shop", "undo_commit": "abc1234"}, stamp, NOW)
+    assert op.project_cli_args(commit) == ["revert", "shop", "--commit=abc1234"]
+    for bad in ({"undo_job": "j1", "undo_commit": "abc1234"}, {}, {"undo_commit": "--force"}, {"undo_job": "../x"}):
+        with pytest.raises(op.Invalid):
+            op.validate({"action": "project_revert", "project_id": "shop", **bad}, stamp, NOW)
+    with pytest.raises(op.Invalid):
+        op.validate({"action": "project_revert", "project_id": "sid", "undo_job": "j1"}, stamp, NOW)

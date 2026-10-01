@@ -349,6 +349,40 @@ def push_setup(project_id: str, payload: ProjectPushSetup):
                              {"project_id": project_id, "url": payload.url})
 
 
+@router.get("/api/projects/{project_id}/history")
+def history(project_id: str):
+    """main's recent changes (published by the host's apps service)."""
+    project_id = _id(project_id)
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        data = json.loads(_redis().redis.get(f"sid:history:{project_id}") or "{}")
+    except (TypeError, ValueError):
+        data = {}
+    return {"project_id": project_id, "head": data.get("head"), "changes": data.get("changes") or [],
+            "can_undo": project_id != "sid"}
+
+
+class ProjectUndo(BaseModel):
+    job: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9]{1,64}$")
+    commit: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
+    request_id: str = Field(pattern=_REQUEST_ID)
+
+
+@router.post("/api/projects/{project_id}/undo", status_code=202)
+def undo(project_id: str, payload: ProjectUndo):
+    """Undo one change (a whole SID job or one commit) with a new commit on main."""
+    project_id = _id(project_id)
+    if project_id == "sid":
+        raise HTTPException(status_code=403, detail="SID's own changes are not undone from the dashboard")
+    if not _known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if bool(payload.job) == bool(payload.commit):
+        raise HTTPException(status_code=422, detail="Choose a job or a commit to undo")
+    return _operator_request("project_revert", payload.request_id, {
+        "project_id": project_id, "undo_job": payload.job or "", "undo_commit": payload.commit or ""})
+
+
 @router.get("/api/projects-trash")
 def trash():
     """Deleted projects that can still be restored (newest first)."""

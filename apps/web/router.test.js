@@ -4,15 +4,19 @@ import { parseRoute, applyRoute } from './lib/router.js';
 import { onRoute } from './lib/registry.js';
 
 test('routes', () => {
-  assert.deepEqual(parseRoute(''), { view: 'dashboard', projectId: null, create: false, files: false });
-  assert.deepEqual(parseRoute('#/'), { view: 'dashboard', projectId: null, create: false, files: false });
-  assert.deepEqual(parseRoute('#/projects'), { view: 'projects', projectId: null, create: false, files: false });
-  assert.deepEqual(parseRoute('#/projects/web-shop'), { view: 'projects', projectId: 'web-shop', create: false, files: false });
-  assert.deepEqual(parseRoute('#/projects/Bad_Id'), { view: 'projects', projectId: null, create: false, files: false });
-  assert.deepEqual(parseRoute('#/projects/new'), { view: 'projects', projectId: null, create: true, files: false });
-  assert.deepEqual(parseRoute('#/nowhere'), { view: 'dashboard', projectId: null, create: false, files: false });
-  assert.deepEqual(parseRoute('#/projects/web-shop/files'), { view: 'projects', projectId: 'web-shop', create: false, files: true });
-  assert.deepEqual(parseRoute('#/projects/Bad_Id/files'), { view: 'projects', projectId: null, create: false, files: false });
+  const base = { create: false, files: false, tab: 'overview' };
+  assert.deepEqual(parseRoute(''), { view: 'dashboard', projectId: null, ...base });
+  assert.deepEqual(parseRoute('#/'), { view: 'dashboard', projectId: null, ...base });
+  assert.deepEqual(parseRoute('#/projects'), { view: 'projects', projectId: null, ...base });
+  assert.deepEqual(parseRoute('#/projects/web-shop'), { view: 'projects', projectId: 'web-shop', ...base });
+  assert.deepEqual(parseRoute('#/projects/Bad_Id'), { view: 'projects', projectId: null, ...base });
+  assert.deepEqual(parseRoute('#/projects/new'), { view: 'projects', projectId: null, ...base, create: true });
+  assert.deepEqual(parseRoute('#/nowhere'), { view: 'dashboard', projectId: null, ...base });
+  assert.deepEqual(parseRoute('#/projects/web-shop/files'), { view: 'projects', projectId: 'web-shop', create: false, files: true, tab: 'files' });
+  assert.deepEqual(parseRoute('#/projects/Bad_Id/files'), { view: 'projects', projectId: null, ...base });
+  assert.equal(parseRoute('#/projects/web-shop/history').tab, 'history');
+  assert.equal(parseRoute('#/projects/web-shop/settings').tab, 'settings');
+  assert.equal(parseRoute('#/projects/web-shop/nope').tab, 'overview');
 });
 
 test('applyRoute shows one view, marks the nav and notifies handlers', () => {

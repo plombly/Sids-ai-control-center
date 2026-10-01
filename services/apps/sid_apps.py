@@ -30,6 +30,7 @@ from pathlib import Path
 from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import project_history  # noqa: E402
 import project_sandbox  # noqa: E402
 import sid_projects  # noqa: E402
 import sid_redis  # noqa: E402
@@ -359,7 +360,28 @@ def cleanup_removed(known_ids):
             redis.delete(key)
 
 
+def merged_jobs(project_id):
+    """Merged builder jobs of a project (for its history)."""
+    found = []
+    for key in redis.scan_iter("sid:jobs:*"):
+        if key.count(":") != 2 or redis.type(key) != "hash":
+            continue
+        job = redis.hgetall(key)
+        if job.get("status") == "merged" and job.get("merge_commit") and (job.get("project_id") or "sid") == project_id:
+            found.append(job)
+    return found
+
+
+def publish_histories(projects):
+    for project in projects:
+        try:
+            project_history.publish(redis, project, lambda: merged_jobs(project.id), project.default_branch)
+        except Exception as exc:
+            print(f"[sid-apps] history of {project.id}: {exc}", flush=True)
+
+
 def loop_once():
+    publish_histories(sid_projects.all_projects(redis))  # SID too (read-only history)
     projects = [p for p in sid_projects.all_projects(redis) if not p.is_sid]
     known = set(redis.smembers("sid:projects") or [])
     for project in projects:

@@ -507,3 +507,45 @@ def test_purge_removes_only_expired_trash(deletable, capsys, tmp_path, monkeypat
     later = lambda: __import__("time").time() + 25 * 3600
     assert sid_project.purge_trash(clock=later)["removed"] == [out["trash_id"]]
     assert not trashed.exists() and stray.exists() and not fake.sets["sid:trash"]
+
+
+# --- revert: undo a change on main ---------------------------------------------------
+
+def commit_file(repo, name, text, message):
+    (repo / name).write_text(text)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", message], check=True)
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def test_undo_a_whole_job_as_one_commit(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    commit_file(repo, "a.txt", "a\n", "builder")
+    merged = commit_file(repo, "b.txt", "b\n", "repair")
+    commit_file(repo, "c.txt", "c\n", "later unrelated change")
+    fake.hashes["sid:jobs:j1"] = {"id": "j1", "project_id": "shop", "status": "merged", "title": "Add a and b",
+                                  "integration_base_commit": base, "merge_commit": merged}
+    code, captured, out = invoke(["revert", "shop", "--job", "j1"], capsys)
+    assert code == 0, captured.err
+    assert not (repo / "a.txt").exists() and not (repo / "b.txt").exists() and (repo / "c.txt").exists()
+    subject = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%an|%s"], capture_output=True, text=True).stdout.strip()
+    assert subject == "SID operator|Undo Add a and b (job j1) from the dashboard"
+    assert not fake.strings  # lock released
+
+
+def test_undo_a_single_commit_and_conflicts_change_nothing(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    first = commit_file(repo, "x.txt", "one\n", "write x")
+    commit_file(repo, "x.txt", "two\n", "rewrite x")
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+    code, captured, _ = invoke(["revert", "shop", "--commit", first], capsys)
+    assert code == 1 and "same lines" in captured.err
+    assert subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout == head
+    assert subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout == ""
+    later = commit_file(repo, "y.txt", "y\n", "add y")
+    code, _, out = invoke(["revert", "shop", "--commit", later], capsys)
+    assert code == 0 and not (repo / "y.txt").exists()
+    assert invoke(["revert", "sid", "--commit", later], capsys)[0] == 1
+    assert invoke(["revert", "shop", "--commit", "zzzz"], capsys)[0] == 1
+    assert invoke(["revert", "shop", "--job", "missing"], capsys)[0] == 1

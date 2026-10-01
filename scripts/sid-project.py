@@ -654,6 +654,50 @@ def code_batch(args):
     return result
 
 
+SHA = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def revert(args):
+    """Undo one change on the project's main with a new commit (history is
+    kept): a SID job (every commit it merged, as one undo) or a single
+    commit. Refuses when later changes touch the same lines; nothing is
+    changed then."""
+    validate_id(args.id)
+    if args.id == "sid":
+        raise ProjectError("SID's own changes are undone through its normal review, not from the dashboard")
+    r = get_redis()
+    record = project(r, args.id)
+    if args.job:
+        job = r.hgetall(f"sid:jobs:{args.job}") if re.fullmatch(r"[A-Za-z0-9]{1,64}", args.job) else {}
+        if not job or (job.get("project_id") or "sid") != args.id or job.get("status") != "merged":
+            raise ProjectError("not a merged job of this project")
+        base, merged = job.get("integration_base_commit", ""), job.get("merge_commit", "")
+        if not (SHA.fullmatch(base) and SHA.fullmatch(merged)):
+            raise ProjectError("this job's merge is not recorded; undo its commits one by one")
+        target, label = f"{base}..{merged}", f"{job.get('title') or args.job} (job {args.job})"
+    else:
+        if not SHA.fullmatch(args.commit or ""):
+            raise ProjectError("invalid commit")
+        target, label = args.commit, None
+
+    def change(repo):
+        tip = target.split("..")[-1]
+        if subprocess.run(["git", "merge-base", "--is-ancestor", tip, "HEAD"], cwd=repo).returncode != 0:
+            raise ProjectError("that change is not on main")
+        result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "revert", "--no-commit", "--no-edit", target],
+                                cwd=repo, capture_output=True, text=True)
+        if result.returncode != 0:
+            subprocess.run(["git", "revert", "--abort"], cwd=repo, capture_output=True)
+            raise ProjectError("it cannot be undone automatically: later changes touch the same lines")
+        subject = label or run_git(["log", "-1", "--format=%s", target], cwd=repo).stdout.strip()
+        return {"undone": target, "title": subject}
+
+    def message(result):
+        return f"Undo {result['title']} from the dashboard"
+
+    return change_main(record, args.id, change, message)
+
+
 def code_change(args):
     """A file-browser operation (file_ops) on the project's main, committed."""
     validate_id(args.id)
@@ -713,6 +757,7 @@ def main(argv=None):
     p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"])
     p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
     p = sub.add_parser("code-batch"); p.add_argument("id"); p.add_argument("--spec", required=True, help="JSON batch from the dashboard")
+    p = sub.add_parser("revert"); p.add_argument("id"); target = p.add_mutually_exclusive_group(required=True); target.add_argument("--job"); target.add_argument("--commit")
     p = sub.add_parser("show"); p.add_argument("id")
     sub.add_parser("list")
     args = parser.parse_args(argv)
@@ -742,6 +787,8 @@ def main(argv=None):
             result = code_change(args)
         elif args.command == "code-batch":
             result = code_batch(args)
+        elif args.command == "revert":
+            result = revert(args)
         elif args.command == "show":
             validate_id(args.id); result = project(get_redis(), args.id)
         else:

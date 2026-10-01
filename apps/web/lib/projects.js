@@ -1,6 +1,7 @@
 import { requestJSON, operatorRequest, newRequestId } from './api.js';
 import { esc, escValue, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
+import { projectsMarkup as homeProjectsMarkup } from './home.js';
 
 const requestId = newRequestId;
 
@@ -41,30 +42,104 @@ export function systemInfoMarkup(system) {
   )}</div></div>`;
 }
 
-export function projectDetailMarkup(project) {
+const TAB_LABELS = { overview: 'Overview', files: 'Files', history: 'History', settings: 'Settings' };
+const GOAL_DONE = /^(completed|failed|planning_failed|cancelled)$/;
+
+export function tabsMarkup(id, tab) {
+  const tabs = id === 'sid' ? ['overview', 'history'] : ['overview', 'files', 'history', 'settings'];
+  return `<nav class="project-tabs" aria-label="Project sections">${tabs
+    .map(key => `<a href="#/projects/${encodeURIComponent(id)}${key === 'overview' ? '' : `/${key}`}" class="${key === tab ? 'active' : ''}"${key === tab ? ' aria-current="page"' : ''}>${TAB_LABELS[key]}</a>`)
+    .join('')}</nav>`;
+}
+
+const firstLine = value => {
+  const line = text(value, '').split('\n').map(item => item.trim()).find(Boolean) || '';
+  return line.length > 140 ? `${line.slice(0, 137)}…` : line;
+};
+
+export function usageLineMarkup(usage) {
+  const total = usage?.total;
+  if (!total) return '';
+  const claude = (usage.by_provider || []).find(row => row.provider === 'claude') || {};
+  const codex = (usage.by_provider || []).find(row => row.provider === 'codex') || {};
+  const tokens = Number(codex.effective_tokens) || 0;
+  return `<div class="usage-line"><span><b>${esc(number(total.jobs))}</b> jobs in 30 days</span><span><b>$${esc((Number(claude.cost_usd) || 0).toFixed(2))}</b> Claude</span><span><b>${esc(tokens >= 1e6 ? `${(tokens / 1e6).toFixed(1)}M` : tokens >= 1e3 ? `${Math.round(tokens / 1e3)}k` : tokens)}</b> Codex tokens</span></div>`;
+}
+
+function overviewMarkup(project) {
   const id = text(project?.id, '');
-  const name = text(project?.name, '');
+  const name = text(project?.name, id);
   const goals = Array.isArray(project?.goals) ? project.goals : [];
   const jobs = Array.isArray(project?.jobs) ? project.jobs : [];
+  const goalItems = goals
+    .map(goal => {
+      const progress = goal.progress || {};
+      const total = Number(progress.total) || 0;
+      const done = Number(progress.completed) || 0;
+      const percent = total ? Math.round((done / total) * 100) : GOAL_DONE.test(text(goal.status, '')) ? 100 : 0;
+      return `<div class="item"><div class="item-head"><span class="item-title">${esc(firstLine(goal.summary ?? goal.prompt))}</span>${pill(goal.status)}</div><div class="progress"><i style="width:${percent}%"></i></div><div class="subtle">${esc(number(done))}/${esc(number(total))} jobs</div></div>`;
+    })
+    .join('');
+  const jobRows = jobs
+    .map(job => `<tr><td><button type="button" class="detail-button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${esc(firstLine(job.title) || '')}</td><td>${pill(job.status)}</td><td class="subtle">${esc(job.provider)}/${esc(job.model)}</td></tr>`)
+    .join('');
+  return `<form id="project-goal-form" class="goal-form project-composer"><label class="composer-label" for="project-goal-text">What should SID do in ${esc(name)}?</label><textarea id="project-goal-text" name="goal" placeholder="Describe the change you want" required></textarea><div class="composer-row"><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="project-goal-status" class="form-status" role="status"></span></form>${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+}
+
+// History: main's recent changes; a SID job's commits are one change.
+export function historyMarkup(history, now = Date.now() / 1000) {
+  const changes = Array.isArray(history?.changes) ? history.changes : [];
+  if (!changes.length) return '<div class="empty">No history yet (it appears within a few seconds of the first commit).</div>';
+  const ago = seconds => {
+    const age = Math.max(0, now - (Number(seconds) || 0));
+    return age < 3600 ? `${Math.max(1, Math.floor(age / 60))} min ago` : age < 86400 ? `${Math.floor(age / 3600)} h ago` : `${Math.floor(age / 86400)} d ago`;
+  };
+  const items = changes
+    .map(change => {
+      const commits = change.commits || [];
+      const undo = history.can_undo
+        ? change.kind === 'job'
+          ? change.complete === false
+            ? ''
+            : `<button type="button" class="undo-button" data-undo-job="${escValue(change.job_id)}" data-undo-title="${escValue(change.title)}">Undo</button>`
+          : `<button type="button" class="undo-button" data-undo-commit="${escValue(change.sha)}" data-undo-title="${escValue(change.title)}">Undo</button>`
+        : '';
+      const detail =
+        change.kind === 'job'
+          ? `<button type="button" class="detail-button" data-detail="${escValue(change.job_id)}">job ${esc(change.job_id)}</button> · ${esc(commits.length)} commit${commits.length === 1 ? '' : 's'}`
+          : `<code>${esc(String(change.sha || '').slice(0, 8))}</code> · ${esc(change.author || '')}`;
+      return `<li class="history-item"><div class="history-main"><span class="history-title">${esc(change.title)}</span><span class="subtle">${detail} · ${esc(ago(change.time))}</span></div>${undo}</li>`;
+    })
+    .join('');
+  const note = history.can_undo
+    ? 'Undo adds a new commit that reverses the change, so nothing is lost and it can itself be undone.'
+    : "SID's own history is shown for reference; its changes go through review instead of Undo.";
+  return `<p class="subtle">${note}</p><ul class="history-list">${items}</ul>`;
+}
+
+function settingsMarkup(project) {
+  const id = text(project?.id, '');
+  if (id === 'sid') return systemInfoMarkup(project.system);
+  return `${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+}
+
+export function projectDetailMarkup(project, tab = 'overview') {
+  const id = text(project?.id, '');
+  const name = text(project?.name, id);
   const retry = project?.status === 'pending_key'
-    ? `<button type="button" data-retry-clone="${esc(id)}">Retry clone</button><span class="subtle">Add the deploy key shown when the project was created, then retry</span>`
+    ? `<div class="notice"><button type="button" data-retry-clone="${esc(id)}">Retry import</button><span class="subtle">Add the deploy key shown when the project was created, then retry</span></div>`
     : '';
-  const goalItems = goals.map(goal => {
-    const progress = goal.progress || {};
-    return `<div class="item"><div class="item-head"><span class="item-title">${esc(goal.summary ?? goal.prompt)}</span>${pill(
-      goal.status
-    )}</div><div class="subtle">${esc(number(progress.completed))}/${esc(number(progress.total))} jobs</div></div>`;
-  }).join('');
-  const jobRows = jobs.map(job => `<tr><td><button type="button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${pill(
-    job.status
-  )}</td><td>${esc(job.review_verdict)}</td><td>${esc(job.provider)}/${esc(job.model)}</td></tr>`).join('');
-  return `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2></div>${id && id !== 'sid' ? `<a class="button" href="#/projects/${encodeURIComponent(id)}/files">Files ↓</a>` : ''}<label>Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
+  const app = project?.app;
+  const appLink = app?.state === 'running' && app.port
+    ? `<a class="button" href="http://${escValue(globalThis.location?.hostname || 'localhost')}:${escValue(app.port)}/" target="_blank" rel="noopener">Open app</a>`
+    : '';
+  const body =
+    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'files' ? '' : overviewMarkup(project);
+  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2></div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}<label class="importance-select">Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
     project.importance === 'low' ? ' selected' : ''
-  }>low</option></select></label></div><div class="stack">${pill(project.status)}${retry}</div><form id="project-goal-form" class="goal-form"><textarea name="goal" placeholder="Describe work for ${esc(
-    name
-  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form>${id === 'sid' ? systemInfoMarkup(project.system) : '<form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>'}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${buildSettingsMarkup(project)}${envMarkup(id, project.env)}${deleteProjectMarkup(id)}</section>`;
+  }>low</option></select></label></div></div>${retry}${tabsMarkup(id, tab)}<div class="project-tab-body">${body}</div></section>`;
 }
 
 const APP_STATES = {
@@ -231,19 +306,33 @@ if (typeof document !== 'undefined') {
           requestJSON('/api/projects?limit=25'),
           requestJSON('/api/projects-trash').catch(() => [])
         ]);
-        if (version === renderVersion) container.innerHTML = `<section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">PROJECTS</p><h2>Projects</h2></div><div><a class="button" href="#/projects/new">Create a project</a></div></div><div class="stack">${projectListMarkup(projects)}</div></section>${trashMarkup(trashed)}`;
+        if (version === renderVersion) container.innerHTML = `<div class="projects-page"><div class="page-head"><h2>Projects</h2><a class="button primary" href="#/projects/new">Create a project</a></div>${homeProjectsMarkup(projects)}${trashMarkup(trashed)}</div>`;
       } catch (error) {
         container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
       }
       return;
     }
     try {
-      const [project, env] = await Promise.all([
-        requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}?limit=25`),
-        route.projectId === 'sid' ? null : requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}/env`).catch(() => null)
+      const id = encodeURIComponent(route.projectId);
+      const tab = route.tab || 'overview';
+      const optional = path => requestJSON(path).catch(() => null);
+      const [project, extra] = await Promise.all([
+        requestJSON(`/api/projects/${id}?limit=25`),
+        tab === 'settings' && route.projectId !== 'sid' ? optional(`/api/projects/${id}/env`)
+          : tab === 'history' ? optional(`/api/projects/${id}/history`)
+          : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
+          : null
       ]);
-      if (project) project.env = env;
-      if (version === renderVersion) detailMain().innerHTML = projectDetailMarkup(project);
+      if (project) {
+        if (tab === 'settings') project.env = extra;
+        if (tab === 'history') project.history = extra;
+        if (tab === 'overview') project.usage = extra;
+      }
+      if (version === renderVersion) {
+        detailMain().innerHTML = projectDetailMarkup(project, tab);
+        const files = document.getElementById('project-files-panel');
+        if (files) files.hidden = tab !== 'files';
+      }
     } catch (error) {
       if (version !== renderVersion) return;
       detailMain().innerHTML = `<div class="empty">${error.message === 'HTTP 404' ? 'Project not found' : esc(error.message)}</div>`;
@@ -255,13 +344,39 @@ if (typeof document !== 'undefined') {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = null;
     if (route.view !== 'projects' || route.create) return;
-    if (route.projectId) detailMain(); // before the file browser looks for its slot
+    if (route.projectId) {
+      detailMain(); // before the file browser looks for its slot
+      const files = document.getElementById('project-files-panel');
+      if (files) files.hidden = route.tab !== 'files';
+    }
     render(route, true);
     refreshTimer = setInterval(() => render(activeRoute), 5000);
   });
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
   });
+  const undo = async button => {
+    const title = button.dataset.undoTitle || 'this change';
+    if (!globalThis.confirm?.(`Undo "${title}"? SID adds a new commit to main that reverses it.`)) return;
+    button.disabled = true;
+    button.textContent = 'Undoing…';
+    try {
+      const request_id = requestId();
+      const body = button.dataset.undoJob ? { job: button.dataset.undoJob, request_id } : { commit: button.dataset.undoCommit, request_id };
+      const response = await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}/undo`, { method: 'POST', body: JSON.stringify(body) });
+      const result = await poll(response.request_id || request_id);
+      if (result.status !== 'succeeded') throw new Error(resultMessage(result));
+      button.textContent = 'Undone';
+      setTimeout(() => render(activeRoute, true), 12000); // the history refreshes when main moves
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Undo';
+      const node = document.querySelector('.project-tab-body > p.subtle');
+      if (node) node.textContent = `Could not undo: ${error.message}`;
+    }
+  };
+  registerClick('undoJob', undo);
+  registerClick('undoCommit', undo);
   registerClick('envDelete', async button => {
     const name = button.dataset.envDelete;
     if (!globalThis.confirm?.(`Delete ${name}? The app restarts without it.`)) return;

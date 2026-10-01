@@ -278,3 +278,17 @@ def test_app_limits_are_bounded(client):
     assert test_client.get("/api/projects/old?limit=1").status_code in (200, 404)
     for bad in ({"run_memory_mb": 8}, {"run_cpus": 0}, {"run_tasks": 1}):
         assert test_client.patch("/api/projects/alpha", json=bad).status_code == 422
+
+
+def test_history_and_undo(client):
+    test_client, fake = client
+    fake.strings["sid:history:alpha"] = json.dumps({"head": "h1", "changes": [{"kind": "job", "job_id": "j1", "title": "T"}]})
+    body = test_client.get("/api/projects/alpha/history").json()
+    assert body["changes"][0]["job_id"] == "j1" and body["can_undo"] is True
+    assert test_client.get("/api/projects/sid/history").json()["can_undo"] is False
+    _operator_ready(fake, allowed="project_revert")
+    ok = test_client.post("/api/projects/alpha/undo", json={"job": "j1", "request_id": "undo-00001"})
+    assert ok.status_code == 202 and fake.stream[-1][1]["undo_job"] == "j1"
+    assert test_client.post("/api/projects/alpha/undo", json={"request_id": "undo-00002"}).status_code == 422
+    assert test_client.post("/api/projects/sid/undo", json={"commit": "abc1234", "request_id": "undo-00003"}).status_code == 403
+    assert test_client.post("/api/projects/alpha/undo", json={"commit": "--hard", "request_id": "undo-00004"}).status_code == 422

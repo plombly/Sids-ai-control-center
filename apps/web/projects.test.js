@@ -6,6 +6,7 @@ import {
   publicKeyMarkup,
   buildProjectRequest,
   validateProjectValues,
+  historyMarkup,
   deleteProjectMarkup,
   buildSettingsMarkup,
   appStatusMarkup,
@@ -31,20 +32,44 @@ test('project list markup renders projects and empty state', () => {
   assert.equal(projectListMarkup([]), '<div class="empty">No projects yet</div>');
 });
 
-test('project detail markup renders forms, retry state, and jobs', () => {
-  const markup = projectDetailMarkup({
+test('project page: tabs, overview, settings, retry state, escaping', () => {
+  const project = {
     id: 'web-shop', name: '<Project>', importance: 'high', status: 'pending_key',
     goals: [{ prompt: '<goal>', status: 'running', progress: { completed: 1, total: 2 } }],
-    jobs: [{ id: 'job-1', status: 'queued', review_verdict: '<none>', provider: 'openai', model: 'gpt' }]
-  });
-  assert.match(markup, /<option value="high" selected>/);
-  assert.match(markup, /data-retry-clone="web-shop"/);
-  assert.match(markup, /id="project-goal-form"/);
-  assert.match(markup, /id="project-push-form"/);
-  assert.match(markup, /data-detail="job-1"/);
-  assert.match(markup, /&lt;Project&gt;/);
-  assert.match(markup, /&lt;goal&gt;/);
+    jobs: [{ id: 'job-1', status: 'queued', title: 'Add cart', provider: 'openai', model: 'gpt' }]
+  };
+  const overview = projectDetailMarkup(project);
+  assert.match(overview, /<option value="high" selected>/);
+  assert.match(overview, /data-retry-clone="web-shop"/);
+  assert.match(overview, /id="project-goal-form"/);
+  assert.match(overview, /data-detail="job-1"/);
+  assert.match(overview, /width:50%/);
+  assert.match(overview, /&lt;Project&gt;/);
+  assert.match(overview, /&lt;goal&gt;/);
+  assert.match(overview, /class="active" aria-current="page">Overview/);
+  assert.doesNotMatch(overview, /project-push-form/);
+  const settings = projectDetailMarkup(project, 'settings');
+  assert.match(settings, /id="project-push-form"/);
+  assert.match(settings, /project-settings-form/);
+  assert.doesNotMatch(settings, /project-goal-form/);
+  assert.match(projectDetailMarkup(project, 'files'), /href="#\/projects\/web-shop\/files" class="active"/);
   assert.doesNotMatch(projectDetailMarkup({ id: 'x', status: 'active' }), /data-retry-clone/);
+});
+
+test('history: one change per job, undo buttons only where allowed', () => {
+  const history = { can_undo: true, changes: [
+    { kind: 'job', job_id: 'j1', title: 'Add <cart>', time: 1000, commits: [{}, {}], complete: true },
+    { kind: 'commit', sha: 'abcdef1234', title: 'Upload logo', author: 'SID operator', time: 1000, commits: [{}] },
+    { kind: 'job', job_id: 'j0', title: 'Old', time: 10, commits: [{}], complete: false }
+  ] };
+  const html = historyMarkup(history, 1000 + 7200);
+  assert.match(html, /Add &lt;cart&gt;/);
+  assert.match(html, /data-undo-job="j1"/);
+  assert.match(html, /data-undo-commit="abcdef1234"/);
+  assert.doesNotMatch(html, /data-undo-job="j0"/);
+  assert.match(html, /2 commits · 2 h ago/);
+  assert.doesNotMatch(historyMarkup({ ...history, can_undo: false }), /data-undo/);
+  assert.match(historyMarkup({ changes: [] }), /No history yet/);
 });
 
 test('public key markup handles valid and invalid output', () => {
@@ -85,7 +110,7 @@ test('delete section on every project page except SID itself', () => {
   assert.match(deleteProjectMarkup('web-shop'), /placeholder="Type web-shop to confirm"/);
   assert.match(deleteProjectMarkup('web-shop'), /class="danger-button"/);
   assert.equal(deleteProjectMarkup('sid'), '');
-  assert.match(projectDetailMarkup({ id: 'web-shop', status: 'active' }), /project-delete-form/);
+  assert.match(projectDetailMarkup({ id: 'web-shop', status: 'active' }, 'settings'), /project-delete-form/);
   assert.doesNotMatch(projectDetailMarkup({ id: 'sid', status: 'active' }), /project-delete-form/);
 });
 
@@ -123,7 +148,7 @@ test('SID: labelled as this system, no GitHub push form, shows its host setup', 
   assert.match(page, /main @ abc1234/);
   assert.match(page, /&lt;b&gt;/);
   assert.match(page, /project-goal-form/);
-  assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }), /project-push-form/);
+  assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }, 'settings'), /project-push-form/);
   assert.match(systemInfoMarkup(null), /not reported yet/);
 });
 
