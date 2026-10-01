@@ -161,6 +161,9 @@ def start_unit(project, live, port):
             # quick exits instead of looping forever.
             "--property=Restart=always", "--property=RestartSec=5",
             "--property=StartLimitIntervalSec=120", "--property=StartLimitBurst=5",
+            # Resource limits, so one app cannot starve SID or the others.
+            f"--property=MemoryMax={project.run_memory_mb}M", "--property=MemorySwapMax=0",
+            f"--property=CPUQuota={int(project.run_cpus * 100)}%", f"--property=TasksMax={project.run_tasks}",
             f"--property=WorkingDirectory={live}",
             f"--description=SID app {project.id}"]
     args += [f"--setenv={k}={v}" for k, v in env.items()]
@@ -169,8 +172,13 @@ def start_unit(project, live, port):
         raise RuntimeError(f"systemd-run failed: {(result.stderr or result.stdout).strip()}")
 
 
+def limits_of(project):
+    return f"{project.run_memory_mb}M/{project.run_cpus:g}cpu/{project.run_tasks}tasks"
+
+
 def deploy(project, head, port):
-    set_status(project.id, state="deploying", commit=head, port=port, command=project.run_command, error="")
+    set_status(project.id, state="deploying", commit=head, port=port, command=project.run_command, error="",
+               limits=limits_of(project))
     stop_unit(project.id)
     live = live_checkout(project, head)
     ok, output = setup(project, live)
@@ -198,7 +206,8 @@ def reconcile(project):
     except ValueError:
         restart_at = deployed_at = 0
     changed = (status.get("commit") != head or status.get("command") != project.run_command
-               or status.get("port") != str(port) or restart_at > deployed_at)
+               or status.get("port") != str(port) or restart_at > deployed_at
+               or status.get("limits") != limits_of(project))  # also gives older apps their limits
     if status.get("state") == "setup_failed" and not changed:
         return  # wait for a new commit, a new command or a restart request
     if changed or status.get("state") in (None, "", "stopped", "deploying"):
@@ -209,7 +218,10 @@ def reconcile(project):
         if status.get("state") != "running":
             set_status(project.id, state="running", error="")
     elif state == "failed":
-        set_status(project.id, state="crashed", error="the app keeps exiting; see the log", log=log_tail(project.id))
+        result = run([SYSTEMCTL, "show", unit_name(project.id), "-p", "Result", "--value"]).stdout.strip()
+        reason = (f"it used more than its {project.run_memory_mb} MB memory limit"
+                  if result == "oom-kill" else "the app keeps exiting; see the log")
+        set_status(project.id, state="crashed", error=reason, log=log_tail(project.id))
     elif state == "inactive" and status.get("state") in ("running", "crashed"):
         # Gone (host reboot, manual stop): start it again from the same commit.
         deploy(project, head, port)

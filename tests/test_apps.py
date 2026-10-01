@@ -152,3 +152,25 @@ def test_tampered_live_checkout_is_refused(apps):
     git("commit", "-qam", "v2", cwd=repo)
     module.loop_once()
     assert status(module)["state"] == "error" and "tampered" in status(module)["error"]
+
+
+def test_apps_run_with_resource_limits_and_changing_them_redeploys(apps):
+    module, repo, root, calls, units = apps
+    module.loop_once()
+    [first] = started(calls)
+    assert {"--property=MemoryMax=1024M", "--property=CPUQuota=100%", "--property=TasksMax=512",
+            "--property=MemorySwapMax=0"} <= set(first)
+    module.redis.records["sid:projects:shop"].update(run_memory_mb="256", run_cpus="0.5")
+    module.loop_once()
+    assert "--property=MemoryMax=256M" in started(calls)[-1] and "--property=CPUQuota=50%" in started(calls)[-1]
+
+
+def test_out_of_memory_is_explained(apps, monkeypatch):
+    module, repo, root, calls, units = apps
+    module.loop_once()
+    units["sid-app-shop"] = "failed"
+    real = module.run
+    monkeypatch.setattr(module, "run", lambda args, **kw: subprocess.CompletedProcess(args, 0, "oom-kill\n", "")
+                        if args[:2] == ["systemctl", "show"] and "Result" in args else real(args, **kw))
+    module.loop_once()
+    assert "1024 MB memory limit" in status(module)["error"]

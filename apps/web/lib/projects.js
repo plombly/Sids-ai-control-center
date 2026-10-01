@@ -97,7 +97,9 @@ export function buildSettingsMarkup(project) {
     'setup_command', 'Install dependencies', 'Detect automatically', 'Runs with internet access before builds and tests (npm ci, pip install …). Tests themselves run offline.'
   )}${input('gate_command', 'Test command', 'Detect automatically', 'Must pass before anything is merged (npm test, pytest …).')}${input(
     'run_command', 'Run command', 'Not running', 'Keeps the app running from the latest main, e.g. npm start. Listen on the PORT environment variable and 0.0.0.0.'
-  )}${input('run_port', 'Port', 'Assigned automatically (8100-8199)', 'Open it from your PC at this server\'s address and this port.')}<div class="form-row"><button type="submit">Save settings</button><span id="project-settings-status" class="form-status" role="status"></span></div></form>${appStatusMarkup(project)}`;
+  )}${input('run_port', 'Port', 'Assigned automatically (8100-8199)', 'Open it from your PC at this server\'s address and this port.')}<div class="form-row limits-row">${input(
+    'run_memory_mb', 'Memory limit (MB)', '1024', 'Killed and restarted if it uses more.'
+  )}${input('run_cpus', 'CPU limit (cores)', '1', 'e.g. 0.5 or 2.')}${input('run_tasks', 'Process limit', '512', 'Threads and processes.')}</div><div class="form-row"><button type="submit">Save settings</button><span id="project-settings-status" class="form-status" role="status"></span></div></form>${appStatusMarkup(project)}`;
 }
 
 export function buildSettingsRequest(values) {
@@ -105,6 +107,10 @@ export function buildSettingsRequest(values) {
   for (const key of ['setup_command', 'gate_command', 'run_command']) body[key] = text(values[key], '').trim();
   const port = text(values.run_port, '').trim();
   if (port) body.run_port = Number(port);
+  for (const key of ['run_memory_mb', 'run_cpus', 'run_tasks']) {
+    const value = text(values[key], '').trim();
+    if (value) body[key] = Number(value);
+  }
   return body;
 }
 

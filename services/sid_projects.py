@@ -23,6 +23,14 @@ PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 IMPORTANCE = ("high", "medium", "low")
 
 
+def _bounded(value, default, low, high, kind=int):
+    try:
+        number = kind(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(number, low), high)
+
+
 class Project:
     """A resolved project: paths, gate, importance and its Redis key names."""
 
@@ -45,6 +53,10 @@ class Project:
             self.run_port = int(fields.get("run_port") or 0)
         except (TypeError, ValueError):
             self.run_port = 0
+        # Limits for the running app (systemd MemoryMax / CPUQuota / TasksMax).
+        self.run_memory_mb = _bounded(fields.get("run_memory_mb"), 1024, 64, 65536)
+        self.run_cpus = _bounded(fields.get("run_cpus"), 1.0, 0.1, 64.0, float)
+        self.run_tasks = _bounded(fields.get("run_tasks"), 512, 16, 32768)
         importance = fields.get("importance") or "medium"
         self.importance = importance if importance in IMPORTANCE else "medium"
         self.status = fields.get("status") or "active"

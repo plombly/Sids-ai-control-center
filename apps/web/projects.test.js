@@ -136,3 +136,11 @@ test('trash: restorable projects with time left, nothing when empty', () => {
   assert.equal(trashMarkup([]), '');
   assert.match(deleteProjectMarkup('shop'), /restore it from the Projects page for 1 day/);
 });
+
+test('build settings include app limits and send only what is filled in', () => {
+  const html = buildSettingsMarkup({ id: 'shop', run_memory_mb: 1024, run_cpus: 1, run_tasks: 512 });
+  assert.match(html, /name="run_memory_mb" value="1024"/);
+  assert.match(html, /name="run_cpus" value="1"/);
+  assert.deepEqual(buildSettingsRequest({ setup_command: '', gate_command: '', run_command: '', run_memory_mb: '256', run_cpus: '', run_tasks: '' }),
+    { setup_command: '', gate_command: '', run_command: '', run_memory_mb: 256 });
+});

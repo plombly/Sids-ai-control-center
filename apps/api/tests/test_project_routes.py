@@ -269,3 +269,12 @@ def test_trash_listing_and_restore_request(client):
     fake.members.add("shop")
     assert test_client.post("/api/projects-trash/shop-20260930T220000Z/restore",
                             json={"request_id": "restore-0004"}).status_code == 409
+
+
+def test_app_limits_are_bounded(client):
+    test_client, fake = client
+    body = test_client.patch("/api/projects/alpha", json={"run_memory_mb": 256, "run_cpus": 0.5, "run_tasks": 64}).json()
+    assert (body["run_memory_mb"], body["run_cpus"], body["run_tasks"]) == (256, 0.5, 64)
+    assert test_client.get("/api/projects/old?limit=1").status_code in (200, 404)
+    for bad in ({"run_memory_mb": 8}, {"run_cpus": 0}, {"run_tasks": 1}):
+        assert test_client.patch("/api/projects/alpha", json=bad).status_code == 422

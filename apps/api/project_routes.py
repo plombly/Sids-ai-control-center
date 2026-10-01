@@ -31,6 +31,9 @@ class ProjectPatch(BaseModel):
     setup_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
     run_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
     run_port: Optional[int] = Field(default=None, ge=8100, le=8199)
+    run_memory_mb: Optional[int] = Field(default=None, ge=64, le=65536)
+    run_cpus: Optional[float] = Field(default=None, ge=0.1, le=64)
+    run_tasks: Optional[int] = Field(default=None, ge=16, le=32768)
 
 
 _REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"
@@ -182,6 +185,9 @@ def _item(project_id, data=None):
         "setup_command": _text(data.get("setup_command")),
         "run_command": _text(data.get("run_command")),
         "run_port": _numeric(data.get("run_port")),
+        "run_memory_mb": _numeric(data.get("run_memory_mb")) or 1024,
+        "run_cpus": _numeric(data.get("run_cpus")) or 1,
+        "run_tasks": _numeric(data.get("run_tasks")) or 512,
         "app": _app_status(project_id),
         # SID itself: the control plane, configured on the host.
         "system": _system_info() if project_id == "sid" else None,
