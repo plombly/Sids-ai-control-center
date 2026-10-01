@@ -4,6 +4,15 @@ Things only you can check: on your own devices, with real projects, or by
 waiting for a scheduled event. Tick them off as you go and note anything
 that felt wrong; we'll go through the notes together.
 
+## Project groups (phases 1-2)
+- [ ] On a project's Overview, press **New child project** and create one; it
+      should show "Part of …" and appear nested under the parent everywhere.
+- [ ] Move an existing project into a group from its Settings → **Part of**,
+      then remove it again from the parent's Settings.
+- [ ] Give the parent a goal that needs work in both (e.g. an API change plus
+      the app screen that uses it): one job per project, the app's job waits
+      for the API's to be merged, and each is approved on its own.
+
 ## Internet access (checkpoint 4)
 - [ ] Project Settings → **Internet access**: the two choices read clearly.
 - [ ] When a project's tests need the internet, a **Wants internet** card shows
