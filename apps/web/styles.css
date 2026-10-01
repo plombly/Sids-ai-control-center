@@ -1652,3 +1652,13 @@ pre {
     width: 100%;
   }
 }
+.projects-page .home-projects {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+@media (max-width: 640px) {
+  .project-tabs a {
+    flex: 1;
+    padding: 9px 4px;
+    text-align: center;
+  }
+}
