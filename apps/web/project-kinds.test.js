@@ -45,6 +45,7 @@ test('type settings: automatic option names the detected type; SID has no build 
   assert.match(html, /<option value="website" selected>/);
   assert.match(html, /a &lt;b&gt; site/);
   assert.match(html, /value="node:22"/);
+  assert.doesNotMatch(kindSettingsMarkup({ id: 'g', project_type: {} }, catalog), /—/);
   assert.doesNotMatch(kindSettingsMarkup({ id: 'sid', project_type: {} }, catalog), /build_command/);
   assert.deepEqual(kindRequest({ type: '', type_description: ' a  bot\n', build_image: ' x ' }), { type: '', type_description: 'a bot', build_image: 'x' });
 });
@@ -64,6 +65,7 @@ test('builds list: download, log, errors and the running state', () => {
   assert.match(html, /href="\/api\/projects\/g\/builds\/b1\/download" download>Download \(2\.5 MB\)/);
   assert.match(html, /main abcdef12 · 20 s/);
   assert.match(html, /exit &lt;2&gt;/);
+  assert.doesNotMatch(html, /—/); // no placeholder dashes for empty values
   assert.doesNotMatch(html, /builds\/b2\/download/);
   const refused = buildsMarkup('u', { recipe: { unsupported: 'Needs a Mac' }, builds: [] });
   assert.match(refused, /Needs a Mac/);

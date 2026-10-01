@@ -15,6 +15,8 @@ export async function loadCatalog(fetchJSON = requestJSON) {
   return catalogCache;
 }
 
+// esc() shows '—' for empty values; these places want nothing instead.
+const opt = value => (value || value === 0 ? esc(value) : '');
 const typeOf = (catalog, key) => catalog?.types?.[key] || null;
 const BUILT = /^(game|desktop_app|mobile_cross|android_app|cli_tool|library|embedded_iot|browser_extension|networking_tool)$/;
 
@@ -46,7 +48,7 @@ export function kindCardMarkup(project, catalog) {
   if (key === 'checking') head = '<span class="kind-icon" aria-hidden="true">⏳</span><span><b>Looking at the project…</b></span>';
   else if (!info) {
     head = `<span class="kind-icon" aria-hidden="true">❔</span><span><b>Not recognised yet</b><span class="subtle"> SID checks again every hour and whenever main changes.</span></span>`;
-  } else head = `<span class="kind-icon" aria-hidden="true">${esc(info.icon)}</span><span><b>${esc(info.label)}</b>${stack}<span class="subtle"> · ${esc(source)}</span></span>`;
+  } else head = `<span class="kind-icon" aria-hidden="true">${esc(info.icon)}</span><span><b>${esc(info.label)}</b>${stack}${source ? `<span class="subtle"> · ${esc(source)}</span>` : ''}</span>`;
   const evidence = (kind.evidence || []).length
     ? `<details class="kind-why"><summary>Why?</summary><ul>${kind.evidence.map(item => `<li>${esc(item)}</li>`).join('')}</ul></details>`
     : '';
@@ -77,7 +79,7 @@ export function kindSettingsMarkup(project, catalog) {
     .join('');
   const auto = `Automatic (${detected ? esc(detected.label) : 'not recognised'})`;
   const buildFields = id === 'sid' ? '' : `<h4>Build</h4><p class="subtle">Empty fields use the recipe for the detected stack. The command runs in a Docker container that only sees a copy of main.</p><label class="field">Build command<input name="build_command" value="${escValue(project.build_command)}" placeholder="From the detected stack" autocomplete="off"></label><label class="field">Docker image<input name="build_image" value="${escValue(project.build_image)}" placeholder="e.g. node:22-bookworm" autocomplete="off"></label><label class="field">Output folder<input name="build_output" value="${escValue(project.build_output)}" placeholder="e.g. dist" autocomplete="off"></label>`;
-  return `<form id="project-type-form" class="goal-form kind-settings"><h3>Project type</h3><label class="field">Type<select name="type"><option value="">${auto}</option>${options}</select></label><label class="field">Describe it<textarea name="type_description" rows="2" maxlength="500" placeholder="e.g. a Discord bot that posts server stats, or a 2D platformer in Godot">${esc(kind.description || '')}</textarea></label><span class="field-hint">Used when SID cannot tell what the project is, and to pick goal ideas.</span>${buildFields}<div class="form-row"><button type="submit">Save</button>${id === 'sid' ? '' : `<button type="button" data-kind-recheck="${esc(id)}">Recheck now</button>`}<span id="project-type-status" class="form-status" role="status"></span></div></form>`;
+  return `<form id="project-type-form" class="goal-form kind-settings"><h3>Project type</h3><label class="field">Type<select name="type"><option value="">${auto}</option>${options}</select></label><label class="field">Describe it<textarea name="type_description" rows="2" maxlength="500" placeholder="e.g. a Discord bot that posts server stats, or a 2D platformer in Godot">${opt(kind.description)}</textarea></label><span class="field-hint">Used when SID cannot tell what the project is, and to pick goal ideas.</span>${buildFields}<div class="form-row"><button type="submit">Save</button>${id === 'sid' ? '' : `<button type="button" data-kind-recheck="${esc(id)}">Recheck now</button>`}<span id="project-type-status" class="form-status" role="status"></span></div></form>`;
 }
 
 export function kindRequest(values) {
@@ -108,7 +110,7 @@ export function buildsMarkup(id, data, now = Date.now() / 1000) {
       const download = build.status === 'succeeded' ? `<a class="button" href="${escValue(base)}/download" download>Download (${esc(sizeText(build.size))})</a>` : '';
       const log = build.status !== 'queued' ? `<a class="button" href="${escValue(base)}/log" target="_blank" rel="noopener">Log</a>` : '';
       const error = build.error ? `<div class="form-status">${esc(build.error)}</div>` : '';
-      return `<div class="item build-item"><div class="item-head"><span class="item-title">${pill(build.status)} ${esc(BUILD_STATES[build.status] || '')}</span><span class="subtle">${esc(agoText(build.requested_at || build.started_at, now))}${build.commit ? ` · main ${esc(build.commit.slice(0, 8))}` : ''}${esc(took)}</span></div><div class="form-row">${download}${log}</div>${error}</div>`;
+      return `<div class="item build-item"><div class="item-head"><span class="item-title">${pill(build.status)} ${opt(BUILD_STATES[build.status])}</span><span class="subtle">${opt(agoText(build.requested_at || build.started_at, now))}${build.commit ? ` · main ${esc(build.commit.slice(0, 8))}` : ''}${opt(took)}</span></div><div class="form-row">${download}${log}</div>${error}</div>`;
     })
     .join('');
   return `<div class="builds"><div class="item-head"><h3>Builds</h3>${button}</div>${what}<span id="build-status" class="form-status" role="status"></span><div class="stack">${rows || '<div class="empty">No builds yet</div>'}</div><p class="subtle">The newest 5 builds are kept.</p></div>`;
