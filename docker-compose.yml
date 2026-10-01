@@ -93,6 +93,9 @@ services:
     env_file:
       - path: /etc/sid-ai/operator.env
         required: false
+    volumes:
+      # Friendly app addresses, written by services/apps/sid_apps.py.
+      - /opt/sid-nginx:/etc/nginx/sid-apps:ro
     depends_on:
       api:
         condition: service_healthy

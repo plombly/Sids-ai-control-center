@@ -60,9 +60,12 @@ def apps(tmp_path, monkeypatch):
             return subprocess.CompletedProcess(args, 0, "", "")
         if name == "journalctl":
             return subprocess.CompletedProcess(args, 0, "boom\n", "")
+        if name == "docker":
+            return subprocess.CompletedProcess(args, 0, "", "")
         return subprocess.run(args, text=True, capture_output=True, **kwargs)
 
     monkeypatch.setattr(module, "run", fake_run)
+    monkeypatch.setattr(module, "NGINX_DIR", tmp_path / "nginx")
     # Setup runs for real, but without bubblewrap (the sandbox has its own tests).
     monkeypatch.setattr(module.project_sandbox, "command", lambda argv, *a, **k: list(argv))
     return module, repo, root, calls, units
@@ -187,3 +190,26 @@ def test_apps_load_secrets_from_their_env_file(apps):
     [run] = started(calls)
     assert f"--property=EnvironmentFile=-{module.ENV_DIR}/shop.env" in run
     assert not any("API_KEY" in arg for arg in run)  # values never on the command line
+
+
+def test_friendly_addresses_follow_running_apps(apps):
+    module, repo, root, calls, units = apps
+    module.loop_once()
+    conf = (module.NGINX_DIR / "apps.conf").read_text()
+    assert "server_name shop.sid.lan;" in conf and "proxy_pass http://127.0.0.1:8100;" in conf
+    reloads = [c for c in calls if c[:2] == ["docker", "exec"] and c[-2:] == ["-s", "reload"]]
+    assert len(reloads) == 1
+    module.loop_once()
+    assert len([c for c in calls if c[-2:] == ["-s", "reload"]]) == 1  # unchanged: no reload
+    module.redis.records["sid:projects:shop"]["run_command"] = ""
+    module.loop_once()
+    assert "shop.sid.lan" not in (module.NGINX_DIR / "apps.conf").read_text()
+
+
+def test_a_config_nginx_rejects_is_rolled_back(apps, monkeypatch):
+    module, repo, root, calls, units = apps
+    real = module.run
+    monkeypatch.setattr(module, "run", lambda args, **kw: subprocess.CompletedProcess(args, 1, "", "bad")
+                        if args[-1] == "-t" else real(args, **kw))
+    module.publish_routes({"shop": "8100"})
+    assert not (module.NGINX_DIR / "apps.conf").exists()

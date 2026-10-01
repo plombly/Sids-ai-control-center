@@ -41,6 +41,12 @@ STATUS_PREFIX = "sid:app-status:"
 # Project secrets written by the API (apps/api/env_routes.py), loaded by the
 # app's unit with EnvironmentFile= (never on a command line).
 ENV_DIR = Path(os.getenv("SID_PROJECT_ENV_DIR", "/etc/sid-ai/project-env"))
+# Friendly addresses: <project>.<APP_DOMAIN> -> the app's port, served by the
+# dashboard's nginx (host network) from NGINX_DIR/apps.conf.
+APP_DOMAIN = os.getenv("SID_APP_DOMAIN", "sid.lan")
+NGINX_DIR = Path(os.getenv("SID_NGINX_DIR", "/opt/sid-nginx"))
+WEB_CONTAINER = os.getenv("SID_WEB_CONTAINER", "sid-ai-web")
+DOCKER = os.getenv("DOCKER", "docker")
 SYSTEMCTL = os.getenv("SYSTEMCTL", "systemctl")
 SYSTEMD_RUN = os.getenv("SYSTEMD_RUN", "systemd-run")
 JOURNALCTL = os.getenv("JOURNALCTL", "journalctl")
@@ -234,6 +240,58 @@ def reconcile(project):
         deploy(project, head, port)
 
 
+def nginx_config(routes, domain=APP_DOMAIN):
+    """Server blocks for {project_id: port}, sorted, deterministic."""
+    blocks = []
+    for project_id, port in sorted(routes.items()):
+        blocks.append(f"""server {{
+    listen 80;
+    listen 8080;
+    server_name {project_id}.{domain};
+    client_max_body_size 100m;
+    location / {{
+        proxy_pass http://127.0.0.1:{int(port)};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }}
+}}
+""")
+    return "# Written by services/apps/sid_apps.py: friendly app addresses.\n" + "".join(blocks)
+
+
+def publish_routes(routes):
+    """Write the nginx config when it changed and reload nginx; a config
+    nginx rejects is rolled back (the dashboard keeps working)."""
+    target = NGINX_DIR / "apps.conf"
+    text = nginx_config(routes)
+    try:
+        current = target.read_text()
+    except OSError:
+        current = None
+    if current == text:
+        return False
+    NGINX_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, target)
+    check = run([DOCKER, "exec", WEB_CONTAINER, "nginx", "-t"])
+    if check.returncode != 0:
+        if current is None:
+            target.unlink()
+        else:
+            target.write_text(current)
+        print(f"[sid-apps] nginx rejected the app addresses, kept the old ones: {check.stderr.strip()[-300:]}", flush=True)
+        return False
+    run([DOCKER, "exec", WEB_CONTAINER, "nginx", "-s", "reload"])
+    return True
+
+
 def cleanup_removed(known_ids):
     """Stop apps whose project no longer exists (deleted)."""
     for key in redis.scan_iter(STATUS_PREFIX + "*"):
@@ -251,6 +309,15 @@ def loop_once():
             reconcile(project)
         except Exception as exc:
             set_status(project.id, state="error", error=str(exc)[:500])
+    routes = {}
+    for project in projects:
+        status = redis.hgetall(STATUS_PREFIX + project.id) or {}
+        if project.run_command and status.get("port", "").isdigit():
+            routes[project.id] = status["port"]
+    try:
+        publish_routes(routes)
+    except Exception as exc:
+        print(f"[sid-apps] could not publish app addresses: {exc}", flush=True)
     # Registered but not active (archived, deleting): stop their apps too.
     for project_id in known - {p.id for p in projects} - {sid_projects.SID_PROJECT}:
         if unit_state(project_id) != "inactive":
