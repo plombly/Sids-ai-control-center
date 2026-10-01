@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import time
 from typing import Literal, Optional
@@ -9,7 +8,6 @@ from pydantic import BaseModel, Field
 
 
 router = APIRouter()
-APP_DOMAIN = os.environ.get("SID_APP_DOMAIN", "sid.lan")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _IMPORTANCE = {"high": 0, "medium": 1, "low": 2}
 _GOAL_KEY = re.compile(r"^sid:goals:([a-z0-9][a-z0-9-]{0,39})$")
@@ -191,8 +189,6 @@ def _item(project_id, data=None):
         "run_cpus": _numeric(data.get("run_cpus")) or 1,
         "run_tasks": _numeric(data.get("run_tasks")) or 512,
         "app": _app_status(project_id),
-        # Friendly address (needs DNS for *.<domain>; services/apps writes the route).
-        "app_host": f"{project_id}.{APP_DOMAIN}" if project_id != "sid" and data.get("run_command") else None,
         # SID itself: the control plane, configured on the host.
         "system": _system_info() if project_id == "sid" else None,
         "push_remote": _text(data.get("push_remote")),

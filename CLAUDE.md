@@ -254,10 +254,6 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   /job-logs (/var/log/sid-ai/jobs, ro) and /projects; lib/job-log.js.
 - Usage: GET /api/usage?days=&project= (apps/api/usage_routes.py), panel
   lib/usage.js.
-- Friendly addresses: services/apps writes /opt/sid-nginx/apps.conf
-  (<project>.<SID_APP_DOMAIN, default sid.lan> -> app port), nginx -t then
-  reload, rolled back if rejected; dashboard also on :80. Needs DNS
-  *.sid.lan -> this server.
 - Previews: POST/DELETE /api/jobs/<id>/preview (ready changes of projects
   with a run command); services/apps runs the integrated candidate from
   <root>/previews/job-<id> as sid-preview-<id> (ports 8200-8299, empty data

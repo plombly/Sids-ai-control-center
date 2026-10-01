@@ -156,8 +156,3 @@ test('environment: names and lengths only, never values; not for SID', async () 
   assert.match(envMarkup('shop', null), /No variables yet/);
 });
 
-test('app status offers the friendly address and the port', () => {
-  const html = appStatusMarkup({ id: 'shop', run_command: 'npm start', app_host: 'shop.sid.lan', app: { state: 'running', port: 8100 } }, '10.0.0.59');
-  assert.match(html, /href="http:\/\/shop.sid.lan\/"/);
-  assert.match(html, /href="http:\/\/10.0.0.59:8100\/"/);
-});

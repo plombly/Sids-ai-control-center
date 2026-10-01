@@ -46,7 +46,6 @@ def main():
     nginx = (ROOT / "apps/web/nginx.conf").read_text(encoding="utf-8")
     require("location /api/" in nginx, "nginx must define the API route")
     require("listen 8080 default_server;" in nginx, "nginx must listen on host port 8080")
-    require("include /etc/nginx/sid-apps/*.conf;" in nginx, "nginx must load the friendly app addresses")
     require("proxy_pass http://127.0.0.1:8000;" in nginx, "API traffic must go to the api's host port")
     require("location = /health" in nginx, "nginx must provide a health endpoint")
     require(

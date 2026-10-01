@@ -80,11 +80,7 @@ export function appStatusMarkup(project, hostname = globalThis.location?.hostnam
   const port = app.port || project.run_port;
   const state = text(app.state, 'starting');
   const url = port ? `http://${hostname}:${port}/` : '';
-  const friendly = project.app_host ? `http://${project.app_host}/` : '';
-  const link =
-    state === 'running' && url
-      ? `${friendly ? `<a class="button" href="${escValue(friendly)}" target="_blank" rel="noopener">Open ${esc(friendly)}</a>` : ''}<a class="button" href="${escValue(url)}" target="_blank" rel="noopener">Open ${esc(url)}</a>`
-      : '';
+  const link = state === 'running' && url ? `<a class="button" href="${escValue(url)}" target="_blank" rel="noopener">Open ${esc(url)}</a>` : '';
   const commit = app.commit ? `<span class="subtle">main ${esc(String(app.commit).slice(0, 8))}</span>` : '';
   const error = app.error ? `<div class="form-status">${esc(app.error)}</div>` : '';
   const log = app.log ? `<pre class="app-log">${esc(app.log)}</pre>` : '';
