@@ -5,6 +5,7 @@
 import { requestJSON } from './api.js';
 import { esc, escValue, pill, text } from './format.js';
 import { registerClick } from './registry.js';
+import { useTemplate } from './goal-assistant.js';
 
 let catalogCache = null;
 export async function loadCatalog(fetchJSON = requestJSON) {
@@ -116,14 +117,6 @@ export function buildsMarkup(id, data, now = Date.now() / 1000) {
   return `<div class="builds"><div class="item-head"><h3>Builds</h3>${button}</div>${what}<span id="build-status" class="form-status" role="status"></span><div class="stack">${rows || '<div class="empty">No builds yet</div>'}</div><p class="subtle">The newest 5 builds are kept.</p></div>`;
 }
 
-// Put a template in the goal box and select its first blank.
-export function applyTemplate(textarea, template) {
-  textarea.value = template;
-  textarea.focus();
-  const blank = template.indexOf('___');
-  if (blank >= 0) textarea.setSelectionRange(blank, blank + 3);
-}
-
 if (typeof document !== 'undefined') {
   const refresh = () => window.dispatchEvent(new CustomEvent('sid:project-refresh'));
   const say = message => {
@@ -133,8 +126,8 @@ if (typeof document !== 'undefined') {
     }
   };
   registerClick('goalTemplate', button => {
-    const box = document.getElementById('project-goal-text');
-    if (box) applyTemplate(box, button.dataset.goalTemplate);
+    const id = decodeURIComponent(location.hash.split('/')[2] || '');
+    if (id) useTemplate(`project:${id}`, button.dataset.goalTemplate);
   });
   registerClick('buildStart', async button => {
     button.disabled = true;

@@ -3,9 +3,10 @@
 // Built from the data app.js already polls (renderPanels(state)) plus the
 // project list and system health. The detailed panels stay available under
 // "Details" (index.html).
-import { requestJSON, newRequestId } from './api.js';
+import { requestJSON } from './api.js';
 import { esc, escValue, text } from './format.js';
 import { registerPanel } from './registry.js';
+import { assistantMarkup } from './goal-assistant.js';
 import { previewMarkup } from './markup.js';
 
 const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
@@ -116,16 +117,26 @@ export function recentMarkup(goals = [], names = {}, now = Date.now() / 1000) {
 
 // --- new work ----------------------------------------------------------------------------
 
-export function composerMarkup(projects = []) {
+export function projectSelectMarkup(projects = [], chosen = '') {
   const options = (projects.length ? projects : [{ id: 'sid', name: 'SID AI Command Center' }])
-    .map(project => `<option value="${escValue(project.id)}">${esc(project.name || project.id)}</option>`)
+    .map(project => `<option value="${escValue(project.id)}"${project.id === chosen ? ' selected' : ''}>${esc(project.name || project.id)}</option>`)
     .join('');
-  return `<form id="home-goal-form" class="home-composer" autocomplete="off"><label class="composer-label" for="home-goal-text">What should SID work on?</label><textarea id="home-goal-text" name="goal" rows="2" placeholder="e.g. Add a contact page with a form that emails me" required></textarea><div class="composer-row"><label class="composer-project">Project <select name="project" id="home-goal-project">${options}</select></label><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="home-goal-status" class="form-status" role="status"></span></form>`;
+  return `<label class="composer-project">Project <select id="home-goal-project">${options}</select></label>`;
+}
+
+// The goal box is the goal assistant (lib/goal-assistant.js) with a project picker.
+export function composerMarkup(projects = []) {
+  return assistantMarkup('home', {
+    label: 'What should SID work on?',
+    placeholder: 'e.g. Add a contact page with a form that emails me',
+    extra: () => projectSelectMarkup(projects.length ? projects : currentProjects(), typeof document === 'undefined' ? '' : document.getElementById('home-goal-project')?.value || '')
+  });
 }
 
 // --- wiring ------------------------------------------------------------------------------
 
 let projects = [];
+const currentProjects = () => projects;
 let health = null;
 const drawn = {};
 
@@ -172,34 +183,6 @@ async function refreshSide() {
   draw(lastState);
 }
 
-function wireComposer() {
-  const form = document.getElementById('home-goal-form');
-  if (!form || form.dataset.wired) return;
-  form.dataset.wired = '1';
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    const status = document.getElementById('home-goal-status');
-    const values = Object.fromEntries(new FormData(form).entries());
-    const goal = text(values.goal, '').trim();
-    if (!goal) return;
-    const button = form.querySelector('button[type="submit"]');
-    button.disabled = true;
-    status.textContent = 'Sending…';
-    try {
-      const response = await requestJSON(`/api/projects/${encodeURIComponent(values.project || 'sid')}/goals`, {
-        method: 'POST',
-        body: JSON.stringify({ goal, atomic: values.atomic === 'on', request_id: newRequestId() })
-      });
-      form.querySelector('textarea').value = '';
-      status.textContent = response.duplicate ? 'SID is already working on that.' : 'Got it. It shows up under "In progress" in a moment.';
-    } catch (error) {
-      status.textContent = error.message;
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
 if (typeof document !== 'undefined') {
   registerPanel(state => {
     lastState = state;
@@ -208,7 +191,6 @@ if (typeof document !== 'undefined') {
   const start = () => {
     const composer = document.getElementById('home-composer');
     if (composer && !composer.firstChild) composer.innerHTML = composerMarkup(projects);
-    wireComposer();
     refreshSide();
     setInterval(refreshSide, 10000);
   };

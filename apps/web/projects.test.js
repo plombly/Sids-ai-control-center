@@ -42,7 +42,7 @@ test('project page: tabs, overview, settings, retry state, escaping', () => {
   const overview = projectDetailMarkup(project);
   assert.match(overview, /<option value="high" selected>/);
   assert.match(overview, /data-retry-clone="web-shop"/);
-  assert.match(overview, /id="project-goal-form"/);
+  assert.match(overview, /data-assist-start="project:/);
   assert.match(overview, /data-detail="job-1"/);
   assert.match(overview, /width:50%/);
   assert.match(overview, /&lt;Project&gt;/);
@@ -52,7 +52,7 @@ test('project page: tabs, overview, settings, retry state, escaping', () => {
   const settings = projectDetailMarkup(project, 'settings');
   assert.match(settings, /id="project-push-form"/);
   assert.match(settings, /project-settings-form/);
-  assert.doesNotMatch(settings, /project-goal-form/);
+  assert.doesNotMatch(settings, /data-assist-start/);
   assert.match(projectDetailMarkup(project, 'files'), /href="#\/projects\/web-shop\/files" class="active"/);
   assert.doesNotMatch(projectDetailMarkup({ id: 'x', status: 'active' }), /data-retry-clone/);
 });
@@ -149,7 +149,7 @@ test('SID: labelled as this system, no GitHub push form, shows its host setup', 
   assert.match(page, /git@github.com:me\/sid.git/);
   assert.match(page, /main @ abc1234/);
   assert.match(page, /&lt;b&gt;/);
-  assert.match(page, /project-goal-form/);
+  assert.match(page, /data-assist-start/);
   assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }, 'settings'), /project-push-form/);
   assert.match(systemInfoMarkup(null), /not reported yet/);
 });

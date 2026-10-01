@@ -322,6 +322,24 @@ Project types and builds (2026-10-01):
 - Web: lib/project-kinds.js (type card + template chips on Overview, Builds
   tab, type/build fields in Settings).
 
+Goal assistant (2026-10-01): the goal boxes (home + project Overview,
+web lib/goal-assistant.js) offer "Plan it with me" and "Send as written".
+- POST /api/projects/<id>/assistant {idea} creates sid:assist:<16 hex>
+  (hash, 24 h; turns/questions/brief JSON; apps/api/goal_assist.py, shared
+  with the host) and RPUSHes the id on sid:assist-queue; GET
+  /api/assistant/<sid>, POST .../reply {answers|feedback}, .../cancel,
+  .../submit {goal, atomic, request_id} (an ordinary project goal; the
+  session records goal_id). At most 6 sessions queued/thinking.
+- The apps service BLPOPs the queue between loops and starts
+  scripts/sid-assist.py <sid> as unit sid-assist-<sid>-<ts>: Claude
+  ASSIST_MODEL (Haiku 4.5), --tools Read,Grep,Glob, its own system prompt,
+  $0.30 cap, 150 s, inside the project's sandbox (kind agent, read-only),
+  own concurrency slots sid:assist-slots (ASSIST_MAX_CONCURRENT 2, not the
+  pipeline's Claude slots); honours the Claude cooldown. One round of up to
+  3 questions, then a brief (title/summary/goal markdown/atomic); a reply
+  that asks again is retried once with "write the brief now". It never
+  submits or changes anything; logs in /var/log/sid-ai/assist/.
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

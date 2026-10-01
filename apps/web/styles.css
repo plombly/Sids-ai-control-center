@@ -1897,3 +1897,96 @@ pre {
 .build-item .form-row {
   margin-top: 6px;
 }
+
+/* Goal assistant (lib/goal-assistant.js) */
+.goal-assistant textarea,
+.goal-assistant input:not([type='checkbox']) {
+  width: 100%;
+}
+.composer-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.composer-buttons .primary {
+  margin-left: 0;
+}
+.assist-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 600;
+}
+.assist-step .subtle {
+  font-weight: 400;
+}
+.assist-idea {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.assist-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.assist-question label {
+  font-weight: 600;
+}
+.template-chip.chosen {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}
+.assist-brief-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.goal-assistant textarea.assist-brief {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.assist-revise {
+  display: flex;
+  gap: 8px;
+}
+.assist-revise button {
+  flex: none;
+}
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+@media (max-width: 600px) {
+  .composer-buttons,
+  .composer-buttons button {
+    width: 100%;
+  }
+  .assist-revise {
+    flex-direction: column;
+  }
+}

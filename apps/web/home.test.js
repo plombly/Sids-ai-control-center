@@ -70,6 +70,6 @@ test('projects and recent work', () => {
 
 test('composer lists projects', () => {
   const html = composerMarkup([{ id: 'sid', name: 'SID' }, { id: 'shop', name: '<Shop>' }]);
-  assert.match(html, /id="home-goal-form"/);
+  assert.match(html, /id="assist-home"/);
   assert.match(html, /<option value="shop">&lt;Shop&gt;<\/option>/);
 });

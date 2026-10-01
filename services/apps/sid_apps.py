@@ -30,6 +30,8 @@ from pathlib import Path
 from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[2] / "apps/api"))  # goal_assist (shared)
+import goal_assist  # noqa: E402
 import project_detect  # noqa: E402
 import project_history  # noqa: E402
 import project_sandbox  # noqa: E402
@@ -452,6 +454,39 @@ def launch_builds(projects):
                        "error": f"could not start the build: {(result.stderr or result.stdout).strip()[:300]}"})
 
 
+ASSIST_SCRIPT = Path(__file__).resolve().parents[2] / "scripts/sid-assist.py"
+
+
+def launch_assist(session_id):
+    """Run one goal-assistant turn as its own unit (it may take a minute)."""
+    if not goal_assist.SESSION_ID.fullmatch(session_id or ""):
+        return
+    if redis.hget(goal_assist.session_key(session_id), "status") != "queued":
+        return
+    result = run([SYSTEMD_RUN, f"--unit=sid-assist-{session_id}-{int(time.time())}", "--quiet", "--collect",
+                  "--property=RuntimeMaxSec=600", "--description=SID goal assistant",
+                  "/opt/sid-venv/bin/python", str(ASSIST_SCRIPT), session_id])
+    if result.returncode:
+        goal_assist.save(redis, session_id, status="failed",
+                         error=f"could not start the assistant: {(result.stderr or result.stdout).strip()[:300]}")
+
+
+def wait_for_assist_requests(seconds):
+    """Sleep between loops, but start goal-assistant turns the moment the
+    dashboard asks (the operator is waiting for them)."""
+    deadline = time.time() + seconds
+    while not stopping:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        item = redis.blpop(goal_assist.QUEUE_KEY, timeout=max(1, int(remaining)))
+        if item:
+            try:
+                launch_assist(item[1])
+            except Exception as exc:
+                print(f"[sid-apps] assistant {item[1]}: {exc}", flush=True)
+
+
 def loop_once():
     publish_histories(sid_projects.all_projects(redis))  # SID too (read-only history)
     publish_types(sid_projects.all_projects(redis))
@@ -489,7 +524,11 @@ def main():
             redis.set("sid:apps-service", json.dumps({"updated_at": time.time()}), ex=60)
         except Exception as exc:
             print(f"[sid-apps] loop error: {exc}", flush=True)
-        time.sleep(LOOP_SECONDS)
+        try:
+            wait_for_assist_requests(LOOP_SECONDS)
+        except Exception as exc:
+            print(f"[sid-apps] waiting: {exc}", flush=True)
+            time.sleep(LOOP_SECONDS)
 
 
 if __name__ == "__main__":

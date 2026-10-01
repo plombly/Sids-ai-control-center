@@ -3,6 +3,7 @@ import { esc, escValue, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
 import { projectsMarkup as homeProjectsMarkup } from './home.js';
 import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
+import { assistantMarkup } from './goal-assistant.js';
 
 const requestId = newRequestId;
 
@@ -84,7 +85,7 @@ function overviewMarkup(project) {
   const jobRows = jobs
     .map(job => `<tr><td><button type="button" class="detail-button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${esc(firstLine(job.title) || '')}</td><td>${pill(job.status)}</td><td class="subtle">${esc(job.provider)}/${esc(job.model)}</td></tr>`)
     .join('');
-  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}<form id="project-goal-form" class="goal-form project-composer"><label class="composer-label" for="project-goal-text">What should SID do in ${esc(name)}?</label><textarea id="project-goal-text" name="goal" placeholder="Describe the change you want" required></textarea><div class="composer-row"><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="project-goal-status" class="form-status" role="status"></span></form>${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should SID do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
@@ -492,12 +493,6 @@ if (typeof document !== 'undefined') {
         const response = await requestJSON('/api/projects', { method: 'POST', body: JSON.stringify(body) });
         const result = await poll(response.request_id || body.request_id);
         status('new-project-status', resultMessage(result), result.output);
-      } else if (form.id === 'project-goal-form') {
-        const response = await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}/goals`, {
-          method: 'POST',
-          body: JSON.stringify({ goal: values.goal?.trim(), atomic: values.atomic === 'on', request_id: requestId() })
-        });
-        status('project-goal-status', `Submitted goal ${response.id}`);
       } else if (form.id === 'project-env-form') {
         const name = text(values.name, '').trim();
         if (!name) return status('project-env-status', 'Enter a name');

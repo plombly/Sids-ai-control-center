@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agoText, applyTemplate, buildsMarkup, kindCardMarkup, kindRequest, kindSettingsMarkup, sizeText } from './lib/project-kinds.js';
+import { agoText, buildsMarkup, kindCardMarkup, kindRequest, kindSettingsMarkup, sizeText } from './lib/project-kinds.js';
 import { projectDetailMarkup, tabsMarkup } from './lib/projects.js';
 
 const catalog = {
@@ -73,10 +73,7 @@ test('builds list: download, log, errors and the running state', () => {
   assert.match(refused, /No builds yet/);
 });
 
-test('templates select their first blank; helpers format sizes and ages', () => {
-  const box = { value: '', focus() {}, setSelectionRange(a, b) { this.range = [a, b]; } };
-  applyTemplate(box, 'Add ___ to ___');
-  assert.deepEqual(box.range, [4, 7]);
+test('helpers format sizes and ages', () => {
   assert.equal(sizeText(1500), '2 KB');
   assert.equal(agoText(100, 160), 'just now');
   assert.equal(agoText(0, 160), '');
@@ -86,5 +83,5 @@ test('projects get a Builds tab (not SID) and the overview shows the type card',
   assert.match(tabsMarkup('g', 'builds'), /href="#\/projects\/g\/builds" class="active"/);
   assert.doesNotMatch(tabsMarkup('sid', 'overview'), /builds/);
   const html = projectDetailMarkup({ id: 'g', name: 'G', catalog, project_type: { type: 'game', stack: 'love2d' } }, 'overview');
-  assert.match(html, /kind-card[\s\S]*project-goal-form/);
+  assert.match(html, /kind-card[\s\S]*data-assist-start="project:g"/);
 });

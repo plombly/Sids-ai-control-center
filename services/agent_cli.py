@@ -105,7 +105,7 @@ def claude_budget(role):
     return float(os.getenv(f"CLAUDE_{role.upper()}_BUDGET_USD") or DEFAULT_CLAUDE_BUDGET_USD[role])
 
 
-def claude_command(role, model, budget_usd, allowed_bash=(), tools=None):
+def claude_command(role, model, budget_usd, allowed_bash=(), tools=None, system_prompt=AGENT_CONTRACT):
     command = [
         "claude", "-p",
         # Streamed events (one JSON line each) so the dashboard can show the
@@ -115,7 +115,7 @@ def claude_command(role, model, budget_usd, allowed_bash=(), tools=None):
         "--strict-mcp-config",  # never load the operator's MCP connectors
         "--model", model,
         "--max-budget-usd", f"{budget_usd:.2f}",
-        "--append-system-prompt", AGENT_CONTRACT,
+        "--append-system-prompt", system_prompt,
     ]
     if tools is not None:
         command += ["--tools", tools]  # explicit ("" = no tools: answer from the prompt)
@@ -180,7 +180,7 @@ class ClaudeRun:
 
 
 def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None,
-               allowed_bash=(), tick=None, tools=None, wrap=None):
+               allowed_bash=(), tick=None, tools=None, wrap=None, system_prompt=AGENT_CONTRACT):
     """Run `claude -p` for one role. The JSON result is written to log_path.
     wrap(argv) -> argv runs it inside a sandbox (project_sandbox)."""
     command = claude_command(
@@ -188,6 +188,7 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
         claude_budget(role) if budget_usd is None else budget_usd,
         allowed_bash,
         tools,
+        system_prompt,
     )
     if wrap is not None:
         command = wrap(command)
