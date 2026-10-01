@@ -70,6 +70,7 @@ test('history: one change per job, undo buttons only where allowed', () => {
   assert.match(html, /2 commits · 2 h ago/);
   assert.doesNotMatch(historyMarkup({ ...history, can_undo: false }), /data-undo/);
   assert.match(historyMarkup({ changes: [] }), /No history yet/);
+  assert.doesNotMatch(historyMarkup({ can_undo: true, changes: [{ kind: 'commit', sha: 'f00', title: 'Initialize', root: true, commits: [{}] }] }), /data-undo/);
 });
 
 test('public key markup handles valid and invalid output', () => {

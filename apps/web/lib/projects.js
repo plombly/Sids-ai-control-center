@@ -102,7 +102,9 @@ export function historyMarkup(history, now = Date.now() / 1000) {
           ? change.complete === false
             ? ''
             : `<button type="button" class="undo-button" data-undo-job="${escValue(change.job_id)}" data-undo-title="${escValue(change.title)}">Undo</button>`
-          : `<button type="button" class="undo-button" data-undo-commit="${escValue(change.sha)}" data-undo-title="${escValue(change.title)}">Undo</button>`
+          : change.root
+            ? '' // the project's first commit: nothing to undo it to
+            : `<button type="button" class="undo-button" data-undo-commit="${escValue(change.sha)}" data-undo-title="${escValue(change.title)}">Undo</button>`
         : '';
       const detail =
         change.kind === 'job'

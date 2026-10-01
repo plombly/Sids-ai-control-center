@@ -27,13 +27,14 @@ def head(repo, branch="main"):
 
 def build(repo, jobs, branch="main", limit=40):
     """[change], newest first. jobs: merged job records of this project."""
-    raw = _git(repo, "log", f"-n{limit}", f"--format=%H{FIELD}%an{FIELD}%at{FIELD}%s", f"refs/heads/{branch}")
+    raw = _git(repo, "log", f"-n{limit}", f"--format=%H{FIELD}%an{FIELD}%at{FIELD}%P{FIELD}%s", f"refs/heads/{branch}")
     commits = []
     for line in raw.splitlines():
         parts = line.split(FIELD)
-        if len(parts) == 4:
-            sha, author, when, subject = parts
-            commits.append({"sha": sha, "author": author, "time": int(when or 0), "subject": subject})
+        if len(parts) == 5:
+            sha, author, when, parents, subject = parts
+            commits.append({"sha": sha, "author": author, "time": int(when or 0), "subject": subject,
+                            "root": not parents.strip()})
     owner = {}
     for job in jobs:
         base, merged = job.get("integration_base_commit"), job.get("merge_commit")
@@ -58,7 +59,7 @@ def build(repo, jobs, branch="main", limit=40):
                             "base": job.get("integration_base_commit"), "commits": [commit]})
         else:
             changes.append({"kind": "commit", "sha": commit["sha"], "title": commit["subject"], "time": commit["time"],
-                            "author": commit["author"], "commits": [commit]})
+                            "author": commit["author"], "commits": [commit], "root": commit["root"]})
     for change in changes:
         # Complete only if every commit of the job is in view (older ones may be cut off).
         if change["kind"] == "job":

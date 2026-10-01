@@ -35,6 +35,7 @@ def test_commits_of_one_job_form_one_change(tmp_path):
     changes = project_history.build(repo, jobs)
     assert [c["kind"] for c in changes] == ["commit", "job", "commit"]
     assert changes[0]["title"] == "Upload d from the dashboard"
+    assert changes[2]["root"] is True and changes[0]["root"] is False
     assert changes[1]["title"] == "Add b and c" and len(changes[1]["commits"]) == 2 and changes[1]["base"] == base
     r = MemoryRedis()
     project = sid_projects.Project({"id": "shop", "repo": str(repo), "worktrees": str(tmp_path), "logs": str(tmp_path)})
