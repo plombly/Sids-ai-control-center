@@ -188,8 +188,10 @@ def _job_title(data):
     """A readable one-line title: the planner's title, else the prompt's first line."""
     title = _text(data.get("title"))
     if not title:
-        lines = [line.strip() for line in _text(data.get("prompt"), "").splitlines() if line.strip()]
-        title = lines[0] if lines else ""
+        # Only the start: prompts can be thousands of lines (this runs for
+        # every job on every request).
+        head = str(data.get("prompt") or "")[:600]
+        title = next((line.strip() for line in head.splitlines() if line.strip()), "")
     return title if len(title) <= 140 else title[:137] + "…"
 
 
@@ -251,9 +253,22 @@ def _json_object(value):
     return parsed if isinstance(parsed, dict) else None
 
 
+_derived = {}
+
+
+def _from_snapshot(name, rows, build):
+    """build(rows), reused while the same snapshot is served (see _hashes);
+    callers get copies, so adding fields to one response never leaks."""
+    cached = _derived.get(name)
+    if cached is None or cached[0] is not rows:
+        cached = (rows, build(rows))
+        _derived[name] = cached
+    return [dict(item) for item in cached[1]]
+
+
 def _all_jobs():
-    result = [_job(key, data) for key, data in _hashes("sid:jobs:*")]
-    return sorted(result, key=lambda item: (-item["sort_time"], item["id"]))
+    return _from_snapshot("jobs", _hashes("sid:jobs:*"), lambda rows: sorted(
+        (_job(key, data) for key, data in rows), key=lambda item: (-item["sort_time"], item["id"])))
 
 
 def _goal(key, data):
@@ -286,8 +301,8 @@ def _goal(key, data):
 
 
 def _all_goals():
-    result = [_goal(key, data) for key, data in _hashes("sid:goals:*")]
-    return sorted(result, key=lambda item: (-item["sort_time"], item["id"]))
+    return _from_snapshot("goals", _hashes("sid:goals:*"), lambda rows: sorted(
+        (_goal(key, data) for key, data in rows), key=lambda item: (-item["sort_time"], item["id"])))
 
 
 def _worker(key, data, jobs):

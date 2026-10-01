@@ -1808,3 +1808,14 @@ pre {
     margin-left: 38px;
   }
 }
+.settings-row {
+  grid-template-columns: 200px 190px minmax(0, 1fr) auto;
+}
+.settings-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-row select {
+  width: auto;
+}
