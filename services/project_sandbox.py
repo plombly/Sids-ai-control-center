@@ -109,3 +109,25 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=()):
         args += ["--bind", str(cache), str(cache), "--setenv", "HOME", str(cache)]
     args += ["--setenv", "TMPDIR", "/tmp", "--unsetenv", "REDIS_URL", "--chdir", str(workdir), "--"]
     return args + list(argv)
+
+
+def codex_command(argv, project, workdir, writable=True):
+    """A `codex exec` command for this project.
+
+    Codex starts its own bubblewrap sandbox for the commands it runs, which
+    cannot nest inside ours (Ubuntu blocks the namespaces it needs, and
+    allowing it would mean handing the outer sandbox real privileges). For
+    projects, Codex therefore runs inside this sandbox with its own turned
+    off (--dangerously-bypass-approvals-and-sandbox, meant for "externally
+    sandboxed" use): its commands get no capabilities (NoNewPrivs), see SID's
+    trees, secrets and other projects hidden, and can write only workdir
+    (writable=False: nothing). They do get network access (Codex itself needs
+    it), and can read Codex's own login in ~/.codex. SID itself runs Codex
+    with Codex's sandbox as before."""
+    argv = list(argv)
+    if project is None or project.is_sid or not enabled():
+        return argv
+    if "--sandbox" in argv:
+        index = argv.index("--sandbox")
+        argv[index:index + 2] = ["--dangerously-bypass-approvals-and-sandbox"]
+    return command(argv, project, workdir, kind="agent", writable=writable)

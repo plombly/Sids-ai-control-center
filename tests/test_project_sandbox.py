@@ -193,3 +193,32 @@ def test_commands_are_detected_when_not_configured(tmp_path):
     setup = sid_projects.detect_setup(tmp_path)
     assert setup.startswith("npm ci") and ".venv/bin/pip install -q pytest -r requirements.txt" in setup
     assert sid_projects.detect_setup(tmp_path / "missing") == ""
+
+
+def test_codex_runs_inside_the_project_sandbox_with_its_own_sandbox_off(tmp_path, hidden):
+    project, wt = make_project(tmp_path)
+    codex = ["codex", "exec", "--sandbox", "workspace-write", "--cd", str(wt), "-"]
+    argv = project_sandbox.codex_command(codex, project, wt)
+    assert argv[0] == project_sandbox.BWRAP and "--cap-drop" in argv
+    assert argv[argv.index("--") + 1:] == ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--cd", str(wt), "-"]
+    assert f"--bind {wt} {wt}" in " ".join(argv)
+    reviewer = project_sandbox.codex_command(codex, project, wt, writable=False)
+    assert f"--bind {wt} {wt}" not in " ".join(reviewer)
+    sid = sid_projects.Project(sid_projects.sid_defaults())
+    assert project_sandbox.codex_command(codex, sid, wt) == codex  # SID keeps Codex's own sandbox
+
+
+def test_worker_wraps_codex_for_projects(worker, monkeypatch):
+    module, project, wt = worker
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def fake_popen(command, **kwargs):
+        seen.append(command)
+        raise Stop
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    with pytest.raises(Stop):
+        module.run_codex({"id": "j1", "prompt": "x", "role": "builder"}, wt, wt.parent / "j1.jsonl")
+    assert seen[0][0] == project_sandbox.BWRAP and "--dangerously-bypass-approvals-and-sandbox" in seen[0]

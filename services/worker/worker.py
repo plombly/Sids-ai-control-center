@@ -586,6 +586,8 @@ def run_codex(job, worktree, log_path):
 
     env = os.environ.copy()
     env["HOME"] = os.environ.get("HOME") or "/root"
+    # Projects: inside the project sandbox (reviewers read-only).
+    command = project_sandbox.codex_command(command, PROJECT, worktree, writable=(role != "reviewer"))
 
     started = time.time()
 

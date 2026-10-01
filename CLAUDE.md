@@ -182,10 +182,12 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   the docker socket and the project's deploy key masked, a private /tmp,
   and only the job's worktree writable (its .git pointer and the repo's
   .git read-only). Gates also get no network (SID_SANDBOX_GATE_NETWORK=1
-  to allow). SID_PROJECT_SANDBOX=0 turns it off. Codex is NOT wrapped: it
-  needs its own bubblewrap, which cannot nest without handing the outer
-  sandbox capabilities; it keeps its own workspace-write sandbox (writes:
-  worktree + /tmp, no network for commands, reads unrestricted). Host git
+  to allow). SID_PROJECT_SANDBOX=0 turns it off. Codex for projects runs
+  inside this sandbox with its own sandbox off
+  (project_sandbox.codex_command: --dangerously-bypass-approvals-and-
+  sandbox): its bubblewrap cannot nest (Ubuntu's userns restriction; tested
+  with extra caps too). Its commands: no caps, NoNewPrivs, network yes,
+  ~/.codex readable. SID itself keeps Codex's own sandbox. Host git
   refuses to run in a project worktree whose .git pointer was replaced
   (check_worktree_pointer), so no project can plant hooks/config for SID.
 - Build settings per project (web "Build & run", PATCH /api/projects/<id>):

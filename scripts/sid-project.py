@@ -317,10 +317,11 @@ def delete(args):
         raise ProjectError("still running: " + ", ".join(busy) + ". Nothing was deleted; try again when it finishes")
 
     # Its running app (services/apps/sid_apps.py), if any.
-    try:
-        subprocess.run([SYSTEMCTL, "stop", f"sid-app-{args.id}"], capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    for verb in ("stop", "reset-failed"):  # a crashed app's unit stays "failed" until reset
+        try:
+            subprocess.run([SYSTEMCTL, verb, f"sid-app-{args.id}"], capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     trash_id = f"{args.id}-{stamp}"

@@ -247,6 +247,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         "-",
     ]
 
+    cmd = project_sandbox.codex_command(cmd, project, project.repo, writable=False)
     proc = subprocess.run(
         cmd,
         input=planner_prompt(goal, atomic=atomic, project=project),
