@@ -194,9 +194,11 @@ def deploy(project, head, port):
     ok, output = setup(project, live)
     if not ok:
         set_status(project.id, state="setup_failed", error="dependency setup failed", log=output)
+        sid_projects.record_event(redis, project.id, "app_problem", "App could not install its dependencies", ref=head[:12])
         return
     start_unit(project, live, port)
     set_status(project.id, state="running", deployed_at=time.time(), log="")
+    sid_projects.record_event(redis, project.id, "deployed", f"App deployed from main {head[:8]}", ref=head[:12])
 
 
 def reconcile(project):
@@ -231,6 +233,8 @@ def reconcile(project):
         result = run([SYSTEMCTL, "show", unit_name(project.id), "-p", "Result", "--value"]).stdout.strip()
         reason = (f"it used more than its {project.run_memory_mb} MB memory limit"
                   if result == "oom-kill" else "the app keeps exiting; see the log")
+        if status.get("state") != "crashed":
+            sid_projects.record_event(redis, project.id, "app_problem", f"App crashed: {reason}")
         set_status(project.id, state="crashed", error=reason, log=log_tail(project.id))
     elif state == "inactive" and status.get("state") in ("running", "crashed"):
         # Gone (host reboot, manual stop): start it again from the same commit.
@@ -316,6 +320,7 @@ def start_preview(job_id, project, candidate):
     start_unit(project, workdir, port, unit=preview_unit(job_id), data_dir=data,
                description=f"SID preview {project.id} job {job_id}")
     set_preview(job_id, state="running", port=port, started_at=time.time())
+    sid_projects.record_event(redis, project.id, "preview", f"Preview started for job {job_id}", ref=job_id)
 
 
 def reconcile_previews(projects_by_id, now=None):

@@ -14,6 +14,7 @@
       <nav class="view-nav" aria-label="Sections">
         <a href="#/" data-nav="dashboard">Dashboard</a>
         <a href="#/projects" data-nav="projects">Projects</a>
+        <a href="#/settings" data-nav="settings">Settings</a>
       </nav>
       <form id="token-form" class="token-form" autocomplete="off">
         <input id="token-input" type="password" placeholder="Operator token" aria-label="Operator token">
@@ -31,6 +32,9 @@
       </div>
       <div id="job-detail-content"></div>
     </section>
+    <div id="view-settings" data-view="settings" hidden>
+    <div id="settings-root"></div>
+    </div>
     <div id="view-projects" data-view="projects" hidden>
     <div id="projects-root"></div>
     </div>

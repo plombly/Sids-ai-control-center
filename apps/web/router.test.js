@@ -17,6 +17,8 @@ test('routes', () => {
   assert.equal(parseRoute('#/projects/web-shop/history').tab, 'history');
   assert.equal(parseRoute('#/projects/web-shop/settings').tab, 'settings');
   assert.equal(parseRoute('#/projects/web-shop/nope').tab, 'overview');
+  assert.equal(parseRoute('#/projects/web-shop/activity').tab, 'activity');
+  assert.equal(parseRoute('#/settings').view, 'settings');
 });
 
 test('applyRoute shows one view, marks the nav and notifies handlers', () => {

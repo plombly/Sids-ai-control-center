@@ -7,7 +7,7 @@ import { routeHandlers } from './registry.js';
 
 const PROJECT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 // A project page's tabs: #/projects/<id>[/files|/history|/settings].
-export const TABS = ['overview', 'files', 'history', 'settings'];
+export const TABS = ['overview', 'activity', 'files', 'history', 'settings'];
 
 export function parseRoute(hash) {
   const parts = String(hash || '')
@@ -21,6 +21,7 @@ export function parseRoute(hash) {
     const tab = projectId && TABS.includes(parts[2]) ? parts[2] : 'overview';
     return { view: 'projects', projectId, create: false, files: tab === 'files', tab };
   }
+  if (parts[0] === 'settings') return { view: 'settings', projectId: null, create: false, files: false, tab: 'overview' };
   return { view: 'dashboard', projectId: null, create: false, files: false, tab: 'overview' };
 }
 

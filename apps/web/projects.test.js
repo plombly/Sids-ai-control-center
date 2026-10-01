@@ -7,6 +7,7 @@ import {
   buildProjectRequest,
   validateProjectValues,
   historyMarkup,
+  activityMarkup,
   deleteProjectMarkup,
   buildSettingsMarkup,
   appStatusMarkup,
@@ -182,3 +183,17 @@ test('environment: names and lengths only, never values; not for SID', async () 
   assert.match(envMarkup('shop', null), /No variables yet/);
 });
 
+
+test('activity timeline: icons by kind, job details, times', () => {
+  const html = activityMarkup([
+    { at: 1000, kind: 'merged', title: 'Approved and merged: <Cart>', ref: 'j1' },
+    { at: 900, kind: 'app_problem', title: 'App crashed', detail: 'out of memory' },
+    { at: 800, kind: 'weird', title: 'Something' }
+  ], 1000 + 600);
+  assert.match(html, /tone-ok">✓<\/span>/);
+  assert.match(html, /&lt;Cart&gt; <button type="button" class="detail-button" data-detail="j1">/);
+  assert.match(html, /tone-bad">!<\/span>.*out of memory/s);
+  assert.match(html, /10 min ago/);
+  assert.match(activityMarkup([]), /Nothing has happened/);
+  assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }, 'activity'), /href="#\/projects\/shop\/activity" class="active"/);
+});

@@ -48,6 +48,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: ${REDIS_URL}
+      SID_NOTIFY_DIR: /notify
     # SID_OPERATOR_TOKEN for write access (root-only file on the host,
     # outside the repo). Absent file: writes stay open, Web approve refused.
     env_file:
@@ -67,6 +68,8 @@ services:
       - /etc/sid-ai/project-env:/project-env
       # Live job logs (apps/api/log_routes.py), read-only.
       - /var/log/sid-ai/jobs:/job-logs:ro
+      # Notification targets (apps/api/notify_routes.py), write-only from the page.
+      - /etc/sid-ai/notify:/notify
     depends_on:
       postgres:
         condition: service_healthy

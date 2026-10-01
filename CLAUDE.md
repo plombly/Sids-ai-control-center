@@ -307,11 +307,21 @@ Operations (host timers, units in deploy/systemd/):
 - `sid-ai-watchdog.timer` every 2 min: scripts/sid-watchdog.py -> sid:health.
 - `sid-ai-prune.timer` weekly: scripts/prune-sid-data.py --days 30 --apply.
 - `sid-ai-notify.timer` every minute: scripts/sid-notify.py sends each new
-  event once (approval ready, needs human, goal finished/failed, app
-  crashed/setup failed, backup failed, health red) to ntfy and/or Discord
-  from root-only /etc/sid-ai/notify.env (NTFY_URL, DISCORD_WEBHOOK,
-  DASHBOARD_URL); nothing configured = nothing sent (events are still
-  marked, so configuring later does not flood). `--test` sends a test.
+  event once (types in apps/api/notify_core.EVENTS: approval, needs_human,
+  goal_done/failed, app_problem, backup_failed, health_red) per the
+  dashboard Settings page (#/settings): ping / post / off per type, quiet
+  hours (urgent types still go out). Targets in root-only
+  /etc/sid-ai/notify/notify.env (DISCORD_WEBHOOK, DISCORD_MENTION, NTFY_URL,
+  DASHBOARD_URL; mounted rw into the api at /notify, write-only there);
+  settings in sid:notify:settings. Off / unconfigured events are still
+  marked, so turning things on never floods. `--test` sends a test.
+- `sid-ai-digest.timer` hourly: scripts/sid-digest.py posts the weekly
+  digest (apps/api/digest.py) once per ISO week at the settings' day/time
+  (default Sun 18:00); `--print` / `--now`. Preview on the Settings page.
+- Activity: sid_projects.record_event() writes sid:events:<id> (capped 500)
+  from sid-project.py (code changes, undos, restores) and services/apps
+  (deploys, crashes, previews); GET /api/projects/<id>/activity merges it
+  with goals and jobs (project tab "Activity").
 - `sid-ai-restore-check.timer` monthly (1st, 04:30):
   scripts/backup-restore-check.py restores the newest snapshot into
   throwaway places (git clone + fsck of every bundle, temporary Redis and

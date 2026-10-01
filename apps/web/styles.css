@@ -1676,3 +1676,135 @@ pre {
     padding-bottom: 6px;
   }
 }
+
+/* Settings page */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.section-title {
+  margin-bottom: 10px;
+  font-size: 1.05rem;
+}
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.settings-card h3 {
+  margin: 6px 0 0;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 200px 140px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+.settings-row:has(> select),
+.settings-row:has(> .time-range) {
+  display: flex;
+  flex-wrap: wrap;
+}
+.target-set {
+  color: var(--green);
+  font-size: 0.85rem;
+}
+.rule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rule-row select {
+  width: auto;
+  min-width: 160px;
+}
+.time-range input,
+.settings-row input[type="time"] {
+  width: auto;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.digest-preview {
+  white-space: pre-wrap;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+/* Activity */
+.activity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.activity-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.tone-ok { color: var(--green); }
+.tone-bad { color: var(--red); }
+.tone-warn { color: var(--amber); }
+.tone-info { color: var(--accent); }
+.tone-muted { color: var(--muted); }
+.activity-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.activity-time {
+  flex: none;
+}
+@media (max-width: 640px) {
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+  .rule-row {
+    flex-wrap: wrap;
+  }
+  .rule-row select {
+    width: 100%;
+  }
+  .activity-item {
+    flex-wrap: wrap;
+  }
+  .activity-time {
+    margin-left: 38px;
+  }
+}

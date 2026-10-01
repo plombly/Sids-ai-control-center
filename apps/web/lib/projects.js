@@ -42,11 +42,11 @@ export function systemInfoMarkup(system) {
   )}</div></div>`;
 }
 
-const TAB_LABELS = { overview: 'Overview', files: 'Files', history: 'History', settings: 'Settings' };
+const TAB_LABELS = { overview: 'Overview', activity: 'Activity', files: 'Files', history: 'History', settings: 'Settings' };
 const GOAL_DONE = /^(completed|failed|planning_failed|cancelled)$/;
 
 export function tabsMarkup(id, tab) {
-  const tabs = id === 'sid' ? ['overview', 'history'] : ['overview', 'files', 'history', 'settings'];
+  const tabs = id === 'sid' ? ['overview', 'activity', 'history'] : ['overview', 'activity', 'files', 'history', 'settings'];
   return `<nav class="project-tabs" aria-label="Project sections">${tabs
     .map(key => `<a href="#/projects/${encodeURIComponent(id)}${key === 'overview' ? '' : `/${key}`}" class="${key === tab ? 'active' : ''}"${key === tab ? ' aria-current="page"' : ''}>${TAB_LABELS[key]}</a>`)
     .join('')}</nav>`;
@@ -84,6 +84,32 @@ function overviewMarkup(project) {
     .map(job => `<tr><td><button type="button" class="detail-button" data-detail="${esc(job.id)}">${esc(job.id)}</button></td><td>${esc(firstLine(job.title) || '')}</td><td>${pill(job.status)}</td><td class="subtle">${esc(job.provider)}/${esc(job.model)}</td></tr>`)
     .join('');
   return `<form id="project-goal-form" class="goal-form project-composer"><label class="composer-label" for="project-goal-text">What should SID do in ${esc(name)}?</label><textarea id="project-goal-text" name="goal" placeholder="Describe the change you want" required></textarea><div class="composer-row"><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="project-goal-status" class="form-status" role="status"></span></form>${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+}
+
+// Activity: one timeline of what happened in the project.
+const ACTIVITY = {
+  goal_started: ['•', 'info'], goal_done: ['✓', 'ok'], goal_failed: ['✕', 'bad'], merged: ['✓', 'ok'],
+  rejected: ['✕', 'muted'], stuck: ['!', 'warn'], undo: ['↶', 'warn'], code_change: ['✎', 'info'],
+  deployed: ['▲', 'ok'], app_problem: ['!', 'bad'], preview: ['◐', 'info'], restored: ['↺', 'info']
+};
+
+export function activityMarkup(events, now = Date.now() / 1000) {
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return '<div class="empty">Nothing has happened here yet.</div>';
+  const ago = seconds => {
+    const age = Math.max(0, now - (Number(seconds) || 0));
+    if (age < 3600) return `${Math.max(1, Math.floor(age / 60))} min ago`;
+    if (age < 86400) return `${Math.floor(age / 3600)} h ago`;
+    return new Date((Number(seconds) || 0) * 1000).toLocaleDateString();
+  };
+  return `<ol class="activity-list">${list
+    .map(event => {
+      const [icon, tone] = ACTIVITY[event.kind] || ['•', 'info'];
+      const isJob = ['merged', 'rejected', 'stuck'].includes(event.kind) && event.ref;
+      const ref = isJob ? ` <button type="button" class="detail-button" data-detail="${escValue(event.ref)}">details</button>` : '';
+      return `<li class="activity-item"><span class="activity-icon tone-${tone}">${icon}</span><div class="activity-main"><span>${esc(event.title)}${ref}</span>${event.detail ? `<span class="subtle">${esc(event.detail)}</span>` : ''}</div><span class="subtle activity-time">${esc(ago(event.at))}</span></li>`;
+    })
+    .join('')}</ol>`;
 }
 
 // History: main's recent changes; a SID job's commits are one change.
@@ -136,7 +162,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
     ? `<a class="button" href="http://${escValue(globalThis.location?.hostname || 'localhost')}:${escValue(app.port)}/" target="_blank" rel="noopener">Open app</a>`
     : '';
   const body =
-    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'files' ? '' : overviewMarkup(project);
+    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events) : tab === 'files' ? '' : overviewMarkup(project);
   return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2></div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}<label class="importance-select">Importance <select id="project-importance" data-project="${esc(id)}"><option value="high"${
     project.importance === 'high' ? ' selected' : ''
   }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
@@ -322,12 +348,14 @@ if (typeof document !== 'undefined') {
         requestJSON(`/api/projects/${id}?limit=25`),
         tab === 'settings' && route.projectId !== 'sid' ? optional(`/api/projects/${id}/env`)
           : tab === 'history' ? optional(`/api/projects/${id}/history`)
+          : tab === 'activity' ? optional(`/api/projects/${id}/activity`)
           : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
           : null
       ]);
       if (project) {
         if (tab === 'settings') project.env = extra;
         if (tab === 'history') project.history = extra;
+        if (tab === 'activity') project.activity = extra;
         if (tab === 'overview') project.usage = extra;
       }
       if (version === renderVersion) {

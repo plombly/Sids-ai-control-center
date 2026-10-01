@@ -244,3 +244,25 @@ def data_dir(project_id):
     if not PROJECT_ID.fullmatch(project_id or ""):
         raise ValueError(f"invalid project id: {project_id!r}")
     return DATA_BASE / project_id
+
+
+# --- activity log ------------------------------------------------------------------------
+# Things that leave no other record (dashboard file changes, undos, app
+# deploys/crashes, previews, restores) go into a short per-project log the
+# Activity tab merges with goals and jobs (apps/api/activity_routes.py).
+
+EVENTS_KEEP = 500
+
+
+def record_event(redis_client, project_id, kind, title, detail="", ref="", when=None):
+    """Best effort: never let logging break the action it describes."""
+    import time as _time
+    entry = {"at": when or _time.time(), "kind": kind, "title": str(title)[:200], "detail": str(detail)[:300],
+             "ref": str(ref)[:80]}
+    try:
+        key = f"sid:events:{project_id}"
+        redis_client.lpush(key, json.dumps(entry))
+        redis_client.ltrim(key, 0, EVENTS_KEEP - 1)
+    except Exception:
+        pass
+    return entry

@@ -1195,6 +1195,8 @@ from env_routes import router as env_router
 from log_routes import router as log_router
 from usage_routes import router as usage_router
 from preview_routes import router as preview_router
+from activity_routes import router as activity_router
+from notify_routes import router as notify_router
 
 app.include_router(agent_router)
 app.include_router(project_router)
@@ -1203,3 +1205,5 @@ app.include_router(env_router)
 app.include_router(log_router)
 app.include_router(usage_router)
 app.include_router(preview_router)
+app.include_router(activity_router)
+app.include_router(notify_router)

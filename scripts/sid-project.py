@@ -414,6 +414,7 @@ def restore(args):
         for raw in entries:
             r.rpush(queue, raw)
     r.sadd(PROJECT_SET, project_id)
+    sid_projects.record_event(r, project_id, "restored", "Restored from the trash")
     r.delete(f"sid:trash:{args.trash_id}")
     r.srem(TRASH_SET, args.trash_id)
     shutil.rmtree(trash)
@@ -503,6 +504,9 @@ def change_main(record, project_id, change, message_for):
             subprocess.run(["git", "clean", "-q", "-fd"], cwd=repo, capture_output=True)
             raise
         head = run_git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        kind = "undo" if message_for(result).startswith("Undo ") else "code_change"
+        sid_projects.record_event(r, project_id, kind, message_for(result).removesuffix(" from the dashboard"),
+                                  ref=head[:12])
         return {"id": project_id, "status": "committed", "commit": head, **result}
     finally:
         r.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) "

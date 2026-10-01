@@ -1,0 +1,11 @@
+[Unit]
+Description=SID AI Command Center: weekly digest (posts when due)
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/sids-ai-command-center
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/opt/sid-venv/bin/python /opt/sids-ai-command-center/scripts/sid-digest.py

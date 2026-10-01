@@ -290,6 +290,13 @@ class UploadRedis(FakeRedis):
         if self.strings.get(key) == token:
             del self.strings[key]
 
+    def lpush(self, key, value):
+        self.sets.setdefault("_lists", set())
+        self.__dict__.setdefault("lists", {}).setdefault(key, []).insert(0, value)
+
+    def ltrim(self, key, start, end):
+        self.lists[key] = self.lists.get(key, [])[start:end + 1]
+
 
 @pytest.fixture
 def uploadable(monkeypatch, tmp_path):
@@ -557,3 +564,11 @@ def test_undo_message_reads_naturally(uploadable, capsys):
     assert invoke(["revert", "shop", "--commit", sha], capsys)[0] == 0
     subject = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
     assert subject == "Undo Upload z.txt from the dashboard"
+
+
+def test_code_changes_are_recorded_for_the_activity_tab(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    stage("upload-ev01")
+    assert invoke(["commit-upload", "shop", "--path=notes.txt", "--upload=upload-ev01"], capsys)[0] == 0
+    entry = json.loads(fake.lists["sid:events:shop"][0])
+    assert entry["kind"] == "code_change" and entry["title"] == "Upload notes.txt"
