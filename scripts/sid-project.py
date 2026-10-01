@@ -361,14 +361,20 @@ def change_main(record, project_id, change, message_for):
             raise ProjectError(f"the project's checkout is on {branch!r}, not its main branch")
         if run_git(["status", "--porcelain"], cwd=repo).stdout.strip():
             raise ProjectError("the project's main checkout has uncommitted changes")
-        result = change(repo)
-        run_git(["add", "-A"], cwd=repo)
-        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo).returncode == 0:
-            return {"id": project_id, "status": "unchanged", **result}
-        who = {"GIT_AUTHOR_NAME": "SID operator", "GIT_AUTHOR_EMAIL": "operator@sid.local",
-               "GIT_COMMITTER_NAME": "SID operator", "GIT_COMMITTER_EMAIL": "operator@sid.local"}
-        run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message_for(result)],
-                cwd=repo, env={**os.environ, **who})
+        try:
+            result = change(repo)
+            run_git(["add", "-A"], cwd=repo)
+            if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo).returncode == 0:
+                return {"id": project_id, "status": "unchanged", **result}
+            who = {"GIT_AUTHOR_NAME": "SID operator", "GIT_AUTHOR_EMAIL": "operator@sid.local",
+                   "GIT_COMMITTER_NAME": "SID operator", "GIT_COMMITTER_EMAIL": "operator@sid.local"}
+            run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message_for(result)],
+                    cwd=repo, env={**os.environ, **who})
+        except BaseException:
+            # All or nothing: the checkout was clean before, so put it back.
+            subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=repo, capture_output=True)
+            subprocess.run(["git", "clean", "-q", "-fd"], cwd=repo, capture_output=True)
+            raise
         head = run_git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
         return {"id": project_id, "status": "committed", "commit": head, **result}
     finally:
@@ -399,11 +405,20 @@ def commit_upload(args):
                 if current.is_symlink() or (current.exists() and not current.is_dir()):
                     raise ProjectError(f"{args.path}: a parent is a file or a link")
             dest = repo.joinpath(*parts)
-            if dest.is_symlink() or dest.is_dir():
-                raise ProjectError(f"{args.path} is a folder or a link")
+            if os.path.lexists(dest):
+                choice = args.on_conflict
+                if choice == "skip":
+                    return {"path": "/".join(parts), "skipped": True}
+                if choice == "keep":
+                    dest = dest.parent / file_ops.free_name(dest.parent, dest.name)
+                elif choice == "overwrite":
+                    if dest.is_symlink() or dest.is_dir():
+                        raise ProjectError(f"{args.path} is a folder or a link")
+                else:
+                    raise ProjectError(f"conflict: {json.dumps([dest.name])}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(staged, dest)
-            return {"path": "/".join(parts)}
+            return {"path": dest.relative_to(repo).as_posix()}
 
         return change_main(record, args.id, place, lambda result: f"Upload {result['path']} from the dashboard")
     finally:
@@ -420,6 +435,96 @@ CHANGE_MESSAGES = {
     "zip": lambda r: f"Zip {r['from']} into {r['path']} from the dashboard",
     "unzip": lambda r: f"Unzip {r['from']} into {r['path']} from the dashboard",
 }
+
+
+def _count(n, what="item"):
+    return f"{n} {what}{'' if n == 1 else 's'}"
+
+
+def code_batch(args):
+    """A dashboard batch that changes a project's code, as one commit on main
+    (all or nothing). spec (JSON): op copy|move|delete|zip|rename, from_area
+    and to_area (code|data), paths, dest (folder, or new name for rename),
+    name (zip), resolutions {name: overwrite|skip|keep}, default."""
+    validate_id(args.id)
+    if args.id == "sid":
+        raise ProjectError("SID's own code cannot be changed from the file browser")
+    try:
+        spec = json.loads(args.spec)
+    except ValueError as exc:
+        raise ProjectError(f"invalid batch: {exc}") from exc
+    if not isinstance(spec, dict):
+        raise ProjectError("invalid batch")
+    op = spec.get("op")
+    src_area, dst_area = spec.get("from_area", "code"), spec.get("to_area") or spec.get("from_area", "code")
+    paths = spec.get("paths") or []
+    if op not in ("copy", "move", "delete", "zip", "rename") or src_area not in ("code", "data") \
+            or dst_area not in ("code", "data") or not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        raise ProjectError("invalid batch")
+    if "code" not in (dst_area, src_area if op == "move" else dst_area):
+        raise ProjectError("this batch does not change code; the dashboard does it directly")
+    record = project(get_redis(), args.id)
+    data_root = sid_projects.data_dir(args.id)
+    data_root.mkdir(parents=True, exist_ok=True)
+    dest, resolutions, default = spec.get("dest") or "", spec.get("resolutions") or {}, spec.get("default")
+    moved_data_sources = []
+
+    def root_of(area, repo):
+        return repo if area == "code" else data_root
+
+    def change(repo):
+        try:
+            if op == "delete":
+                return file_ops.delete_many(repo, paths, forbid_git=True)
+            if op == "zip":
+                return file_ops.zip_many(repo, paths, dest, spec.get("name") or "Archive.zip", True, default)
+            if op == "rename":
+                if len(paths) != 1:
+                    raise ProjectError("rename takes exactly one item")
+                return {"done": [file_ops.rename(repo, paths[0], dest, True, default)], "skipped": []}
+            src, dst = root_of(src_area, repo), root_of(dst_area, repo)
+            if op == "move" and src_area == "data":
+                # Data -> code: copy now, delete the data originals only
+                # after the commit succeeded (never lose them).
+                result = file_ops.transfer(src, paths, dst, dest, "copy", False, True, resolutions, default)
+                moved_data_sources.extend(item["from"] for item in result["done"])
+                return result
+            if op == "move" and dst_area == "data":
+                # Code -> data: copy out, then delete from the code (committed).
+                result = file_ops.transfer(src, paths, dst, dest, "copy", True, False, resolutions, default)
+                file_ops.delete_many(repo, [item["from"] for item in result["done"]], forbid_git=True)
+                return result
+            return file_ops.transfer(src, paths, dst, dest, op, src_area == "code", dst_area == "code",
+                                     resolutions, default)
+        except file_ops.Conflict as exc:
+            raise ProjectError(f"conflict: {json.dumps(exc.conflicts)}") from exc
+        except file_ops.FileOpError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    def message(result):
+        n = len(result.get("done", []))
+        if op == "delete":
+            return f"Delete {_count(n)} from the dashboard"
+        if op == "zip":
+            return f"Zip {_count(n)} into {result.get('path')} from the dashboard"
+        if op == "rename":
+            item = result["done"][0]
+            return f"Rename {item['from']} to {item['path']} from the dashboard"
+        origin = " from app data" if src_area == "data" else (" to app data" if dst_area == "data" else "")
+        verb = "Move" if op == "move" else "Copy"
+        where = f" into {dest}/" if dest and dst_area == "code" else ""
+        return f"{verb} {_count(n)}{origin}{where} from the dashboard"
+
+    result = change_main(record, args.id, change, message)
+    left = []
+    for rel in moved_data_sources:
+        try:
+            file_ops.remove(file_ops.resolve(data_root, rel)[0])
+        except (OSError, file_ops.FileOpError):
+            left.append(rel)
+    if left:
+        result["not_removed_from_data"] = left
+    return result
 
 
 def code_change(args):
@@ -475,8 +580,9 @@ def main(argv=None):
     p = sub.add_parser("set-importance"); p.add_argument("id"); p.add_argument("level")
     p = sub.add_parser("archive"); p.add_argument("id")
     p = sub.add_parser("delete"); p.add_argument("id"); p.add_argument("--confirm", required=True, help="the project id again")
-    p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True)
+    p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"])
     p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
+    p = sub.add_parser("code-batch"); p.add_argument("id"); p.add_argument("--spec", required=True, help="JSON batch from the dashboard")
     p = sub.add_parser("show"); p.add_argument("id")
     sub.add_parser("list")
     args = parser.parse_args(argv)
@@ -498,6 +604,8 @@ def main(argv=None):
             result = commit_upload(args)
         elif args.command == "code-change":
             result = code_change(args)
+        elif args.command == "code-batch":
+            result = code_batch(args)
         elif args.command == "show":
             validate_id(args.id); result = project(get_redis(), args.id)
         else:

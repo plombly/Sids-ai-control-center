@@ -1,6 +1,7 @@
 """Project file browser: confined paths, data uploads, code uploads via the host."""
 
 import io
+import json
 import zipfile
 
 import pytest
@@ -127,3 +128,72 @@ def test_code_operations_go_to_the_host(files):
     assert post(op="rename", path="src/app.js", dest=".git", request_id="code-op-0003").status_code == 422
     assert post(op="delete", path="missing.txt", request_id="code-op-0004").status_code == 404
     assert post(op="delete", path="src/app.js").status_code == 422  # needs a request id
+
+
+# --- batches, conflicts, multi-download ------------------------------------------------
+
+def _batch(client, **body):
+    return client.post("/api/projects/shop/files/batch", json=body)
+
+
+def test_data_batches_run_now_with_conflict_answers(files):
+    client, _, _, data, _ = files
+    for name in ("a.txt", "b.txt"):
+        client.put(f"/api/projects/shop/files/data?path={name}", content=name.encode())
+    client.post("/api/projects/shop/files/data/folder", json={"path": "box"})
+    client.put("/api/projects/shop/files/data?path=box/a.txt", content=b"old")
+    clash = _batch(client, op="move", from_area="data", to_area="data", paths=["a.txt", "b.txt"], dest="box")
+    assert clash.status_code == 409 and clash.json()["detail"]["conflicts"] == ["a.txt"]
+    assert (data / "b.txt").exists()  # nothing moved yet
+    done = _batch(client, op="move", from_area="data", to_area="data", paths=["a.txt", "b.txt"], dest="box",
+                  resolutions={"a.txt": "overwrite"})
+    assert done.status_code == 200 and (data / "box" / "a.txt").read_bytes() == b"a.txt"
+    zipped = _batch(client, op="zip", from_area="data", paths=["box"], dest="", name="Archive")
+    assert zipped.json()["path"] == "Archive.zip"
+    assert _batch(client, op="rename", from_area="data", paths=["Archive.zip"], dest="box").status_code == 409
+    assert _batch(client, op="delete", from_area="data", paths=["box", "Archive.zip"]).status_code == 200
+    assert list(data.iterdir()) == []
+
+
+def test_code_to_data_copy_runs_now_but_changes_to_code_go_to_the_host(files):
+    client, fake, repo, data, _ = files
+    copied = _batch(client, op="copy", from_area="code", to_area="data", paths=["src"], dest="")
+    assert copied.status_code == 200 and (data / "src" / "app.js").exists()
+    _operator_ready(fake, allowed="project_commit_upload")
+    queued = _batch(client, op="move", from_area="data", to_area="code", paths=["src"], dest="", request_id="batch-0001",
+                    default="keep")
+    assert queued.status_code == 202
+    fields = fake.stream[-1][1]
+    spec = json.loads(fields["batch"])
+    assert fields["op"] == "batch" and spec["op"] == "move" and spec["to_area"] == "code" and spec["default"] == "keep"
+    assert (data / "src").exists()  # the host does it
+    clash = _batch(client, op="copy", from_area="data", to_area="code", paths=["src"], dest="", request_id="batch-0002")
+    assert clash.status_code == 409 and clash.json()["detail"]["conflicts"] == ["src"]
+    assert _batch(client, op="delete", from_area="code", paths=["src"]).status_code == 422  # needs a request id
+
+
+def test_multi_download_and_exists(files):
+    client, _, _, data, _ = files
+    client.put("/api/projects/shop/files/data?path=n.txt", content=b"n")
+    selection = client.get("/api/projects/shop/files/download", params=[("area", "code"), ("path", "src"), ("path", "escape")])
+    assert selection.status_code == 403  # every item is checked
+    selection = client.get("/api/projects/shop/files/download", params=[("area", "code"), ("path", "src"), ("path", "src/app.js")])
+    names = zipfile.ZipFile(io.BytesIO(selection.content)).namelist()
+    assert sorted(names) == ["app.js", "src/app.js"]
+    found = client.get("/api/projects/shop/files/exists", params=[("area", "data"), ("path", "n.txt"), ("path", "z.txt")])
+    assert found.json() == {"exists": ["n.txt"]}
+
+
+def test_upload_conflict_choices(files):
+    client, fake, _, data, uploads = files
+    client.put("/api/projects/shop/files/data?path=n.txt", content=b"one")
+    clash = client.put("/api/projects/shop/files/data?path=n.txt", content=b"two")
+    assert clash.status_code == 409 and clash.json()["detail"]["conflicts"] == ["n.txt"]
+    assert (data / "n.txt").read_bytes() == b"one" and not [p for p in data.iterdir() if p.name.startswith(".sid")]
+    assert client.put("/api/projects/shop/files/data?path=n.txt&on_conflict=keep", content=b"two").json()["path"] == "n (2).txt"
+    client.put("/api/projects/shop/files/data?path=n.txt&on_conflict=overwrite", content=b"three")
+    assert (data / "n.txt").read_bytes() == b"three"
+    _operator_ready(fake, allowed="project_commit_upload")
+    client.put("/api/projects/shop/files/code", params={"path": "a.txt", "request_id": "upload-k001", "on_conflict": "keep"},
+               content=b"x")
+    assert fake.stream[-1][1]["on_conflict"] == "keep"

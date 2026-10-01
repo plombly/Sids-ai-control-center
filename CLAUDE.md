@@ -220,6 +220,14 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   same endpoint on /code queues project_commit_upload with op/path/dest and
   the host runs sid-project.py code-change, which commits the result to
   main (shared change_main(): lock, clean main, "SID operator", hooks off).
+  Batches (POST /api/projects/<id>/files/batch: copy/move/delete/zip/
+  rename of up to 500 paths, within a tab or between code and data):
+  name clashes return 409 {"conflicts": [...]} until answered per name or
+  for all (overwrite | skip | keep = "x (2)"); uploads take on_conflict
+  the same way (default ask). Batches that change code go to the host as
+  project_commit_upload op "batch" -> sid-project.py code-batch: one commit,
+  all or nothing (change_main resets the checkout on any failure); data
+  originals of a data->code move are deleted only after the commit.
   New deploy keys live in /etc/sid-ai/project-keys/
   <id>/ (older ones stay in the project dir). Backups include every project
   repo bundle and a tarball of /opt/sid-project-data.

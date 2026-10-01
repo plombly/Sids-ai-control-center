@@ -20,7 +20,8 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Literal, Optional
+import json
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -133,10 +134,26 @@ def _zip_folder(folder, area):
 
 
 @router.get("/api/projects/{project_id}/files/download")
-def download(project_id: str, area: Literal["code", "data"] = "code", path: str = ""):
+def download(project_id: str, area: Literal["code", "data"] = "code", path: List[str] = Query(default=[""])):
+    """One file: the file. One folder: a zip of it. Several paths: one zip
+    with each of them at its top level."""
     project_id, data = _project(project_id)
     root = _area_root(project_id, data, area)
-    target, rel = _resolve(root, path, area)
+    if len(path) > 1:
+        if len(path) > file_ops.MAX_BATCH:
+            raise HTTPException(status_code=422, detail=f"At most {file_ops.MAX_BATCH} items at once")
+        items = []
+        for one in path:
+            target, rel = _resolve(root, one, area)
+            if not rel:
+                raise HTTPException(status_code=422, detail="Choose items, not the top level")
+            items.append((target, target.name))
+        handle = tempfile.NamedTemporaryFile(prefix="sid-zip-", suffix=".zip", delete=False)
+        handle.close()
+        file_ops.write_zip(handle.name, items, forbid_git=(area == "code"))
+        return FileResponse(handle.name, media_type="application/zip", filename=f"{project_id}-{area}-selection.zip",
+                            background=BackgroundTask(os.unlink, handle.name))
+    target, rel = _resolve(root, path[0], area)
     real = target.resolve()
     if real.is_dir():
         name = (rel.rsplit("/", 1)[-1] if rel else f"{project_id}-{area}") + ".zip"
@@ -168,19 +185,31 @@ async def _receive(request, dest_dir):
 
 
 @router.put("/api/projects/{project_id}/files/data")
-async def upload_data(project_id: str, request: Request, path: str = Query(min_length=1)):
+async def upload_data(project_id: str, request: Request, path: str = Query(min_length=1),
+                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask"):
     project_id, data = _project(project_id)
     root = _area_root(project_id, data, "data", create=True)
     target, rel = _resolve(root, path, "data", must_exist=False)
     if not rel:
         raise HTTPException(status_code=422, detail="Choose a file name")
-    if target.is_symlink() or target.is_dir():
-        raise HTTPException(status_code=409, detail="A folder or link with that name exists")
     parent = target.parent
     _resolve(root, "/".join(PurePosixPath(rel).parts[:-1]), "data", must_exist=False)
-    temp, size = await _receive(request, parent)
-    os.replace(temp, target)
-    return {"area": "data", "path": rel, "size": size}
+    temp, size = await _receive(request, parent)  # always read the body, then decide
+    try:
+        if os.path.lexists(target):
+            if on_conflict == "ask":
+                raise _conflict([target.name])
+            if on_conflict == "skip":
+                return {"area": "data", "path": rel, "size": size, "skipped": True}
+            if on_conflict == "keep":
+                target = parent / file_ops.free_name(parent, target.name)
+            elif target.is_symlink() or target.is_dir():
+                raise HTTPException(status_code=409, detail="A folder or link with that name exists")
+        os.replace(temp, target)
+    finally:
+        if temp.exists():
+            temp.unlink()
+    return {"area": "data", "path": target.relative_to(root).as_posix(), "size": size}
 
 
 class Folder(BaseModel):
@@ -224,7 +253,8 @@ def _prune_staged():
 
 @router.put("/api/projects/{project_id}/files/code", status_code=202)
 async def upload_code(project_id: str, request: Request, path: str = Query(min_length=1),
-                      request_id: str = Query(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")):
+                      request_id: str = Query(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"),
+                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask"):
     """Stage a file and ask the host to commit it to main (no review: the
     operator is the authority). Poll /api/operator-requests/<request_id>."""
     project_id, data = _project(project_id)
@@ -240,7 +270,8 @@ async def upload_code(project_id: str, request: Request, path: str = Query(min_l
     os.replace(temp, staging / "file")
     try:
         result = projects._operator_request("project_commit_upload", request_id,
-                                            {"project_id": project_id, "path": rel, "upload": request_id})
+                                            {"project_id": project_id, "path": rel, "upload": request_id,
+                                             "on_conflict": on_conflict})
     except HTTPException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -283,3 +314,108 @@ def file_op(project_id: str, area: Literal["code", "data"], payload: FileOp):
     result = projects._operator_request("project_commit_upload", payload.request_id, {
         "project_id": project_id, "op": payload.op, "path": rel, "dest": payload.dest})
     return JSONResponse(status_code=202, content={**result, "area": "code", "op": payload.op, "path": rel})
+
+
+def _conflict(names):
+    return HTTPException(status_code=409, detail={
+        "message": f"{len(names)} name(s) already exist", "conflicts": list(names)})
+
+
+@router.get("/api/projects/{project_id}/files/exists")
+def exists(project_id: str, area: Literal["code", "data"] = "code", path: List[str] = Query(default=[])):
+    """Which of these paths exist already (asked before uploading)."""
+    project_id, data = _project(project_id)
+    root = _area_root(project_id, data, area, create=(area == "data"))
+    found = []
+    for one in path[:file_ops.MAX_BATCH]:
+        target, rel = _resolve(root, one, area, must_exist=False)
+        if rel and os.path.lexists(target):
+            found.append(rel)
+    return {"exists": found}
+
+
+class Batch(BaseModel):
+    op: Literal["copy", "move", "delete", "zip", "rename"]
+    from_area: Literal["code", "data"]
+    to_area: Optional[Literal["code", "data"]] = None
+    paths: List[str] = Field(min_length=1, max_length=500)
+    dest: str = Field(default="", max_length=400)
+    name: str = Field(default="", max_length=255)
+    resolutions: Dict[str, Literal["overwrite", "skip", "keep"]] = Field(default_factory=dict)
+    default: Optional[Literal["overwrite", "skip", "keep"]] = None
+    request_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+
+
+def _run_batch(op, roots, payload, dry_run=False):
+    """file_ops for a batch. roots: {"code": path, "data": path}. dry_run
+    only checks (conflicts, paths) without changing anything."""
+    src_area = payload.from_area
+    dst_area = payload.to_area or src_area
+    src, dst = roots[src_area], roots[dst_area]
+    git = {"code": True, "data": False}
+    if op == "delete":
+        if dry_run:
+            return file_ops._sources(src, payload.paths, git[src_area])
+        return file_ops.delete_many(src, payload.paths, git[src_area])
+    if op == "zip":
+        name = payload.name or "Archive.zip"
+        if dry_run:
+            file_ops._sources(src, payload.paths, git[src_area])
+            name = name if name.lower().endswith(".zip") else f"{name}.zip"
+            folder, _ = file_ops._dest_folder(src, payload.dest, git[src_area])
+            file_ops.check_name(name, git[src_area])
+            if os.path.lexists(folder / name) and payload.default is None:
+                raise file_ops.Conflict([name])
+            return None
+        return file_ops.zip_many(src, payload.paths, payload.dest, name, git[src_area], payload.default)
+    if op == "rename":
+        if len(payload.paths) != 1:
+            raise file_ops.FileOpError("Rename one item at a time")
+        if dry_run:
+            source, _ = file_ops.resolve(src, payload.paths[0], forbid_git=git[src_area])
+            file_ops.check_name(payload.dest, git[src_area])
+            target = source.parent / payload.dest
+            if os.path.lexists(target) and target != source and payload.default is None:
+                raise file_ops.Conflict([payload.dest])
+            return None
+        return {"done": [file_ops.rename(src, payload.paths[0], payload.dest, git[src_area], payload.default)],
+                "skipped": []}
+    mode = op
+    if dry_run:
+        return file_ops.plan_transfer(src, payload.paths, dst, payload.dest, mode, git[src_area], git[dst_area],
+                                      payload.resolutions, payload.default)
+    return file_ops.transfer(src, payload.paths, dst, payload.dest, mode, git[src_area], git[dst_area],
+                             payload.resolutions, payload.default)
+
+
+@router.post("/api/projects/{project_id}/files/batch")
+def batch(project_id: str, payload: Batch):
+    """Several items at once, within a tab or between Code and App data.
+    Conflicts come back as 409 {"conflicts": [...]} until answered
+    (resolutions per name, or default for all). Anything that changes Code
+    is committed to main by the host as one commit (poll the operator
+    request); everything else happens here and now."""
+    project_id, data = _project(project_id)
+    roots = {"code": _area_root(project_id, data, "code"),
+             "data": _area_root(project_id, data, "data", create=True)}
+    dst_area = payload.to_area or payload.from_area
+    if payload.op in ("copy", "move") and not payload.to_area:
+        raise HTTPException(status_code=422, detail="Choose where to paste")
+    changes_code = dst_area == "code" if payload.op in ("copy", "move") else payload.from_area == "code"
+    if payload.op == "move" and payload.from_area == "code":
+        changes_code = True
+    try:
+        if not changes_code:
+            return {"status": "succeeded", **_run_batch(payload.op, roots, payload)}
+        _run_batch(payload.op, roots, payload, dry_run=True)  # early answers; the host checks again
+    except file_ops.Conflict as exc:
+        raise _conflict(exc.conflicts)
+    except file_ops.FileOpError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    if not payload.request_id:
+        raise HTTPException(status_code=422, detail="request_id is required for changes to code")
+    spec = payload.model_dump(exclude={"request_id"}, exclude_none=True)
+    result = projects._operator_request("project_commit_upload", payload.request_id, {
+        "project_id": project_id, "op": "batch", "path": payload.paths[0],
+        "batch": json.dumps(spec, separators=(",", ":"))})
+    return JSONResponse(status_code=202, content={**result, "op": payload.op})

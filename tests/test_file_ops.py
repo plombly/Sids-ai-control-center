@@ -102,3 +102,98 @@ def test_unzip_absolute_names_stay_inside(root):
     _zip_with(root, [("/abs.txt", "x")])
     out = file_ops.apply(root, "unzip", "evil.zip")["path"]
     assert (root / out / "abs.txt").read_text() == "x"
+
+
+# --- batches -----------------------------------------------------------------------------
+
+@pytest.fixture
+def two(tmp_path):
+    code, data = tmp_path / "code", tmp_path / "data"
+    for base in (code, data):
+        (base / "docs").mkdir(parents=True)
+    (code / "a.txt").write_text("code a")
+    (code / "b.txt").write_text("code b")
+    (code / "lib").mkdir()
+    (code / "lib" / "x.js").write_text("x")
+    (data / "a.txt").write_text("data a")
+    (data / "docs" / "a.txt").write_text("docs a")
+    return code, data
+
+
+def test_unanswered_conflicts_change_nothing_and_list_every_name(two):
+    code, data = two
+    with pytest.raises(file_ops.Conflict) as caught:
+        file_ops.transfer(code, ["a.txt", "b.txt", "lib"], data, "", "copy")
+    assert caught.value.conflicts == ["a.txt"] and caught.value.status == 409
+    assert not (data / "b.txt").exists() and (data / "a.txt").read_text() == "data a"
+
+
+@pytest.mark.parametrize("choice,expect", [("overwrite", ("code a", None)), ("skip", ("data a", None)),
+                                           ("keep", ("data a", "code a"))])
+def test_each_conflict_choice(two, choice, expect):
+    code, data = two
+    result = file_ops.transfer(code, ["a.txt", "b.txt"], data, "", "copy", resolutions={"a.txt": choice})
+    assert (data / "a.txt").read_text() == expect[0]
+    assert ((data / "a (2).txt").read_text() if (data / "a (2).txt").exists() else None) == expect[1]
+    assert (data / "b.txt").read_text() == "code b"
+    assert ("a.txt" in result["skipped"]) == (choice == "skip")
+
+
+def test_apply_to_all_default_and_keep_numbering(two):
+    code, data = two
+    (data / "a (2).txt").write_text("taken")
+    file_ops.transfer(code, ["a.txt"], data, "", "copy", default="keep")
+    assert (data / "a (3).txt").read_text() == "code a"
+
+
+def test_move_between_roots_and_into_a_folder(two):
+    code, data = two
+    result = file_ops.transfer(data, ["a.txt"], code, "docs", "move")
+    assert result["done"] == [{"from": "a.txt", "path": "docs/a.txt"}]
+    assert not (data / "a.txt").exists() and (code / "docs" / "a.txt").read_text() == "data a"
+
+
+def test_batch_traps(two):
+    code, data = two
+    with pytest.raises(FileOpError, match="inside itself"):
+        file_ops.transfer(code, ["lib"], code, "lib", "move")
+    (code / "docs" / "lib").mkdir()
+    with pytest.raises(FileOpError, match="both named"):
+        file_ops.transfer(code, ["lib", "docs/lib"], data, "", "copy")
+    # moving onto itself is a no-op, copying onto itself with "keep" makes a copy
+    assert file_ops.transfer(code, ["a.txt"], code, "", "move")["skipped"] == ["a.txt"]
+    assert file_ops.transfer(code, ["a.txt"], code, "", "copy", default="keep")["done"][0]["path"] == "a (2).txt"
+    with pytest.raises(FileOpError):
+        file_ops.transfer(code, [".git"], data, "", "copy", src_git=True)
+
+
+def test_overwriting_a_folder_that_holds_the_source_is_refused(two):
+    code, data = two
+    (code / "docs" / "docs").mkdir()
+    with pytest.raises(FileOpError, match="contains"):
+        file_ops.transfer(code, ["docs/docs"], code, "", "move", default="overwrite")
+    assert (code / "docs" / "docs").is_dir()
+
+
+def test_zip_many_and_delete_many(two):
+    code, _ = two
+    result = file_ops.zip_many(code, ["a.txt", "lib"], "", "Archive")
+    assert result["path"] == "Archive.zip"
+    assert sorted(zipfile.ZipFile(code / "Archive.zip").namelist()) == ["a.txt", "lib/x.js"]
+    with pytest.raises(file_ops.Conflict):
+        file_ops.zip_many(code, ["b.txt"], "", "Archive.zip")
+    assert file_ops.zip_many(code, ["b.txt"], "", "Archive.zip", resolution="keep")["path"] == "Archive (2).zip"
+    file_ops.delete_many(code, ["a.txt", "lib"])
+    assert not (code / "a.txt").exists() and not (code / "lib").exists()
+    with pytest.raises(FileOpError):
+        file_ops.delete_many(code, ["b.txt", "../x"])
+    assert (code / "b.txt").exists()  # nothing deleted when any item is invalid
+
+
+def test_rename_conflict_choices(two):
+    code, _ = two
+    with pytest.raises(file_ops.Conflict):
+        file_ops.rename(code, "a.txt", "b.txt")
+    assert file_ops.rename(code, "a.txt", "b.txt", resolution="keep")["path"] == "b (2).txt"
+    file_ops.rename(code, "b (2).txt", "b.txt", resolution="overwrite")
+    assert (code / "b.txt").read_text() == "code a" and not (code / "b (2).txt").exists()

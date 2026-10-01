@@ -72,10 +72,48 @@ REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
     "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
+    "batch", "on_conflict",
 )
 # project_commit_upload commits one dashboard file change to a project's main:
 # an upload (op "upload", the default) or a file-browser operation.
 CODE_OPS = ("mkdir", "rename", "move", "copy", "delete", "zip", "unzip")
+BATCH_OPS = ("copy", "move", "delete", "zip", "rename")
+CONFLICT_CHOICES = ("overwrite", "skip", "keep")
+BATCH_LIMIT = 500
+
+
+def _clean_path(value):
+    return (isinstance(value, str) and len(value) <= 400 and not value.startswith("/")
+            and not any(ord(c) < 32 for c in value))
+
+
+def validate_batch(raw):
+    """The dashboard's batch (op "batch"): re-checked shape, re-serialized."""
+    if len(raw) > 200_000:
+        raise Invalid("batch too large")
+    try:
+        spec = json.loads(raw)
+    except ValueError:
+        raise Invalid("invalid batch")
+    if not isinstance(spec, dict) or spec.get("op") not in BATCH_OPS:
+        raise Invalid("invalid batch operation")
+    areas = (spec.get("from_area"), spec.get("to_area") or spec.get("from_area"))
+    if any(area not in ("code", "data") for area in areas):
+        raise Invalid("invalid batch area")
+    paths = spec.get("paths")
+    if not isinstance(paths, list) or not paths or len(paths) > BATCH_LIMIT or not all(_clean_path(p) and p for p in paths):
+        raise Invalid("invalid batch paths")
+    for key in ("dest", "name"):
+        if spec.get(key) is not None and not _clean_path(spec[key]):
+            raise Invalid(f"invalid batch {key}")
+    resolutions = spec.get("resolutions") or {}
+    if not isinstance(resolutions, dict) or not all(
+            isinstance(k, str) and v in CONFLICT_CHOICES for k, v in resolutions.items()):
+        raise Invalid("invalid conflict choices")
+    if spec.get("default") not in (None, *CONFLICT_CHOICES):
+        raise Invalid("invalid conflict choice")
+    keep = ("op", "from_area", "to_area", "paths", "dest", "name", "resolutions", "default")
+    return json.dumps({k: spec[k] for k in keep if k in spec}, separators=(",", ":"))
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 # Web-requested clones and push remotes: network git URLs only (never a host
 # path, which would copy an arbitrary local directory into a project).
@@ -218,7 +256,12 @@ def validate_project_request(action, fields):
         if op == "upload":
             if not REQUEST_ID.fullmatch(fields.get("upload", "")):
                 raise Invalid("invalid upload id")
-            request.update(op="upload", path=path, upload=fields["upload"])
+            on_conflict = fields.get("on_conflict") or "ask"
+            if on_conflict not in ("ask", *CONFLICT_CHOICES):
+                raise Invalid("invalid conflict choice")
+            request.update(op="upload", path=path, upload=fields["upload"], on_conflict=on_conflict)
+        elif op == "batch":
+            request.update(op="batch", path=path, batch=validate_batch(fields.get("batch", "")))
         elif op in CODE_OPS:
             request.update(op=op, path=path, dest=dest)
         else:
@@ -250,7 +293,10 @@ def project_cli_args(request):
     if action == "project_commit_upload":
         # --opt=value: a name starting with "-" must not read as an option.
         if request.get("op", "upload") == "upload":
-            return ["commit-upload", project_id, f"--path={request['path']}", f"--upload={request['upload']}"]
+            return ["commit-upload", project_id, f"--path={request['path']}", f"--upload={request['upload']}",
+                    f"--on-conflict={request.get('on_conflict') or 'ask'}"]
+        if request["op"] == "batch":
+            return ["code-batch", project_id, f"--spec={request['batch']}"]
         return ["code-change", project_id, f"--op={request['op']}", f"--path={request['path']}",
                 f"--dest={request.get('dest', '')}"]
     return ["push-setup", project_id, request["url"]]

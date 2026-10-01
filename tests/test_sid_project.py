@@ -367,3 +367,90 @@ def test_code_change_commits_each_operation(uploadable, capsys):
 def test_push_setup_refuses_sid(capsys):
     code, captured, _ = invoke(["push-setup", "sid", "git@github.com:me/x.git"], capsys)
     assert code == 1 and "by hand" in captured.err
+
+
+# --- code-batch: several items, between code and app data, one commit ------------------
+
+@pytest.fixture
+def batchable(uploadable, monkeypatch, tmp_path):
+    fake, repo, uploads, stage = uploadable
+    monkeypatch.setattr(sid_project.sid_projects, "DATA_BASE", tmp_path / "project-data")
+    data = tmp_path / "project-data" / "shop"
+    (data / "img").mkdir(parents=True)
+    (data / "img" / "logo.png").write_bytes(b"png")
+    (data / "notes.txt").write_text("notes")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "guide.md").write_text("guide")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "docs"], check=True)
+    return fake, repo, data
+
+
+def batch(capsys, **spec):
+    return invoke(["code-batch", "shop", f"--spec={json.dumps(spec)}"], capsys)
+
+
+def subject(repo):
+    return subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+
+
+def test_data_to_code_move_removes_originals_only_after_the_commit(batchable, capsys):
+    fake, repo, data = batchable
+    code, captured, out = batch(capsys, op="move", from_area="data", to_area="code", paths=["img", "notes.txt"], dest="docs")
+    assert code == 0, captured.err
+    assert (repo / "docs" / "img" / "logo.png").read_bytes() == b"png" and (repo / "docs" / "notes.txt").exists()
+    assert not (data / "img").exists() and not (data / "notes.txt").exists()
+    assert subject(repo) == "Move 2 items from app data into docs/ from the dashboard"
+
+
+def test_code_to_data_move_and_multi_delete_and_zip(batchable, capsys):
+    fake, repo, data = batchable
+    assert batch(capsys, op="move", from_area="code", to_area="data", paths=["README.md"], dest="")[0] == 0
+    assert (data / "README.md").read_text() == "hi\n" and not (repo / "README.md").exists()
+    assert subject(repo) == "Move 1 item to app data from the dashboard"
+    assert batch(capsys, op="zip", from_area="code", paths=["docs"], dest="", name="bundle")[0] == 0
+    assert (repo / "bundle.zip").exists() and subject(repo) == "Zip 1 item into bundle.zip from the dashboard"
+    assert batch(capsys, op="delete", from_area="code", paths=["docs", "bundle.zip"])[0] == 0
+    assert subject(repo) == "Delete 2 items from the dashboard"
+
+
+def test_conflicts_are_reported_and_answers_are_applied(batchable, capsys):
+    fake, repo, data = batchable
+    (data / "README.md").write_text("from data")
+    code, captured, _ = batch(capsys, op="copy", from_area="data", to_area="code", paths=["README.md"], dest="")
+    assert code == 1 and 'conflict: ["README.md"]' in captured.err
+    code, _, out = batch(capsys, op="copy", from_area="data", to_area="code", paths=["README.md"], dest="",
+                         resolutions={"README.md": "keep"})
+    assert code == 0 and (repo / "README (2).md").read_text() == "from data"
+
+
+def test_a_failure_part_way_leaves_main_exactly_as_it_was(batchable, capsys, monkeypatch):
+    fake, repo, data = batchable
+    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+
+    def broken(*args, **kwargs):
+        raise sid_project.file_ops.FileOpError("disk full")
+    monkeypatch.setattr(sid_project.file_ops, "delete_many", broken)
+    code, captured, _ = batch(capsys, op="move", from_area="code", to_area="data", paths=["docs"], dest="")
+    assert code == 1 and "disk full" in captured.err
+    assert subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout == head
+    assert subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout == ""
+    assert (repo / "docs" / "guide.md").exists() and not fake.strings
+
+
+def test_batches_that_do_not_touch_code_are_refused(batchable, capsys):
+    code, captured, _ = batch(capsys, op="copy", from_area="code", to_area="data", paths=["README.md"], dest="")
+    assert code == 1 and "directly" in captured.err
+
+
+def test_upload_conflict_choices(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    stage("upload-c001", b"new")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path=README.md", "--upload=upload-c001"], capsys)
+    assert code == 1 and "conflict" in captured.err and (repo / "README.md").read_text() == "hi\n"
+    stage("upload-c002", b"new")
+    assert invoke(["commit-upload", "shop", "--path=README.md", "--upload=upload-c002", "--on-conflict=keep"], capsys)[0] == 0
+    assert (repo / "README (2).md").read_bytes() == b"new"
+    stage("upload-c003", b"newer")
+    assert invoke(["commit-upload", "shop", "--path=README.md", "--upload=upload-c003", "--on-conflict=overwrite"], capsys)[0] == 0
+    assert (repo / "README.md").read_bytes() == b"newer"

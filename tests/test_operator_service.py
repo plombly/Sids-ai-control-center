@@ -485,7 +485,8 @@ def test_delete_request_validates_to_its_confirmation(op):
 def test_commit_upload_request(op):
     request = op.validate({"action": "project_commit_upload", "project_id": "web", "path": "static/a.png",
                            "upload": "upload-0001"}, f"{int(NOW * 1000)}-0", NOW)
-    assert op.project_cli_args(request) == ["commit-upload", "web", "--path=static/a.png", "--upload=upload-0001"]
+    assert op.project_cli_args(request) == ["commit-upload", "web", "--path=static/a.png", "--upload=upload-0001",
+                                            "--on-conflict=ask"]
     for bad in ({"path": "/etc/x", "upload": "upload-0001"}, {"path": "a", "upload": "../x"},
                 {"path": "a\nb", "upload": "upload-0001"}):
         with pytest.raises(op.Invalid):
@@ -511,3 +512,20 @@ def test_push_setup_is_refused_for_sid(op):
     with pytest.raises(op.Invalid, match="managed on the host"):
         op.validate({"action": "project_push_setup", "project_id": "sid", "url": "git@github.com:me/x.git"},
                     f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_batch_requests_are_rechecked(op):
+    import json as _json
+    good = _json.dumps({"op": "move", "from_area": "data", "to_area": "code", "paths": ["a", "b/c"], "dest": "docs",
+                        "resolutions": {"a": "keep"}, "extra": "dropped"})
+    request = op.validate({"action": "project_commit_upload", "project_id": "web", "op": "batch", "path": "a",
+                           "batch": good}, f"{int(NOW * 1000)}-0", NOW)
+    args = op.project_cli_args(request)
+    assert args[:2] == ["code-batch", "web"] and "extra" not in args[2] and '"resolutions":{"a":"keep"}' in args[2]
+    for bad in ({"op": "chmod", "from_area": "code", "paths": ["a"]}, {"op": "delete", "from_area": "disk", "paths": ["a"]},
+                {"op": "delete", "from_area": "code", "paths": []}, {"op": "delete", "from_area": "code", "paths": ["/etc"]},
+                {"op": "copy", "from_area": "code", "to_area": "data", "paths": ["a"], "resolutions": {"a": "nuke"}},
+                {"op": "delete", "from_area": "code", "paths": ["a"] * 501}):
+        with pytest.raises(op.Invalid):
+            op.validate({"action": "project_commit_upload", "project_id": "web", "op": "batch", "path": "a",
+                         "batch": _json.dumps(bad)}, f"{int(NOW * 1000)}-0", NOW)
