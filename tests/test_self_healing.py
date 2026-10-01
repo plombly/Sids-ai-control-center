@@ -473,7 +473,7 @@ def test_repair_gate_failure_restores_candidate(worker_module, tmp_path):
     worker_module.parse_codex_log = lambda path: ("s", {k: 0 for k in (
         "total_tokens", "input_tokens", "cached_input_tokens", "output_tokens",
         "reasoning_tokens", "uncached_input_tokens", "effective_tokens", "command_count")})
-    worker_module.run_tests = lambda worktree: (False, "FAILED")
+    worker_module.run_tests = lambda worktree, network=False: (False, "FAILED")
     worker_module.process_repair_job(job, key, log, test_log)
     assert worker_module.redis.records[key]["status"] == "test_failed"
     assert worker_module.redis.records["sid:jobs:b1"]["repair_status"] == "test_failed"

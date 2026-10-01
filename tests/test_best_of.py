@@ -33,7 +33,7 @@ def worker(repo, tmp_path, monkeypatch):
     module.redis.records["sid:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
     module.heartbeat = lambda status="idle": None
     # A build "passes the gate" when app.py says OK.
-    module.run_tests = lambda wt: ("OK" in (wt / "app.py").read_text(), "")
+    module.run_tests = lambda wt, network=False: ("OK" in (wt / "app.py").read_text(), "")
     return module
 
 
@@ -136,7 +136,7 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     module.redis = MemoryRedis()
     module.redis.records["sid:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
     module.heartbeat = lambda status="idle": None
-    module.run_tests = lambda wt: (True, "")
+    module.run_tests = lambda wt, network=False: (True, "")
     module.run_agent = lambda job, wt, log: (0, 1.0)
     prompts = []
     module.run_codex = lambda job, wt, log: prompts.append(job["prompt"]) or (0, 1.0)
