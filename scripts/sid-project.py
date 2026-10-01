@@ -690,7 +690,7 @@ def revert(args):
             subprocess.run(["git", "revert", "--abort"], cwd=repo, capture_output=True)
             raise ProjectError("it cannot be undone automatically: later changes touch the same lines")
         subject = label or run_git(["log", "-1", "--format=%s", target], cwd=repo).stdout.strip()
-        return {"undone": target, "title": subject}
+        return {"undone": target, "title": subject.removesuffix(" from the dashboard")}
 
     def message(result):
         return f"Undo {result['title']} from the dashboard"

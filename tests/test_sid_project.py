@@ -549,3 +549,11 @@ def test_undo_a_single_commit_and_conflicts_change_nothing(uploadable, capsys):
     assert invoke(["revert", "sid", "--commit", later], capsys)[0] == 1
     assert invoke(["revert", "shop", "--commit", "zzzz"], capsys)[0] == 1
     assert invoke(["revert", "shop", "--job", "missing"], capsys)[0] == 1
+
+
+def test_undo_message_reads_naturally(uploadable, capsys):
+    fake, repo, uploads, stage = uploadable
+    sha = commit_file(repo, "z.txt", "z\n", "Upload z.txt from the dashboard")
+    assert invoke(["revert", "shop", "--commit", sha], capsys)[0] == 0
+    subject = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout.strip()
+    assert subject == "Undo Upload z.txt from the dashboard"
