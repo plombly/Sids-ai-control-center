@@ -195,3 +195,14 @@ def test_planner_size_is_stored_and_bad_sizes_become_medium(orch):
     jobs = orch.validate_plan(plan)
     assert [j["size"] for j in jobs] == ["L", "M"]
     assert '"size": "S|M|L"' in orch.planner_prompt("g")
+
+
+def test_long_scopes_are_compressed_to_top_level_entries(orch):
+    files = [f"lib/screens/s{i}.dart" for i in range(10)] + ["test/a_test.dart", "pubspec.yaml", "README.md",
+                                                             "android/app/build.gradle", "ios/Runner/Info.plist"]
+    plan = {"jobs": [{"number": 1, "title": "t", "task": "x", "scope": files}]}
+    jobs = orch.validate_plan(plan)
+    assert jobs[0]["scope"] == ["lib/", "test/", "pubspec.yaml", "README.md", "android/", "ios/"]
+    wide = {"jobs": [{"number": 1, "title": "t", "task": "x", "scope": [f"d{i}/f" for i in range(13)]}]}
+    with pytest.raises(ValueError, match="too broad"):
+        orch.validate_plan(wide)

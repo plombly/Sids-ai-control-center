@@ -334,6 +334,23 @@ def run_codex_planner(goal, atomic=False, project=None):
     return extract_json(messages[-1])
 
 
+SCOPE_LIMIT = 12
+
+
+def compress_scope(scope):
+    """A long file list as its top-level entries: "lib/a.dart" and
+    "lib/b.dart" become "lib/"; top-level files stay as they are."""
+    compressed = []
+    for raw in scope:
+        path = raw.strip().strip("/")
+        if not path or path == ".":
+            continue
+        entry = path.split("/", 1)[0] + ("/" if "/" in path else "")
+        if entry not in compressed:
+            compressed.append(entry)
+    return compressed
+
+
 def validate_plan(plan, atomic=False, members=None):
     """members: the project ids a group goal may plan in (first = default)."""
     if not isinstance(plan, dict):
@@ -372,8 +389,13 @@ def validate_plan(plan, atomic=False, members=None):
         scope = job.get("scope", [])
         if not isinstance(scope, list) or any(not isinstance(x, str) for x in scope):
             raise ValueError(f"job {number} scope must be a list of paths")
-        if len(scope) > 12:
-            raise ValueError(f"job {number} scope is too broad")
+        if len(scope) > SCOPE_LIMIT:
+            # Many files (e.g. scaffolding a new app): claim their top-level
+            # directories instead of failing the whole goal.
+            scope = compress_scope(scope)
+            if len(scope) > SCOPE_LIMIT:
+                raise ValueError(f"job {number} scope is too broad")
+            job["scope"] = scope
         if job.get("size", "M") not in SIZE_POINTS:
             job["size"] = "M"  # an estimate, not a contract: never reject a plan over it
 
