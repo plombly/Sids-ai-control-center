@@ -378,6 +378,30 @@ Claude via --add-dir, agent_cli.EXTRA_DIRS) and a prompt note naming them.
 Web: lib/project-groups.js (Part of, Child projects, New child project via
 the wizard, Settings "Part of"/detach), children nested in project lists.
 
+SID app groundwork (2026-10-01; SID's decisions in memory "sid-app"):
+- SID may be a PARENT (never a child): its children read SID's committed
+  code as a read-only copy; SID's own copies of its children live in
+  /var/lib/sid-ai/reference (hidden from every project sandbox). When
+  "approve all of a goal" is built (Phase 3), SID's own changes must stay
+  individually approved.
+- Phones (apps/api/device_routes.py, web lib/devices.js, Settings →
+  Phones & apps): per-device keys `sidk_…`, shown once as a QR pairing code
+  {"v":1,"name","url","key"} (segno SVG), stored as SHA-256 (sid:devices:<id>,
+  sid:device-key:<sha256>). `Authorization: Bearer` keys may only make
+  DEVICE_WRITES (goals, assistant, builds, job actions limited to
+  extend/reject/network_*); approvals, settings and devices stay with the
+  operator token. The app talks to the API on :8000 (nginx on :8080 grants
+  LAN/VPN clients the operator token). /api/app/info (api_version 1) and
+  /api/app/summary (home screen in one call).
+- Toolchains: services/project_sandbox.TOOLCHAINS (SID_TOOLCHAINS, default
+  /opt/flutter, installed by scripts/install-flutter.sh with the SDK's own
+  pub cache inside the SDK) get a throwaway --tmp-overlay in every sandbox
+  and go on PATH for agents and gates. PUB_CACHE=<project>/cache/.pub-cache
+  (setup and agents write it, gates read it offline); pubspec.yaml projects
+  detect "flutter pub get" / "flutter analyze --no-pub && flutter test
+  --no-pub". Setup re-runs when dependency manifests change
+  (setup_fingerprint), not only when its command changes.
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

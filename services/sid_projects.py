@@ -255,6 +255,13 @@ def all_projects(redis_client):
 # Used when a project has no explicit command, so a project that starts empty
 # gets its tests and dependency install as soon as the builder adds them.
 
+def _read(path):
+    try:
+        return Path(path).read_text(errors="replace")
+    except OSError:
+        return ""
+
+
 def detect_gate(path):
     """The test command a checkout implies, or ""."""
     path = Path(path)
@@ -272,6 +279,11 @@ def detect_gate(path):
         return "cargo test"
     if (path / "go.mod").is_file():
         return "go test ./..."
+    if (path / "pubspec.yaml").is_file():
+        # Packages come from the setup step; tests run offline.
+        flutter = "flutter:" in _read(path / "pubspec.yaml")
+        tool = "flutter" if flutter else "dart"
+        return f"{tool} analyze --no-pub && {tool} test --no-pub" if (path / "test").is_dir() else f"{tool} analyze --no-pub"
     makefile = path / "Makefile"
     if makefile.is_file():
         try:
@@ -291,6 +303,8 @@ def detect_setup(path):
         steps.append("npm ci --no-audit --no-fund")
     elif (path / "package.json").is_file():
         steps.append("npm install --no-audit --no-fund")
+    if (path / "pubspec.yaml").is_file():
+        steps.append("flutter pub get" if "flutter:" in _read(path / "pubspec.yaml") else "dart pub get")
     if (path / "requirements.txt").is_file():
         steps.append("python3 -m venv .venv && .venv/bin/pip install -q pytest -r requirements.txt")
     elif (path / "pyproject.toml").is_file():

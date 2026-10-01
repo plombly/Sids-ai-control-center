@@ -44,6 +44,15 @@ HIDDEN = (
 MASKED_FILES = ("/run/docker.sock", "/var/run/docker.sock", "/run/containerd/containerd.sock")
 # Agent CLI state, re-exposed read-write inside the hidden /root.
 AGENT_STATE = ("/root/.codex", "/root/.claude", "/root/.claude.json")
+# Shared SDKs installed on the host (e.g. Flutter at /opt/flutter). Inside a
+# sandbox each gets a throwaway writable overlay: the SDK writes lock files
+# and caches into its own directory, and no project can change the real one.
+TOOLCHAINS = tuple(p for p in os.environ.get("SID_TOOLCHAINS", "/opt/flutter").split(":") if p)
+
+
+def toolchain_paths():
+    """bin directories of the installed toolchains, for PATH."""
+    return [os.path.join(path, "bin") for path in TOOLCHAINS if os.path.isdir(os.path.join(path, "bin"))]
 
 
 def enabled():
@@ -105,10 +114,20 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
         data = Path(data_dir) if data_dir else sid_projects.data_dir(project.id)
         data.mkdir(parents=True, exist_ok=True)
         args += ["--bind", str(data), str(data), "--setenv", "HOME", str(data), "--setenv", "DATA_DIR", str(data)]
-    if kind == "setup" and project_root.is_dir():
+    for path in TOOLCHAINS:
+        if os.path.isdir(path) and not os.path.islink(path):
+            args += ["--overlay-src", path, "--tmp-overlay", path]
+    if project_root.is_dir() and kind in ("setup", "gate", "agent"):
+        # Package caches shared by the project's setup, agents and gates:
+        # setup and agents may add packages, gates only read them (offline).
         cache = project_root / "cache"
         cache.mkdir(exist_ok=True)
-        args += ["--bind", str(cache), str(cache), "--setenv", "HOME", str(cache)]
+        if kind in ("setup", "agent"):
+            args += ["--bind", str(cache), str(cache)]
+        if kind == "setup":
+            args += ["--setenv", "HOME", str(cache)]
+        args += ["--setenv", "PUB_CACHE", str(cache / ".pub-cache"),
+                 "--setenv", "FLUTTER_SUPPRESS_ANALYTICS", "true", "--setenv", "DART_SUPPRESS_ANALYTICS", "true"]
     if kind in ("agent", "gate"):
         # No caches in the worktree (they would end up in the candidate).
         args += ["--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider"]

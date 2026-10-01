@@ -235,7 +235,7 @@ def gate_env(worktree=None):
     'python3 -m pytest' finds test tooling; system tools still resolve."""
     env = os.environ.copy()
     venv_bin = str(Path(SID_PYTHON).parent)
-    paths = [venv_bin]
+    paths = [venv_bin, *project_sandbox.toolchain_paths()]
     if worktree is not None:
         for local in (Path(worktree) / "node_modules/.bin", Path(worktree) / ".venv/bin"):
             if local.is_dir():
@@ -263,7 +263,22 @@ def _exclude_pattern(name):
     return "/" + escaped
 
 
-STANDARD_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".venv/")
+STANDARD_EXCLUDES = ("__pycache__/", "*.pyc", ".pytest_cache/", "node_modules/", ".venv/", ".dart_tool/")
+# Files whose change means dependencies must be installed again.
+DEPENDENCY_MANIFESTS = ("package.json", "package-lock.json", "requirements.txt", "pyproject.toml",
+                        "pubspec.yaml", "pubspec.lock", "Cargo.toml", "go.mod")
+
+
+def setup_fingerprint(worktree, command):
+    """What a finished setup step covered: its command and the dependency
+    manifests at that time (a builder adding a package re-runs setup)."""
+    import hashlib
+    digest = hashlib.sha256(command.encode())
+    for name in DEPENDENCY_MANIFESTS:
+        path = Path(worktree) / name
+        if path.is_file() and not path.is_symlink():
+            digest.update(name.encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
 STANDARD_EXCLUDE_HEADER = "# sid: caches and installed dependencies (never committed)"
 
 
@@ -309,7 +324,8 @@ def project_setup(worktree, timeout=900):
         return True, ""
     gitdir = Path(run_git("rev-parse", "--absolute-git-dir", cwd=worktree).stdout.strip())
     marker = gitdir / SETUP_MARKER
-    if marker.is_file() and marker.read_text() == command:
+    fingerprint = setup_fingerprint(worktree, command)
+    if marker.is_file() and marker.read_text() == fingerprint:
         return True, ""
     tracked_clean = not run_git("status", "--porcelain", "--untracked-files=no", cwd=worktree).stdout.strip()
     before = untracked_files(worktree)
@@ -326,7 +342,8 @@ def project_setup(worktree, timeout=900):
             run_git("checkout", "--", ".", cwd=worktree, check=False)
         ignore_setup_output(worktree, untracked_files(worktree) - before)
     if result.returncode == 0:
-        marker.write_text(command)
+        # After the run: setup may write lock files (pubspec.lock, ...).
+        marker.write_text(setup_fingerprint(worktree, command))
     output = f"$ {command}  (setup)\n{result.stdout}{result.stderr}"
     return result.returncode == 0, output[-6000:]
 
@@ -2192,6 +2209,10 @@ def _process_job(raw_job):
 
 
 def main():
+    # Shared SDKs (project_sandbox.TOOLCHAINS) on PATH for agents and gates.
+    extra = [p for p in project_sandbox.toolchain_paths() if p not in os.environ.get("PATH", "").split(os.pathsep)]
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")])
     print(
         f"SID worker starting: {WORKER_ID} "
         f"role={WORKER_ROLE} "
