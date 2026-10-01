@@ -10,10 +10,7 @@
 <body>
   <main class="shell">
     <header class="topbar">
-      <div>
-        <p class="eyebrow">SID // OPERATIONS</p>
-        <h1>AI Command Center</h1>
-      </div>
+      <a class="brand" href="#/"><span class="brand-mark">S</span><span><strong>SID</strong><small>AI Command Center</small></span></a>
       <nav class="view-nav" aria-label="Sections">
         <a href="#/" data-nav="dashboard">Dashboard</a>
         <a href="#/projects" data-nav="projects">Projects</a>
@@ -39,6 +36,18 @@
     </div>
 
     <div id="view-dashboard" data-view="dashboard">
+    <div id="home" class="home">
+      <div id="home-status"></div>
+      <section id="home-composer" class="home-section composer-section" aria-label="Give SID work"></section>
+      <section class="home-section" aria-labelledby="needs-title"><h2 id="needs-title">Needs you <span id="home-needs-count" class="badge"></span></h2><div id="home-needs"><div class="home-empty">Loading…</div></div></section>
+      <div class="home-columns">
+        <section class="home-section" aria-labelledby="progress-title"><h2 id="progress-title">In progress</h2><div id="home-progress"><div class="home-empty">Loading…</div></div></section>
+        <section class="home-section" aria-labelledby="projects-title"><h2 id="projects-title">Projects</h2><div id="home-projects"><div class="home-empty">Loading…</div></div></section>
+      </div>
+      <section class="home-section" aria-labelledby="recent-title"><h2 id="recent-title">Recently finished</h2><div id="home-recent"><div class="home-empty">Loading…</div></div></section>
+    </div>
+    <details id="advanced" class="advanced">
+      <summary>Details: workers, queues, job history, usage and system health</summary>
     <section class="metric-grid" aria-label="System overview">
       <article class="metric-card accent"><span>System status</span><strong id="metric-status">—</strong><small id="metric-services">Awaiting telemetry</small></article>
       <article class="metric-card"><span>Repository</span><strong id="metric-branch">—</strong><small id="metric-repo">Unknown state</small></article>
@@ -57,8 +66,9 @@
       <section class="panel"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Failures & completions</h2></div><div><span class="count danger" id="failure-count">—</span><button data-dismiss-all="failures">Dismiss all shown</button></div></div><div id="failures" class="stack history" data-empty="No historical failures"></div></section>
       <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Completed work</h2></div><div class="history-controls"><span class="count" id="history-range">jobs 1-0</span><button data-history="newer">Newer</button><button data-history="older">Older</button><button data-dismiss-all="history">Dismiss all shown</button></div></div><div id="history" class="table-wrap" data-empty="No completed work"></div></section>
     </div>
+    </details>
     </div>
-    <footer>Read-only telemetry · refreshes every 2 seconds · <span id="poll-state">No data yet</span></footer>
+    <footer>Updates every 2 seconds · <span id="poll-state">No data yet</span></footer>
   </main>
   <script type="module" src="app.js"></script>
 </body>

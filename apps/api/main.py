@@ -184,10 +184,20 @@ def _page(items, offset, limit):
     return items[offset:offset + _limit(limit)]
 
 
+def _job_title(data):
+    """A readable one-line title: the planner's title, else the prompt's first line."""
+    title = _text(data.get("title"))
+    if not title:
+        lines = [line.strip() for line in _text(data.get("prompt"), "").splitlines() if line.strip()]
+        title = lines[0] if lines else ""
+    return title if len(title) <= 140 else title[:137] + "…"
+
+
 def _job(key, data):
     data = data if isinstance(data, dict) else {}
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
+        "title": _job_title(data),
         "project_id": _text(data.get("project_id"), "sid"),
         "goal_id": _text(data.get("goal_id")),
         "status": _text(data.get("status"), "unknown"),

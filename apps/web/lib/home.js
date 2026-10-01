@@ -1,0 +1,224 @@
+// The dashboard's home view: what needs you, what SID is doing, your
+// projects and what finished recently, plus a box to give SID new work.
+// Built from the data app.js already polls (renderPanels(state)) plus the
+// project list and system health. The detailed panels stay available under
+// "Details" (index.html).
+import { requestJSON, newRequestId } from './api.js';
+import { esc, escValue, text } from './format.js';
+import { registerPanel } from './registry.js';
+import { previewMarkup } from './markup.js';
+
+const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
+const FINISHED_GOAL = { completed: 'done', failed: 'failed', planning_failed: 'failed' };
+const RUNNING_JOB = { claimed: 'starting', running: 'building', testing: 'testing', reviewing: 'reviewing', integrating: 'checking', repairing: 'fixing', awaiting_review: 'in review' };
+const ROLE_WORD = { builder: 'Building', reviewer: 'Reviewing', repair: 'Fixing review notes', integrate: 'Checking it fits main' };
+
+export function timeAgo(seconds, now = Date.now() / 1000) {
+  const age = Math.max(0, now - (Number(seconds) || 0));
+  if (!seconds) return '';
+  if (age < 60) return 'just now';
+  if (age < 3600) return `${Math.floor(age / 60)} min ago`;
+  if (age < 86400) return `${Math.floor(age / 3600)} h ago`;
+  return `${Math.floor(age / 86400)} d ago`;
+}
+
+const firstLine = value => {
+  const line = text(value, '').split('\n').map(item => item.trim()).find(Boolean) || '';
+  return line.length > 120 ? `${line.slice(0, 117)}…` : line;
+};
+const projectChip = (id, names = {}) => `<span class="chip">${esc(names[id] || id || 'sid')}</span>`;
+
+// --- status line -----------------------------------------------------------------------
+
+export function statusMarkup({ health, workers = [], jobs = [], projects = [] }) {
+  const report = health?.report || health || {};
+  const problems = (report.checks || []).filter(check => check.level !== 'ok');
+  const level = report.status || (problems.length ? 'warn' : 'ok');
+  const busy = workers.filter(worker => /^(working|busy)$/i.test(text(worker.status, ''))).length;
+  const queued = jobs.filter(job => job.status === 'queued').length;
+  const headline =
+    level === 'ok'
+      ? 'Everything is running normally'
+      : `${problems.length === 1 ? 'One thing needs' : `${problems.length} things need`} a look: ${problems.map(check => check.name).join(', ')}`;
+  return `<div class="home-status level-${escValue(level)}"><span class="status-dot"></span><div><strong>${esc(headline)}</strong><div class="home-facts"><span>${esc(workers.length)} workers · ${esc(busy)} busy</span><span>${esc(queued)} queued</span><span>${esc(projects.length)} projects</span></div></div><button type="button" class="detail-button" data-home-details>${level === 'ok' ? 'Details' : 'See what is wrong'}</button></div>`;
+}
+
+// --- needs you ---------------------------------------------------------------------------
+
+export function needsYou({ approvals = [], jobs = [], dismissed = new Set() }) {
+  const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass');
+  const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id));
+  return { ready, stuck };
+}
+
+export function needsYouMarkup(items, names = {}) {
+  const { ready, stuck } = items;
+  if (!ready.length && !stuck.length) return '<div class="home-empty">Nothing needs you right now.</div>';
+  const approval = job => `<article class="home-card attention"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state ok">Ready to approve</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Tests and review passed. Approving puts it into main.</p><div class="card-actions"><button type="button" class="approve-button" data-op="approve" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}" data-candidate="${escValue(job.integrated_candidate_commit)}">Approve</button>${previewMarkup(job)}<button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}">Reject</button></div></article>`;
+  const stuckCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Stuck</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">SID gave up after several tries${job.error ? `: ${esc(firstLine(job.error))}` : ''}.</p><div class="card-actions"><button type="button" data-op="extend" data-job="${escValue(job.id)}" data-status="needs_human">Try again</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="needs_human">Give up</button></div></article>`;
+  return `<div class="home-cards">${ready.map(approval).join('')}${stuck.map(stuckCard).join('')}</div>`;
+}
+
+// --- in progress -------------------------------------------------------------------------
+
+export function inProgressMarkup({ goals = [], jobs = [] }, names = {}, now = Date.now() / 1000) {
+  const active = goals.filter(goal => ACTIVE_GOAL.test(text(goal.status, '')));
+  if (!active.length) return '<div class="home-empty">SID is idle. Give it something to do above.</div>';
+  return `<div class="home-cards">${active
+    .map(goal => {
+      const progress = goal.progress || {};
+      const total = Number(progress.total || goal.total) || 0;
+      const done = Number(progress.completed || goal.completed) || 0;
+      const percent = total ? Math.round((done / total) * 100) : 0;
+      const current = jobs.find(job => job.goal_id === goal.id && RUNNING_JOB[job.status]);
+      const step = goal.status === 'queued' ? 'Waiting to be planned' : goal.status === 'planning' ? 'Planning the work' : current ? `${ROLE_WORD[current.role] || 'Working'}: ${firstLine(current.title)}` : total ? 'Waiting for a free worker' : 'Planning the work';
+      return `<article class="home-card"><div class="card-top">${projectChip(goal.project_id, names)}<span class="subtle">${esc(timeAgo(goal.created_at, now))}</span></div><h3>${esc(firstLine(goal.summary || goal.prompt) || goal.id)}</h3><div class="progress"><i style="width:${percent}%"></i></div><p class="subtle">${total ? `${esc(done)} of ${esc(total)} steps done · ` : ''}${esc(step)}</p></article>`;
+    })
+    .join('')}</div>`;
+}
+
+// --- projects ----------------------------------------------------------------------------
+
+export function projectsMarkup(projects = [], hostname = globalThis.location?.hostname || 'localhost') {
+  if (!projects.length) return '<div class="home-empty">No projects yet. <a href="#/projects/new">Create one</a>.</div>';
+  return `<div class="home-projects">${projects
+    .map(project => {
+      const counts = project.counts || {};
+      const busy = (counts.jobs_running || 0) + (counts.jobs_queued || 0);
+      const app = project.app;
+      const appLine =
+        app?.state === 'running' && app.port
+          ? `<a class="app-link" href="http://${escValue(hostname)}:${escValue(app.port)}/" target="_blank" rel="noopener">App running · open</a>`
+          : app?.state && app.state !== 'stopped'
+            ? `<span class="app-link warn">App ${esc(app.state.replace('_', ' '))}</span>`
+            : '';
+      return `<a class="home-project" href="#/projects/${encodeURIComponent(project.id)}"><div class="card-top"><strong>${esc(project.name || project.id)}</strong><span class="importance imp-${escValue(project.importance)}">${esc(project.importance || '')}</span></div><span class="subtle">${busy ? `${esc(busy)} job${busy === 1 ? '' : 's'} in progress` : 'Idle'}${counts.jobs_awaiting_approval ? ` · ${esc(counts.jobs_awaiting_approval)} to approve` : ''}</span>${appLine}</a>`;
+    })
+    .join('')}<a class="home-project add" href="#/projects/new"><strong>+ New project</strong><span class="subtle">Start empty or import from GitHub</span></a></div>`;
+}
+
+// --- recently finished -------------------------------------------------------------------
+
+export function recentMarkup(goals = [], names = {}, now = Date.now() / 1000) {
+  const finished = goals
+    .filter(goal => FINISHED_GOAL[goal.status])
+    .sort((a, b) => (Number(b.updated_at) || 0) - (Number(a.updated_at) || 0))
+    .slice(0, 6);
+  if (!finished.length) return '<div class="home-empty">Nothing finished yet.</div>';
+  return `<ul class="home-recent">${finished
+    .map(goal => {
+      const ok = goal.status === 'completed';
+      return `<li><span class="mark ${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✕'}</span><span class="recent-title">${esc(firstLine(goal.summary || goal.prompt) || goal.id)}</span>${projectChip(goal.project_id, names)}<span class="subtle">${esc(timeAgo(goal.updated_at, now))}</span></li>`;
+    })
+    .join('')}</ul>`;
+}
+
+// --- new work ----------------------------------------------------------------------------
+
+export function composerMarkup(projects = []) {
+  const options = (projects.length ? projects : [{ id: 'sid', name: 'SID AI Command Center' }])
+    .map(project => `<option value="${escValue(project.id)}">${esc(project.name || project.id)}</option>`)
+    .join('');
+  return `<form id="home-goal-form" class="home-composer" autocomplete="off"><label class="composer-label" for="home-goal-text">What should SID work on?</label><textarea id="home-goal-text" name="goal" rows="2" placeholder="e.g. Add a contact page with a form that emails me" required></textarea><div class="composer-row"><label class="composer-project">Project <select name="project" id="home-goal-project">${options}</select></label><label class="composer-atomic"><input type="checkbox" name="atomic"> Small change (one step)</label><button type="submit" class="primary">Start</button></div><span id="home-goal-status" class="form-status" role="status"></span></form>`;
+}
+
+// --- wiring ------------------------------------------------------------------------------
+
+let projects = [];
+let health = null;
+const drawn = {};
+
+function paint(id, html) {
+  const node = document.getElementById(id);
+  if (node && drawn[id] !== html) {
+    node.innerHTML = html;
+    drawn[id] = html;
+  }
+}
+
+function draw(state) {
+  if (typeof document === 'undefined' || !document.getElementById('home')) return;
+  const get = key => (Array.isArray(state?.[key]?.data) ? state[key].data : []);
+  const names = Object.fromEntries(projects.map(project => [project.id, project.name || project.id]));
+  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set() });
+  const count = items.ready.length + items.stuck.length;
+  paint('home-status', statusMarkup({ health, workers: get('workers'), jobs: get('jobs'), projects }));
+  paint('home-needs-count', count ? String(count) : '');
+  paint('home-needs', needsYouMarkup(items, names));
+  paint('home-progress', inProgressMarkup({ goals: get('goals'), jobs: get('jobs') }, names));
+  paint('home-projects', projectsMarkup(projects));
+  paint('home-recent', recentMarkup(get('goals'), names));
+}
+
+let lastState = null;
+
+async function refreshSide() {
+  try {
+    projects = await requestJSON('/api/projects');
+  } catch {}
+  try {
+    health = await requestJSON('/api/system-health');
+  } catch {}
+  // Only the project options change; whatever is typed in the box stays.
+  const select = document.getElementById('home-goal-project');
+  const ids = projects.map(project => project.id).join(',');
+  if (select && projects.length && select.dataset.ids !== ids) {
+    const chosen = select.value;
+    select.innerHTML = projects.map(project => `<option value="${escValue(project.id)}">${esc(project.name || project.id)}</option>`).join('');
+    select.dataset.ids = ids;
+    if (chosen && projects.some(project => project.id === chosen)) select.value = chosen;
+  }
+  draw(lastState);
+}
+
+function wireComposer() {
+  const form = document.getElementById('home-goal-form');
+  if (!form || form.dataset.wired) return;
+  form.dataset.wired = '1';
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const status = document.getElementById('home-goal-status');
+    const values = Object.fromEntries(new FormData(form).entries());
+    const goal = text(values.goal, '').trim();
+    if (!goal) return;
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    status.textContent = 'Sending…';
+    try {
+      const response = await requestJSON(`/api/projects/${encodeURIComponent(values.project || 'sid')}/goals`, {
+        method: 'POST',
+        body: JSON.stringify({ goal, atomic: values.atomic === 'on', request_id: newRequestId() })
+      });
+      form.querySelector('textarea').value = '';
+      status.textContent = response.duplicate ? 'SID is already working on that.' : 'Got it. It shows up under "In progress" in a moment.';
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+if (typeof document !== 'undefined') {
+  registerPanel(state => {
+    lastState = state;
+    draw(state);
+  });
+  const start = () => {
+    const composer = document.getElementById('home-composer');
+    if (composer && !composer.firstChild) composer.innerHTML = composerMarkup(projects);
+    wireComposer();
+    refreshSide();
+    setInterval(refreshSide, 10000);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+  document.addEventListener('click', event => {
+    if (!event.target.closest('[data-home-details]')) return;
+    const details = document.getElementById('advanced');
+    if (details) {
+      details.open = true;
+      details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+}
