@@ -37,7 +37,7 @@ export function usageMarkup(data, days = 30) {
     .join('');
   const roles = (data.by_role || []).map(row => `<span class="pill">${esc(row.role)} ${esc(number(row.jobs))} · ${esc(money(row.cost_usd))}</span>`).join(' ');
   const choices = RANGES.map(value => `<button type="button" class="${value === days ? 'active' : ''}" data-usage-days="${value}">${value} days</button>`).join('');
-  return `<div class="file-tabs usage-range">${choices}</div>${headline}<p class="subtle">Claude cost is what the same usage would cost on the API; it runs on your claude.ai plan. Codex runs on your ChatGPT plan and reports tokens.</p><div class="usage-bars" aria-label="Tokens per day">${bars}</div><div class="stack">${roles}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Project</th><th>Jobs</th><th>Claude cost</th><th>Tokens</th></tr></thead><tbody>${projects}</tbody></table></div>`;
+  return `<div class="file-tabs usage-range">${choices}</div>${headline}<p class="subtle">Claude cost is what the same usage would cost on the API; it runs on your claude.ai plan. Codex runs on your ChatGPT plan and reports tokens.</p><div class="usage-bars" aria-label="Tokens per day">${bars}</div><div class="usage-roles">${roles}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Project</th><th>Jobs</th><th>Claude cost</th><th>Tokens</th></tr></thead><tbody>${projects}</tbody></table></div>`;
 }
 
 let started = false;

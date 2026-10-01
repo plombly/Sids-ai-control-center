@@ -978,3 +978,12 @@ label {
 .usage-range {
   justify-content: flex-end;
 }
+.usage-bar {
+  max-width: 28px;
+}
+.usage-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
