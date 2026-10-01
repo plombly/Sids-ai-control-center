@@ -179,3 +179,11 @@ def test_out_of_memory_is_explained(apps, monkeypatch):
 def test_failed_units_are_kept_for_the_crash_report():
     module = load_module(ROOT / "services/apps/sid_apps.py")
     assert '"--collect"' not in (ROOT / "services/apps/sid_apps.py").read_text().split("def start_unit")[1].split("def deploy")[0]
+
+
+def test_apps_load_secrets_from_their_env_file(apps):
+    module, repo, root, calls, units = apps
+    module.loop_once()
+    [run] = started(calls)
+    assert f"--property=EnvironmentFile=-{module.ENV_DIR}/shop.env" in run
+    assert not any("API_KEY" in arg for arg in run)  # values never on the command line

@@ -883,3 +883,22 @@ label {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+
+.env-settings {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.env-row code {
+  min-width: 180px;
+}
+.env-row button {
+  margin-left: auto;
+}

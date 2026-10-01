@@ -38,6 +38,9 @@ LOOP_SECONDS = float(os.getenv("APPS_LOOP_SECONDS", "10"))
 SETUP_TIMEOUT = int(os.getenv("APPS_SETUP_TIMEOUT", "900"))
 PORT_RANGE = range(int(os.getenv("APPS_PORT_MIN", "8100")), int(os.getenv("APPS_PORT_MAX", "8199")) + 1)
 STATUS_PREFIX = "sid:app-status:"
+# Project secrets written by the API (apps/api/env_routes.py), loaded by the
+# app's unit with EnvironmentFile= (never on a command line).
+ENV_DIR = Path(os.getenv("SID_PROJECT_ENV_DIR", "/etc/sid-ai/project-env"))
 SYSTEMCTL = os.getenv("SYSTEMCTL", "systemctl")
 SYSTEMD_RUN = os.getenv("SYSTEMD_RUN", "systemd-run")
 JOURNALCTL = os.getenv("JOURNALCTL", "journalctl")
@@ -168,6 +171,7 @@ def start_unit(project, live, port):
             f"--property=MemoryMax={project.run_memory_mb}M", "--property=MemorySwapMax=0",
             f"--property=CPUQuota={int(project.run_cpus * 100)}%", f"--property=TasksMax={project.run_tasks}",
             f"--property=WorkingDirectory={live}",
+            f"--property=EnvironmentFile=-{ENV_DIR / (project.id + '.env')}",
             f"--description=SID app {project.id}"]
     args += [f"--setenv={k}={v}" for k, v in env.items()]
     result = run([*args, "--", *inner])

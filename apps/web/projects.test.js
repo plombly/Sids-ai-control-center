@@ -144,3 +144,14 @@ test('build settings include app limits and send only what is filled in', () => 
   assert.deepEqual(buildSettingsRequest({ setup_command: '', gate_command: '', run_command: '', run_memory_mb: '256', run_cpus: '', run_tasks: '' }),
     { setup_command: '', gate_command: '', run_command: '', run_memory_mb: 256 });
 });
+
+test('environment: names and lengths only, never values; not for SID', async () => {
+  const { envMarkup } = await import('./lib/projects.js');
+  const html = envMarkup('shop', { variables: [{ name: 'STRIPE_KEY', length: 32 }] });
+  assert.match(html, /<code>STRIPE_KEY<\/code>/);
+  assert.match(html, /32 characters/);
+  assert.match(html, /data-env-delete="STRIPE_KEY"/);
+  assert.match(html, /type="password"/);
+  assert.equal(envMarkup('sid', {}), '');
+  assert.match(envMarkup('shop', null), /No variables yet/);
+});

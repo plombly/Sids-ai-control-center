@@ -64,7 +64,7 @@ export function projectDetailMarkup(project) {
     project.importance === 'low' ? ' selected' : ''
   }>low</option></select></label></div><div class="stack">${pill(project.status)}${retry}</div><form id="project-goal-form" class="goal-form"><textarea name="goal" placeholder="Describe work for ${esc(
     name
-  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form>${id === 'sid' ? systemInfoMarkup(project.system) : '<form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>'}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${buildSettingsMarkup(project)}${deleteProjectMarkup(id)}</section>`;
+  )}" required></textarea><label><input type="checkbox" name="atomic"> atomic</label><button type="submit">Submit goal</button><span id="project-goal-status" class="form-status" role="status"></span></form>${id === 'sid' ? systemInfoMarkup(project.system) : '<form id="project-push-form" class="goal-form"><div class="form-row"><input name="url" placeholder="GitHub repository URL" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>'}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Provider/model</th></tr></thead><tbody>${jobRows}</tbody></table></div>${buildSettingsMarkup(project)}${envMarkup(id, project.env)}${deleteProjectMarkup(id)}</section>`;
 }
 
 const APP_STATES = {
@@ -115,6 +115,18 @@ export function buildSettingsRequest(values) {
 }
 
 // Deleting wipes the project from the server; SID itself cannot be deleted.
+// Secrets for the running app: names only, values are write-only.
+export function envMarkup(id, env) {
+  if (!id || id === 'sid') return '';
+  const variables = Array.isArray(env?.variables) ? env.variables : [];
+  const rows = variables.length
+    ? variables
+        .map(item => `<div class="env-row"><code>${esc(item.name)}</code><span class="subtle">${'•'.repeat(Math.min(8, Math.max(4, item.length || 0)))} (${esc(item.length)} characters)</span><button type="button" class="danger-button" data-env-delete="${escValue(item.name)}">Delete</button></div>`)
+        .join('')
+    : '<div class="empty">No variables yet</div>';
+  return `<form id="project-env-form" class="goal-form env-settings" autocomplete="off"><h3>Environment &amp; secrets</h3><p class="subtle">Given only to the running app (e.g. <code>process.env.API_KEY</code>), never to the AI builders, tests or logs. Values can be replaced but not read back. Saving restarts the app.</p><div class="stack">${rows}</div><div class="form-row"><input name="name" placeholder="NAME" aria-label="Variable name" autocomplete="off" spellcheck="false"><input name="value" type="password" placeholder="value" aria-label="Variable value" autocomplete="new-password"><button type="submit">Save variable</button></div><span id="project-env-status" class="form-status" role="status"></span></form>`;
+}
+
 // Deleted projects still restorable (GET /api/projects-trash).
 export function trashMarkup(items, now = Date.now() / 1000) {
   if (!Array.isArray(items) || !items.length) return '';
@@ -226,7 +238,11 @@ if (typeof document !== 'undefined') {
       return;
     }
     try {
-      const project = await requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}?limit=25`);
+      const [project, env] = await Promise.all([
+        requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}?limit=25`),
+        route.projectId === 'sid' ? null : requestJSON(`/api/projects/${encodeURIComponent(route.projectId)}/env`).catch(() => null)
+      ]);
+      if (project) project.env = env;
       if (version === renderVersion) detailMain().innerHTML = projectDetailMarkup(project);
     } catch (error) {
       if (version !== renderVersion) return;
@@ -245,6 +261,16 @@ if (typeof document !== 'undefined') {
   });
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
+  });
+  registerClick('envDelete', async button => {
+    const name = button.dataset.envDelete;
+    if (!globalThis.confirm?.(`Delete ${name}? The app restarts without it.`)) return;
+    try {
+      await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}/env/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await render(activeRoute, true);
+    } catch (error) {
+      button.textContent = error.message;
+    }
   });
   registerClick('restoreTrash', async button => {
     button.disabled = true;
@@ -318,6 +344,17 @@ if (typeof document !== 'undefined') {
           body: JSON.stringify({ goal: values.goal?.trim(), atomic: values.atomic === 'on', request_id: requestId() })
         });
         status('project-goal-status', `Submitted goal ${response.id}`);
+      } else if (form.id === 'project-env-form') {
+        const name = text(values.name, '').trim();
+        if (!name) return status('project-env-status', 'Enter a name');
+        await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}/env`, {
+          method: 'PUT',
+          body: JSON.stringify({ name, value: values.value ?? '' })
+        });
+        form.reset();
+        document.activeElement?.blur?.();
+        status('project-env-status', `Saved ${name}; the app restarts with it`);
+        await render(activeRoute, true);
       } else if (form.id === 'project-settings-form') {
         const body = buildSettingsRequest(values);
         if (body.run_port !== undefined && !(body.run_port >= 8100 && body.run_port <= 8199))

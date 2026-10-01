@@ -62,6 +62,9 @@ services:
       - /opt/sid-projects:/projects:ro
       - /opt/sid-project-data:/project-data
       - /opt/sid-uploads:/uploads
+      # Project secrets (apps/api/env_routes.py), written here, read only by
+      # each app's systemd unit on the host.
+      - /etc/sid-ai/project-env:/project-env
     depends_on:
       postgres:
         condition: service_healthy

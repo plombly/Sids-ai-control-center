@@ -30,6 +30,7 @@ UPLOADS_BASE = Path(os.environ.get("SID_UPLOADS", "/opt/sid-uploads"))
 TRASH_BASE = Path(os.environ.get("SID_TRASH", "/opt/sid-trash"))
 TRASH_HOURS = float(os.environ.get("SID_TRASH_HOURS", "24"))
 TRASH_SET = "sid:trash"
+ENV_BASE = Path(os.environ.get("SID_PROJECT_ENV_DIR", "/etc/sid-ai/project-env"))
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
@@ -352,6 +353,10 @@ def delete(args):
         if target is not None:
             _move_into(target, trash / name)
             moved[name] = str(target)
+    env_file = ENV_BASE / f"{args.id}.env"
+    if env_file.is_file() and not env_file.is_symlink():
+        _move_into(env_file, trash / "env")
+        moved["env"] = str(env_file)
     saved["moved"] = moved
     (trash / "records.json").write_text(json.dumps(saved))
 

@@ -175,6 +175,7 @@ def deletable(monkeypatch, tmp_path):
     monkeypatch.setattr(sid_project, "KEYS_BASE", tmp_path / "keys")
     monkeypatch.setattr(sid_project.sid_projects, "DATA_BASE", tmp_path / "project-data")
     monkeypatch.setattr(sid_project, "TRASH_BASE", tmp_path / "trash")
+    monkeypatch.setattr(sid_project, "ENV_BASE", tmp_path / "project-env")
     root = base / "shop"
     for sub in ("repo", "worktrees", "logs"):
         (root / sub).mkdir(parents=True)
@@ -469,6 +470,8 @@ def test_restore_brings_everything_back(deletable, capsys, tmp_path):
     data = tmp_path / "project-data" / "shop"
     data.mkdir(parents=True)
     (data / "app.db").write_text("rows")
+    (tmp_path / "project-env").mkdir()
+    (tmp_path / "project-env" / "shop.env").write_text('API_KEY="k"\n')
     before_jobs = list(fake.lists["sid:jobs"])
     _, _, out = invoke(["delete", "shop", "--confirm", "shop"], capsys)
     listed = invoke(["trash"], capsys)[2]
@@ -477,6 +480,7 @@ def test_restore_brings_everything_back(deletable, capsys, tmp_path):
     assert code == 0, captured.err
     assert back["status"] == "restored" and (back["jobs_restored"], back["goals_restored"]) == (2, 1)
     assert (root / "repo").is_dir() and (data / "app.db").read_text() == "rows"
+    assert (tmp_path / "project-env" / "shop.env").read_text() == 'API_KEY="k"\n'
     assert fake.hashes["sid:projects:shop"]["status"] == "active" and "shop" in fake.sets["sid:projects"]
     assert fake.hashes["sid:jobs:b1"]["status"] == "queued" and fake.hashes["sid:goals:g1"]["id"] == "g1"
     assert sorted(fake.lists["sid:jobs"]) == sorted(before_jobs)

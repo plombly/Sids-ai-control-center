@@ -1177,7 +1177,9 @@ def project_tasks(project_id: int, db: Session = Depends(get_db)):
 from agent_routes import router as agent_router
 from project_routes import router as project_router
 from file_routes import router as file_router
+from env_routes import router as env_router
 
 app.include_router(agent_router)
 app.include_router(project_router)
 app.include_router(file_router)
+app.include_router(env_router)
