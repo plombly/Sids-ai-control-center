@@ -6,25 +6,25 @@ the iOS app on the Mac, the paid Apple developer account and the VPN network
 extension, a real Android release signing key (today's APK is debug-signed),
 TestFlight / App Store / Play Store / F-Droid releases, pinning the app's
 Flutter version, a test Android build before app changes are approved, and
-real push notifications (APNs / Firebase). The checks under "SID App" below
+real push notifications (APNs / Firebase). The checks under "LAIka App" below
 can wait until then.
 
 Things only you can check: on your own devices, with real projects, or by
 waiting for a scheduled event. Tick them off as you go and note anything
 that felt wrong; we'll go through the notes together.
 
-## SID App (checkpoint B)
-- [ ] Install the APK on your Android phone: dashboard → SID App → Builds →
-      Download (build apk5), unzip, open sid-app.apk (allow "install unknown apps").
-- [ ] SID dashboard → Settings → Phones & apps → Add a phone; in the app
+## LAIka App (checkpoint B)
+- [ ] Install the APK on your Android phone: dashboard → LAIka App → Builds →
+      Download (build apk5), unzip, open laika-app.apk (allow "install unknown apps").
+- [ ] LAIka dashboard → Settings → Phones & apps → Add a phone; in the app
       Settings → Add server → Scan QR code. The server appears and is active.
 - [ ] App Settings → the server's key icon (VPN): import your .ovpn, enter the
       password, Save, Connect now. Android asks for VPN permission once.
 - [ ] Off Wi-Fi (mobile data): open Home; the app connects the VPN by itself
-      and shows SID's status, Needs you, In progress and Recently finished.
-- [ ] Projects tab: open SID App, press "Give SID work", try "Plan it with me".
+      and shows LAIka's status, Needs you, In progress and Recently finished.
+- [ ] Projects tab: open LAIka App, press "Give LAIka work", try "Plan it with me".
 - [ ] Answer a stuck job or an internet request from the Home tab.
-- [ ] Revoke the phone in SID Settings: the app says its key is no longer valid.
+- [ ] Revoke the phone in LAIka Settings: the app says its key is no longer valid.
 - [ ] iPhone (on your Mac): flutter build ios / run from Xcode works for
       everything except the VPN, which needs the paid account (see README).
 
@@ -55,7 +55,7 @@ that felt wrong; we'll go through the notes together.
 ## Project types and builds (checkpoint 2)
 - [ ] Each project's Overview shows the right type. Open **Why?** and check
       the reasons make sense.
-- [ ] On a project SID doesn't recognise, use Settings → **Describe it**,
+- [ ] On a project LAIka doesn't recognise, use Settings → **Describe it**,
       then try **Recheck now**.
 - [ ] The goal-idea buttons fill the goal box with the first blank selected.
 - [ ] Build a real project, download the zip on your PC and run what's inside

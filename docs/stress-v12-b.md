@@ -1,4 +1,4 @@
-# SID v1.2 Worker Isolation Test
+# LAIka v1.2 Worker Isolation Test
 
 - **Purpose:** Verify that one worker’s state and failures do not affect another worker.
 - **Isolation scenario:** Run two workers concurrently with separate jobs; have worker A mutate its state and fail while worker B continues its independent job.

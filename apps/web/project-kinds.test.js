@@ -36,17 +36,17 @@ test('unknown projects say so, link to Settings and still offer general ideas', 
   assert.match(html, /#\/projects\/x\/settings/);
   assert.match(html, /Add a feature/);
   assert.match(kindCardMarkup({ id: 'x', project_type: { type: 'checking' } }, catalog), /Looking at the project/);
-  assert.doesNotMatch(kindCardMarkup({ id: 'sid', project_type: { type: 'unknown' } }, catalog), /data-kind-recheck/);
+  assert.doesNotMatch(kindCardMarkup({ id: 'laika', project_type: { type: 'unknown' } }, catalog), /data-kind-recheck/);
 });
 
-test('type settings: automatic option names the detected type; SID has no build fields', () => {
+test('type settings: automatic option names the detected type; LAIka has no build fields', () => {
   const html = kindSettingsMarkup({ id: 'g', build_image: 'node:22', project_type: { detected: 'game', chosen: 'website', description: 'a <b> site' } }, catalog);
   assert.match(html, /Automatic \(Game\)/);
   assert.match(html, /<option value="website" selected>/);
   assert.match(html, /a &lt;b&gt; site/);
   assert.match(html, /value="node:22"/);
   assert.doesNotMatch(kindSettingsMarkup({ id: 'g', project_type: {} }, catalog), /—/);
-  assert.doesNotMatch(kindSettingsMarkup({ id: 'sid', project_type: {} }, catalog), /build_command/);
+  assert.doesNotMatch(kindSettingsMarkup({ id: 'laika', project_type: {} }, catalog), /build_command/);
   assert.deepEqual(kindRequest({ type: '', type_description: ' a  bot\n', build_image: ' x ' }), { type: '', type_description: 'a bot', build_image: 'x' });
 });
 
@@ -79,9 +79,9 @@ test('helpers format sizes and ages', () => {
   assert.equal(agoText(0, 160), '');
 });
 
-test('projects get a Builds tab (not SID) and the overview shows the type card', () => {
+test('projects get a Builds tab (not LAIka) and the overview shows the type card', () => {
   assert.match(tabsMarkup('g', 'builds'), /href="#\/projects\/g\/builds" class="active"/);
-  assert.doesNotMatch(tabsMarkup('sid', 'overview'), /builds/);
+  assert.doesNotMatch(tabsMarkup('laika', 'overview'), /builds/);
   const html = projectDetailMarkup({ id: 'g', name: 'G', catalog, project_type: { type: 'game', stack: 'love2d' } }, 'overview');
   assert.match(html, /kind-card[\s\S]*data-assist-start="project:g"/);
 });
@@ -90,7 +90,7 @@ test('internet access settings for tests and builds', () => {
   const html = kindSettingsMarkup({ id: 'g', gate_network: 'always', build_network: 'none', project_type: {} }, catalog);
   assert.match(html, /<option value="always" selected>Always allowed/);
   assert.match(html, /<option value="none" selected>No network at all/);
-  assert.doesNotMatch(kindSettingsMarkup({ id: 'sid', project_type: {} }, catalog), /gate_network/);
+  assert.doesNotMatch(kindSettingsMarkup({ id: 'laika', project_type: {} }, catalog), /gate_network/);
   assert.deepEqual(kindRequest({ type: '', type_description: '', gate_network: 'always', build_network: 'internet' }),
     { type: '', type_description: '', gate_network: 'always', build_network: 'internet' });
 });

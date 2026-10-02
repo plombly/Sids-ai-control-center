@@ -60,7 +60,7 @@ test('project page: tabs, overview, settings, retry state, escaping', () => {
 test('history: one change per job, undo buttons only where allowed', () => {
   const history = { can_undo: true, changes: [
     { kind: 'job', job_id: 'j1', title: 'Add <cart>', time: 1000, commits: [{}, {}], complete: true },
-    { kind: 'commit', sha: 'abcdef1234', title: 'Upload logo', author: 'SID operator', time: 1000, commits: [{}] },
+    { kind: 'commit', sha: 'abcdef1234', title: 'Upload logo', author: 'LAIka operator', time: 1000, commits: [{}] },
     { kind: 'job', job_id: 'j0', title: 'Old', time: 10, commits: [{}], complete: false }
   ] };
   const html = historyMarkup(history, 1000 + 7200);
@@ -101,29 +101,29 @@ test('project values validate id, name, and clone URL', () => {
 
 test('list shows the counts the API actually returns (jobs_* keys)', async () => {
   const { projectListMarkup } = await import('./lib/projects.js');
-  const html = projectListMarkup([{ id: 'sid', name: 'SID', importance: 'medium', status: 'active',
+  const html = projectListMarkup([{ id: 'laika', name: 'LAIka', importance: 'medium', status: 'active',
     counts: { jobs_queued: 2, jobs_running: 1, jobs_awaiting_approval: 3, jobs_needs_human: 0, jobs_merged: 42 },
     stats: { remaining_effort: 5 } }]);
   assert.match(html, /queued 2 · running 1 · awaiting approval 3 · needs human 0 · merged 42/);
 });
 
-test('delete section on every project page except SID itself', () => {
+test('delete section on every project page except LAIka itself', () => {
   assert.match(deleteProjectMarkup('web-shop'), /id="project-delete-form"/);
   assert.match(deleteProjectMarkup('web-shop'), /placeholder="Type web-shop to confirm"/);
   assert.match(deleteProjectMarkup('web-shop'), /class="danger-button"/);
-  assert.equal(deleteProjectMarkup('sid'), '');
+  assert.equal(deleteProjectMarkup('laika'), '');
   assert.match(projectDetailMarkup({ id: 'web-shop', status: 'active' }, 'settings'), /project-delete-form/);
-  assert.doesNotMatch(projectDetailMarkup({ id: 'sid', status: 'active' }), /project-delete-form/);
+  assert.doesNotMatch(projectDetailMarkup({ id: 'laika', status: 'active' }), /project-delete-form/);
 });
 
-test('build & run settings: empty fields stay empty, SID has none', () => {
+test('build & run settings: empty fields stay empty, LAIka has none', () => {
   const html = buildSettingsMarkup({ id: 'shop', setup_command: '', gate_command: 'npm test', run_command: '' });
   assert.match(html, /id="project-settings-form"/);
   assert.match(html, /name="setup_command" value=""/);
   assert.match(html, /name="gate_command" value="npm test"/);
   assert.doesNotMatch(html, /value="—"/);
   assert.doesNotMatch(html, /app-status/);
-  assert.equal(buildSettingsMarkup({ id: 'sid' }), '');
+  assert.equal(buildSettingsMarkup({ id: 'laika' }), '');
   assert.deepEqual(buildSettingsRequest({ setup_command: ' npm ci ', gate_command: '', run_command: 'npm start', run_port: '' }),
     { setup_command: 'npm ci', gate_command: '', run_command: 'npm start' });
   assert.equal(buildSettingsRequest({ run_port: '8105' }).run_port, 8105);
@@ -140,13 +140,13 @@ test('app status links to the app on this server only when running', () => {
   assert.equal(appStatusMarkup({ id: 'shop', run_command: '' }, 'h'), '');
 });
 
-test('SID: labelled as this system, no GitHub push form, shows its host setup', () => {
-  const list = projectListMarkup([{ id: 'sid', name: 'SID', importance: 'high', status: 'active', counts: {}, stats: {} }]);
+test('LAIka: labelled as this system, no GitHub push form, shows its host setup', () => {
+  const list = projectListMarkup([{ id: 'laika', name: 'LAIka', importance: 'high', status: 'active', counts: {}, stats: {} }]);
   assert.match(list, /this system/);
-  const page = projectDetailMarkup({ id: 'sid', name: 'SID', status: 'active', system: { remote: 'git@github.com:me/sid.git', branch: 'main', head: 'abc1234', subject: '<b>' } });
-  assert.match(page, /SID · THIS SYSTEM/);
+  const page = projectDetailMarkup({ id: 'laika', name: 'LAIka', status: 'active', system: { remote: 'git@github.com:me/laika.git', branch: 'main', head: 'abc1234', subject: '<b>' } });
+  assert.match(page, /LAIka · THIS SYSTEM/);
   assert.doesNotMatch(page, /project-push-form/);
-  assert.match(page, /git@github.com:me\/sid.git/);
+  assert.match(page, /git@github.com:me\/laika.git/);
   assert.match(page, /main @ abc1234/);
   assert.match(page, /&lt;b&gt;/);
   // View only: no goal box, no importance control, read-only notice.
@@ -174,14 +174,14 @@ test('build settings include app limits and send only what is filled in', () => 
     { setup_command: '', gate_command: '', run_command: '', run_memory_mb: 256 });
 });
 
-test('environment: names and lengths only, never values; not for SID', async () => {
+test('environment: names and lengths only, never values; not for LAIka', async () => {
   const { envMarkup } = await import('./lib/projects.js');
   const html = envMarkup('shop', { variables: [{ name: 'STRIPE_KEY', length: 32 }] });
   assert.match(html, /<code>STRIPE_KEY<\/code>/);
   assert.match(html, /32 characters/);
   assert.match(html, /data-env-delete="STRIPE_KEY"/);
   assert.match(html, /type="password"/);
-  assert.equal(envMarkup('sid', {}), '');
+  assert.equal(envMarkup('laika', {}), '');
   assert.match(envMarkup('shop', null), /No variables yet/);
 });
 

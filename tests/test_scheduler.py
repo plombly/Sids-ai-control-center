@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 NOW = 1_800_000_000.0
-QUEUE = "sid:jobs"
+QUEUE = "laika:jobs"
 
 
 class SchedRedis(MemoryRedis):
@@ -24,10 +24,10 @@ def worker():
 
 
 def project(r, pid, importance, remaining):
-    r.records[f"sid:projects:{pid}"] = {"id": pid, "name": pid, "importance": importance, "repo": f"/p/{pid}",
+    r.records[f"laika:projects:{pid}"] = {"id": pid, "name": pid, "importance": importance, "repo": f"/p/{pid}",
                                         "worktrees": f"/p/{pid}/w", "logs": f"/p/{pid}/l", "status": "active"}
-    r.values.setdefault("sid:projects", set()).add(pid)
-    r.records[f"sid:project-stats:{pid}"] = {"remaining_effort": str(remaining)}
+    r.values.setdefault("laika:projects", set()).add(pid)
+    r.records[f"laika:project-stats:{pid}"] = {"remaining_effort": str(remaining)}
 
 
 def enqueue(r, job_id, pid, role="builder", age_min=0):
@@ -91,7 +91,7 @@ def test_dumping_500_prompts_switches_priority_immediately(worker):
         enqueue(r, f"a-{i}", "a")
         enqueue(r, f"b-{i}", "b")
     assert order(worker, 1) == ["a-0"]
-    r.records["sid:project-stats:a"]["remaining_effort"] = str(5 + 500 * 3)  # someone dumps 500 prompts
+    r.records["laika:project-stats:a"]["remaining_effort"] = str(5 + 500 * 3)  # someone dumps 500 prompts
     assert order(worker, 1) == ["b-0"]
 
 
@@ -119,7 +119,7 @@ def test_importance_change_takes_effect_on_the_next_pick(worker):
     project(r, "b", "low", 1)
     enqueue(r, "a-1", "a")
     enqueue(r, "b-1", "b")
-    r.records["sid:projects:b"]["importance"] = "high"
+    r.records["laika:projects:b"]["importance"] = "high"
     assert order(worker, 1) == ["b-1"]
 
 
@@ -140,7 +140,7 @@ def test_lost_claim_race_moves_to_the_next_job(worker, monkeypatch):
     assert json.loads(worker.pick_job(now=NOW))["id"] == "second"
 
 
-def test_jobs_without_project_run_as_sid_and_bad_payloads_do_not_break_picking(worker):
+def test_jobs_without_project_run_as_laika_and_bad_payloads_do_not_break_picking(worker):
     r = worker.redis
     r.rpush(QUEUE, json.dumps({"id": "legacy", "role": "builder", "created_at": NOW}))
     r.rpush(QUEUE, "not json")
@@ -174,17 +174,17 @@ def test_project_stats_count_remaining_effort_by_size(orch):
         "e": {"status": "needs_human", "size": "L", "project_id": "web"},
         "f": {"status": "blocked", "project_id": "web"},  # no size: M
         "g": {"status": "test_failed", "build_attempt": "1", "size": "S", "project_id": "web"},  # retry pending
-        "h": {"status": "queued", "size": "S"},  # sid
+        "h": {"status": "queued", "size": "S"},  # laika
         "rv": {"status": "queued", "role": "reviewer", "project_id": "web"},  # not a build
     }
     for jid, fields in jobs.items():
-        r.records[f"sid:jobs:{jid}"] = {"id": jid, "role": fields.pop("role", "builder"), **fields}
-    r.records["sid:goals:g1"] = {"id": "g1", "status": "queued", "project_id": "web"}
-    r.records["sid:goals:g2"] = {"id": "g2", "status": "running", "project_id": "web", "jobs": '["a"]'}
+        r.records[f"laika:jobs:{jid}"] = {"id": jid, "role": fields.pop("role", "builder"), **fields}
+    r.records["laika:goals:g1"] = {"id": "g1", "status": "queued", "project_id": "web"}
+    r.records["laika:goals:g2"] = {"id": "g2", "status": "running", "project_id": "web", "jobs": '["a"]'}
     stats = orch.publish_project_stats(NOW)
     assert stats["web"] == {"remaining_effort": 1 + 8 + 3 + 3 + 1 + 3, "waiting_jobs": 2, "running_jobs": 1}
-    assert stats["sid"]["remaining_effort"] == 1
-    assert r.records["sid:project-stats:web"]["remaining_effort"] == "19"
+    assert stats["laika"]["remaining_effort"] == 1
+    assert r.records["laika:project-stats:web"]["remaining_effort"] == "19"
 
 
 def test_planner_size_is_stored_and_bad_sizes_become_medium(orch):
@@ -210,10 +210,10 @@ def test_long_scopes_are_compressed_to_top_level_entries(orch):
 
 def test_builders_get_the_goal_verbatim(orch):
     item = {"task": "Add the servers screen with the exact keys", "scope": []}
-    goal = 'Pairing code contract: {"v":1,"name":"Home SID","url":"http://x","key":"sidk_y"}'
+    goal = 'Pairing code contract: {"v":1,"name":"Home LAIka","url":"http://x","key":"laika_y"}'
     prompt = orch.scoped_builder_prompt(item, goal=goal)
     assert prompt.startswith("Task:\nAdd the servers screen")
-    assert '<goal>\nPairing code contract: {"v":1,"name":"Home SID"' in prompt and "This job is the whole goal." in prompt
+    assert '<goal>\nPairing code contract: {"v":1,"name":"Home LAIka"' in prompt and "This job is the whole goal." in prompt
     assert "do only this job's part" in orch.scoped_builder_prompt(item, goal=goal, jobs_in_plan=3)
     assert "<goal>" not in orch.scoped_builder_prompt(item)
     long = orch.scoped_builder_prompt(item, goal="x" * 20000)

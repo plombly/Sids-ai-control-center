@@ -29,17 +29,17 @@ def test_codex_and_claude_events_are_normalized():
 
 
 def test_paths_must_be_under_the_log_mounts(tmp_path, monkeypatch):
-    monkeypatch.setattr(log_routes, "MOUNTS", ((log_routes.Path("/var/log/sid-ai/jobs"), tmp_path),))
-    assert log_routes.container_path("/var/log/sid-ai/jobs/abc.jsonl") == (tmp_path / "abc.jsonl").resolve()
-    assert log_routes.container_path("/var/log/sid-ai/jobs/../../../etc/passwd") is None
-    assert log_routes.container_path("/etc/sid-ai/operator.env") is None
-    assert log_routes.container_path("/var/log/sid-ai/jobs/x.env") is None
+    monkeypatch.setattr(log_routes, "MOUNTS", ((log_routes.Path("/var/log/laika/jobs"), tmp_path),))
+    assert log_routes.container_path("/var/log/laika/jobs/abc.jsonl") == (tmp_path / "abc.jsonl").resolve()
+    assert log_routes.container_path("/var/log/laika/jobs/../../../etc/passwd") is None
+    assert log_routes.container_path("/etc/laika/operator.env") is None
+    assert log_routes.container_path("/var/log/laika/jobs/x.env") is None
 
 
 @pytest.fixture
 def logs(tmp_path, monkeypatch):
-    monkeypatch.setattr(log_routes, "MOUNTS", ((log_routes.Path("/var/log/sid-ai/jobs"), tmp_path),))
-    fake = FakeRedis({"sid:jobs:j1": {"id": "j1", "status": "running", "log": "/var/log/sid-ai/jobs/j1.jsonl"}})
+    monkeypatch.setattr(log_routes, "MOUNTS", ((log_routes.Path("/var/log/laika/jobs"), tmp_path),))
+    fake = FakeRedis({"laika:jobs:j1": {"id": "j1", "status": "running", "log": "/var/log/laika/jobs/j1.jsonl"}})
     monkeypatch.setattr(main, "redis", fake)
     with TestClient(main.app) as client:
         yield client, tmp_path, fake
@@ -59,7 +59,7 @@ def test_incremental_reads_only_consume_whole_lines(logs):
     (folder / "j1-tests.log").write_text("1 passed\n")
     assert client.get("/api/jobs/j1/log?tests=true").json()["events"][0]["text"] == "1 passed\n"
     assert client.get("/api/jobs/nope/log").status_code == 404
-    fake.hashes["sid:jobs:j2"] = {"id": "j2", "status": "merged", "log": "/elsewhere/j2.jsonl"}
+    fake.hashes["laika:jobs:j2"] = {"id": "j2", "status": "merged", "log": "/elsewhere/j2.jsonl"}
     assert client.get("/api/jobs/j2/log").json()["available"] is False
 
 

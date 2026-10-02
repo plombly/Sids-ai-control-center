@@ -31,22 +31,22 @@ class PipeRedis:
 
 
 def test_one_round_trip_and_non_hash_keys_skipped(monkeypatch):
-    fake = PipeRedis({"sid:goals:g1": {"id": "g1"}, "sid:goals:g1:planning": "locked", "sid:goals:g2": {}})
+    fake = PipeRedis({"laika:goals:g1": {"id": "g1"}, "laika:goals:g1:planning": "locked", "laika:goals:g2": {}})
     monkeypatch.setattr(main, "redis", fake)
     monkeypatch.setattr(main, "_SNAPSHOT_TTL", 0)
-    assert main._hashes("sid:goals:*") == [("sid:goals:g1", {"id": "g1"})]
+    assert main._hashes("laika:goals:*") == [("laika:goals:g1", {"id": "g1"})]
     assert len(fake.calls) == 1, "all keys in one pipelined round trip"
 
 
 def test_snapshot_cache_reuses_a_recent_read(monkeypatch):
-    fake = PipeRedis({"sid:jobs:j1": {"id": "j1", "status": "queued"}})
+    fake = PipeRedis({"laika:jobs:j1": {"id": "j1", "status": "queued"}})
     monkeypatch.setattr(main, "redis", fake)
     monkeypatch.setattr(main, "_SNAPSHOT_TTL", 30)
     monkeypatch.setattr(main, "_snapshots", {})
-    main._hashes("sid:jobs:*")
-    fake.store["sid:jobs:j1"]["status"] = "running"
-    main._hashes("sid:jobs:*")
+    main._hashes("laika:jobs:*")
+    fake.store["laika:jobs:j1"]["status"] = "running"
+    main._hashes("laika:jobs:*")
     assert len(fake.calls) == 1, "second read within the TTL is served from the snapshot"
     monkeypatch.setattr(main, "_SNAPSHOT_TTL", 0)
-    assert main._hashes("sid:jobs:*")[0][1]["status"] == "running"
+    assert main._hashes("laika:jobs:*")[0][1]["status"] == "running"
     assert len(fake.calls) == 2

@@ -46,7 +46,7 @@ test('formats backups and lists failed error names', () => {
 
 test('renders empty report and backup messages', () => {
   const markup = healthMarkup({ report: null, backup: null });
-  assert.match(markup, /No watchdog report yet \(is sid-ai-watchdog\.timer running\?\)/);
+  assert.match(markup, /No watchdog report yet \(is laika-watchdog\.timer running\?\)/);
   assert.match(markup, /No backup recorded yet/);
 });
 

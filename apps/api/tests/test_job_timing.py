@@ -9,7 +9,7 @@ def _job(status="running", **fields):
 
 def test_running_job_has_live_elapsed_time(client, monkeypatch):
     monkeypatch.setattr(main, "redis", FakeRedis({
-        "sid:jobs:j1": _job(started_at="100.5"),
+        "laika:jobs:j1": _job(started_at="100.5"),
     }))
     monkeypatch.setattr(main.time, "time", lambda: 145.75)
 
@@ -21,7 +21,7 @@ def test_running_job_has_live_elapsed_time(client, monkeypatch):
 
 def test_finished_job_has_exact_elapsed_and_duration_fallback(client, monkeypatch):
     monkeypatch.setattr(main, "redis", FakeRedis({
-        "sid:jobs:j1": _job("completed", started_at="100.5", finished_at="145.75"),
+        "laika:jobs:j1": _job("completed", started_at="100.5", finished_at="145.75"),
     }))
 
     job = client.get("/api/jobs/j1").json()
@@ -36,7 +36,7 @@ def test_finished_job_has_exact_elapsed_and_duration_fallback(client, monkeypatc
 
 def test_old_job_has_null_timing_in_list_and_detail(client, monkeypatch):
     monkeypatch.setattr(main, "redis", FakeRedis({
-        "sid:jobs:j1": _job(),
+        "laika:jobs:j1": _job(),
     }))
 
     listed = client.get("/api/jobs")
@@ -51,7 +51,7 @@ def test_old_job_has_null_timing_in_list_and_detail(client, monkeypatch):
 
 def test_garbage_timing_values_are_null(client, monkeypatch):
     monkeypatch.setattr(main, "redis", FakeRedis({
-        "sid:jobs:j1": _job(started_at="garbage", finished_at="NaN"),
+        "laika:jobs:j1": _job(started_at="garbage", finished_at="NaN"),
     }))
 
     job = client.get("/api/jobs/j1").json()
@@ -62,9 +62,9 @@ def test_garbage_timing_values_are_null(client, monkeypatch):
 
 def test_worker_job_started_at_is_float_or_null(client, monkeypatch):
     monkeypatch.setattr(main, "redis", FakeRedis({
-        "sid:workers:w1": {"id": "w1", "job_started_at": "100.5"},
-        "sid:workers:w2": {"id": "w2", "job_started_at": ""},
-        "sid:workers:w3": {"id": "w3"},
+        "laika:workers:w1": {"id": "w1", "job_started_at": "100.5"},
+        "laika:workers:w2": {"id": "w2", "job_started_at": ""},
+        "laika:workers:w3": {"id": "w3"},
     }))
 
     workers = {worker["id"]: worker for worker in client.get("/api/workers").json()}

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 
 def git(cwd, *args):
@@ -30,7 +30,7 @@ def worker(repo, tmp_path, monkeypatch):
     monkeypatch.setenv("REVIEW_ASPECTS", "spec")
     module = load_module(ROOT / "services/worker/worker.py")
     module.redis = MemoryRedis()
-    module.redis.records["sid:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
+    module.redis.records["laika:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
     module.heartbeat = lambda status="idle": None
     # A build "passes the gate" when app.py says OK.
     module.run_tests = lambda wt, network=False: ("OK" in (wt / "app.py").read_text(), "")
@@ -58,7 +58,7 @@ def build(worker):
     _, worktree = worker.create_worktree("b1")
     result = worker.run_best_of({"id": "b1", "role": "builder", "prompt": "p"},
                                 worktree, worktree.parent / "b1.jsonl")
-    report = json.loads(worker.redis.records["sid:jobs:b1"]["best_of"])
+    report = json.loads(worker.redis.records["laika:jobs:b1"]["best_of"])
     return result, worktree, report
 
 
@@ -69,10 +69,10 @@ def test_smaller_passing_alternate_wins_and_lands_in_the_normal_worktree(worker,
     assert (worktree / "app.py").read_text() == "OK\n"
     assert (worktree / "helper.py").read_text() == "added by alt\n", "new files carried over"
     assert git(worktree, "diff", "--cached", "--name-only") == "", "left unstaged like a builder"
-    assert worker.redis.records["sid:jobs:b1"]["provider"] == "codex"
+    assert worker.redis.records["laika:jobs:b1"]["provider"] == "codex"
     assert report["alt"]["provider"] == "codex"
     assert not (tmp_path / "worktrees" / "job-b1-alt").exists(), "alternate worktree removed"
-    assert "sid/job-b1-alt" not in git(worktree, "branch", "--list")
+    assert "laika/job-b1-alt" not in git(worktree, "branch", "--list")
 
 
 def test_primary_kept_when_it_is_no_larger(worker):
@@ -114,7 +114,7 @@ def test_skipped_when_claude_is_at_capacity(worker, monkeypatch):
     _, worktree = worker.create_worktree("b1")
     worker.run_best_of({"id": "b1", "role": "builder", "prompt": "p"}, worktree, worktree.parent / "l")
     assert calls == ["b1"]
-    assert "skipped" in json.loads(worker.redis.records["sid:jobs:b1"]["best_of"])
+    assert "skipped" in json.loads(worker.redis.records["laika:jobs:b1"]["best_of"])
 
 
 @pytest.mark.parametrize("attempt,role,setting,enabled", [
@@ -123,7 +123,7 @@ def test_skipped_when_claude_is_at_capacity(worker, monkeypatch):
 ])
 def test_when_best_of_applies(worker, attempt, role, setting, enabled):
     worker.BEST_OF_FROM_ATTEMPT = int(setting)
-    worker.redis.records["sid:jobs:b1"]["build_attempt"] = attempt
+    worker.redis.records["laika:jobs:b1"]["build_attempt"] = attempt
     assert worker.best_of_enabled({"id": "b1", "role": role}) is enabled
 
 
@@ -134,7 +134,7 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     monkeypatch.delenv("BEST_OF_ALT_PROVIDER", raising=False)
     module = load_module(ROOT / "services/worker/worker.py")
     module.redis = MemoryRedis()
-    module.redis.records["sid:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
+    module.redis.records["laika:jobs:b1"] = {"id": "b1", "role": "builder", "build_attempt": "2"}
     module.heartbeat = lambda status="idle": None
     module.run_tests = lambda wt, network=False: (True, "")
     module.run_agent = lambda job, wt, log: (0, 1.0)
@@ -145,4 +145,4 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     _, worktree = module.create_worktree("b1")
     module.run_best_of({"id": "b1", "role": "builder", "prompt": "task"}, worktree, worktree.parent / "l")
     assert len(prompts) == 1 and "independent second attempt" in prompts[0]
-    assert json.loads(module.redis.records["sid:jobs:b1"]["best_of"])["alt"]["provider"] == "codex"
+    assert json.loads(module.redis.records["laika:jobs:b1"]["best_of"])["alt"]["provider"] == "codex"

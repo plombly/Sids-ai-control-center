@@ -61,7 +61,7 @@ async function load() {
   try {
     data = await requestJSON('/api/notifications');
     container.innerHTML = `<div class="settings-page"><div class="page-head"><h2>Settings</h2></div><section class="settings-section"><h2 class="section-title">Notifications</h2>${targetsMarkup(data.targets)}${rulesMarkup(data)}</section><section class="settings-section" id="devices-section"></section></div>`;
-    window.dispatchEvent(new CustomEvent('sid:settings-loaded'));
+    window.dispatchEvent(new CustomEvent('laika:settings-loaded'));
   } catch (error) {
     container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
   }

@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(
-    "sid_orchestrator", ROOT / "services/orchestrator/orchestrator.py"
+    "laika_orchestrator", ROOT / "services/orchestrator/orchestrator.py"
 )
 orchestrator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(orchestrator)
@@ -95,23 +95,23 @@ def test_two_goals_are_submitted_without_waiting(monkeypatch):
 def test_failed_dependency_stays_blocked_and_release_is_idempotent(monkeypatch):
     fake = install_redis(monkeypatch)
     fake.hashes.update({
-        "sid:jobs:parent": {"id": "parent", "status": "failed"},
-        "sid:jobs:child": {
+        "laika:jobs:parent": {"id": "parent", "status": "failed"},
+        "laika:jobs:child": {
             "id": "child", "status": "blocked",
             "dependencies": json.dumps(["parent"]),
             "prompt": "child", "created_at": "1",
         },
     })
     orchestrator.release_dependencies()
-    assert fake.hget("sid:jobs:child", "status") == "blocked_failed_dependency"
+    assert fake.hget("laika:jobs:child", "status") == "blocked_failed_dependency"
     assert fake.queues.get(orchestrator.JOB_QUEUE, []) == []
 
-    fake.hashes["sid:jobs:ready-child"] = {
+    fake.hashes["laika:jobs:ready-child"] = {
         "id": "ready-child", "status": "blocked",
         "dependencies": json.dumps(["parent"]),
         "prompt": "ready", "created_at": "1",
     }
-    fake.hset("sid:jobs:parent", mapping={"status": "merged"})
+    fake.hset("laika:jobs:parent", mapping={"status": "merged"})
     orchestrator.release_dependencies()
     orchestrator.release_dependencies()
     assert len(fake.queues[orchestrator.JOB_QUEUE]) == 1
@@ -120,14 +120,14 @@ def test_failed_dependency_stays_blocked_and_release_is_idempotent(monkeypatch):
 def test_completed_goal_does_not_change_other_active_goal(monkeypatch):
     fake = install_redis(monkeypatch)
     fake.hashes.update({
-        "sid:goals:done": {"status": "running", "jobs": '["done-job"]'},
-        "sid:jobs:done-job": {"status": "merged"},
-        "sid:goals:active": {"status": "running", "jobs": '["active-job"]'},
-        "sid:jobs:active-job": {"status": "claimed"},
+        "laika:goals:done": {"status": "running", "jobs": '["done-job"]'},
+        "laika:jobs:done-job": {"status": "merged"},
+        "laika:goals:active": {"status": "running", "jobs": '["active-job"]'},
+        "laika:jobs:active-job": {"status": "claimed"},
     })
     orchestrator.update_goals()
-    assert fake.hget("sid:goals:done", "status") == "completed"
-    assert fake.hget("sid:goals:active", "status") == "running"
+    assert fake.hget("laika:goals:done", "status") == "completed"
+    assert fake.hget("laika:goals:active", "status") == "running"
 
 
 def test_duplicate_dispatch_is_suppressed(monkeypatch):
@@ -151,28 +151,28 @@ def exhausted_builder(**extra):
 
 def test_repair_exhaustion_hands_off_to_human(monkeypatch):
     fake = install_redis(monkeypatch)
-    fake.hashes["sid:jobs:b1"] = exhausted_builder()
-    fake.hashes["sid:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
+    fake.hashes["laika:jobs:b1"] = exhausted_builder()
+    fake.hashes["laika:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
     orchestrator.queue_repairs()
-    builder = fake.hashes["sid:jobs:b1"]
+    builder = fake.hashes["laika:jobs:b1"]
     assert builder["status"] == "needs_human"
     assert builder["repair_status"] == "exhausted"
     assert fake.queues.get(orchestrator.JOB_QUEUE, []) == []
     # needs_human is not a dependency failure: children keep waiting.
-    fake.hashes["sid:jobs:child"] = {
+    fake.hashes["laika:jobs:child"] = {
         "id": "child", "status": "blocked",
         "dependencies": json.dumps(["b1"]), "prompt": "c", "created_at": "1",
     }
     orchestrator.release_dependencies()
-    assert fake.hget("sid:jobs:child", "status") == "blocked"
+    assert fake.hget("laika:jobs:child", "status") == "blocked"
 
 
 def test_extended_repair_limit_dispatches_another_repair(monkeypatch):
     fake = install_redis(monkeypatch)
-    fake.hashes["sid:jobs:b1"] = exhausted_builder(max_repair_attempts="3")
-    fake.hashes["sid:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
+    fake.hashes["laika:jobs:b1"] = exhausted_builder(max_repair_attempts="3")
+    fake.hashes["laika:jobs:rv1"] = {"role": "reviewer", "status": "review_complete"}
     orchestrator.queue_repairs()
-    builder = fake.hashes["sid:jobs:b1"]
+    builder = fake.hashes["laika:jobs:b1"]
     assert builder["status"] == "awaiting_review"
     assert builder["repair_attempts"] == "3"
     queued = [json.loads(item) for item in fake.queues[orchestrator.JOB_QUEUE]]
@@ -183,12 +183,12 @@ def test_extended_repair_limit_dispatches_another_repair(monkeypatch):
 def test_dependency_failure_cascades_to_grandchildren(monkeypatch):
     fake = install_redis(monkeypatch)
     fake.hashes.update({
-        "sid:jobs:parent": {"id": "parent", "status": "blocked_failed_dependency"},
-        "sid:jobs:grandchild": {
+        "laika:jobs:parent": {"id": "parent", "status": "blocked_failed_dependency"},
+        "laika:jobs:grandchild": {
             "id": "grandchild", "status": "blocked",
             "dependencies": json.dumps(["parent"]),
             "prompt": "g", "created_at": "1",
         },
     })
     orchestrator.release_dependencies()
-    assert fake.hget("sid:jobs:grandchild", "status") == "blocked_failed_dependency"
+    assert fake.hget("laika:jobs:grandchild", "status") == "blocked_failed_dependency"

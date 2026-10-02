@@ -1,7 +1,7 @@
 """Goal assistant sessions for the dashboard (apps/api/goal_assist.py).
 
 The API only records the operator's messages and queues a turn
-(sid:assist-queue); the host's apps service runs it (scripts/sid-assist.py)
+(laika:assist-queue); the host's apps service runs it (scripts/laika-assist.py)
 and writes the questions or brief back. Submitting a brief is an ordinary
 goal submission for the session's project.
 """
@@ -133,7 +133,7 @@ def submit(session_id: str, payload: AssistSubmit):
     if session.get("status") != "brief":
         raise HTTPException(status_code=409, detail="There is no finished brief to submit")
     result = projects.submit_project_goal(
-        session.get("project_id") or "sid",
+        session.get("project_id") or "laika",
         projects.ProjectGoal(goal=payload.goal, atomic=payload.atomic, request_id=payload.request_id))
     goal_assist.save(_redis(), session_id, status="submitted", goal_id=result.get("id") or "",
                      submitted=json.dumps({"edited": payload.goal.strip() != (session.get("brief") or {}).get("goal", "").strip()}))

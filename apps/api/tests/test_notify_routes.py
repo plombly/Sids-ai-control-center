@@ -13,7 +13,7 @@ from test_project_routes import FakeRedis
 def client(monkeypatch, tmp_path):
     monkeypatch.setattr(notify_core, "NOTIFY_DIR", tmp_path / "notify")
     monkeypatch.setattr(notify_core, "LEGACY_FILE", tmp_path / "none.env")
-    fake = FakeRedis({"sid:projects:shop": {"id": "shop", "name": "Shop", "status": "active"}}, members={"shop"})
+    fake = FakeRedis({"laika:projects:shop": {"id": "shop", "name": "Shop", "status": "active"}}, members={"shop"})
     fake.lrange = lambda key, a, b: []
     monkeypatch.setattr(main, "redis", fake)
     with TestClient(main.app) as test_client:
@@ -51,6 +51,6 @@ def test_settings_round_trip_and_test_needs_a_target(client, monkeypatch):
 
 def test_digest_preview(client):
     test_client, fake, tmp_path = client
-    fake.hashes["sid:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "completed", "updated_at": "9999999999"}
+    fake.hashes["laika:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "completed", "updated_at": "9999999999"}
     preview = test_client.get("/api/notifications/digest-preview").json()
-    assert preview["title"].startswith("SID weekly digest") and "**Shop**: 1 goal done" in preview["text"]
+    assert preview["title"].startswith("LAIka weekly digest") and "**Shop**: 1 goal done" in preview["text"]

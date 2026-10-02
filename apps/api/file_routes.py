@@ -3,14 +3,14 @@ checkout) and app data; upload to data directly, and to code as a commit
 on main made on the host by the operator service.
 
 The API container sees (docker-compose volumes):
-  /projects      read-only   /opt/sid-projects (each project's repo, ...)
-  /project-data  read-write  /opt/sid-project-data (each project's app data)
-  /uploads       read-write  /opt/sid-uploads (code uploads waiting to be
+  /projects      read-only   /var/lib/laika/projects (each project's repo, ...)
+  /project-data  read-write  /var/lib/laika/project-data (each project's app data)
+  /uploads       read-write  /var/lib/laika/uploads (code uploads waiting to be
                              committed by the host)
 It never writes a repository: code uploads are staged and committed by
-scripts/sid-project.py commit-upload (operator action project_commit_upload).
+scripts/laika-project.py commit-upload (operator action project_commit_upload).
 Every path is confined to its area (no "..", no .git in code, symlinks may
-not lead outside). SID's own repository is not exposed here.
+not lead outside). LAIka's own repository is not exposed here.
 """
 
 import os
@@ -33,19 +33,19 @@ import project_routes as projects
 
 router = APIRouter()
 
-HOST_PROJECTS = Path("/opt/sid-projects")
-PROJECTS_MOUNT = Path(os.environ.get("SID_PROJECTS_MOUNT", "/projects"))
-DATA_MOUNT = Path(os.environ.get("SID_DATA_MOUNT", "/project-data"))
-UPLOADS_MOUNT = Path(os.environ.get("SID_UPLOADS_MOUNT", "/uploads"))
-MAX_UPLOAD = int(os.environ.get("SID_MAX_UPLOAD_BYTES", str(1024 ** 3)))  # 1 GiB
+HOST_PROJECTS = Path("/var/lib/laika/projects")
+PROJECTS_MOUNT = Path(os.environ.get("LAIKA_PROJECTS_MOUNT", "/projects"))
+DATA_MOUNT = Path(os.environ.get("LAIKA_DATA_MOUNT", "/project-data"))
+UPLOADS_MOUNT = Path(os.environ.get("LAIKA_UPLOADS_MOUNT", "/uploads"))
+MAX_UPLOAD = int(os.environ.get("LAIKA_MAX_UPLOAD_BYTES", str(1024 ** 3)))  # 1 GiB
 STAGED_MAX_AGE = 24 * 3600
 LIST_LIMIT = 2000
 
 
 def _project(project_id):
     project_id = projects._id(project_id)
-    if project_id == "sid":
-        raise HTTPException(status_code=404, detail="SID's own files are not browsable here")
+    if project_id == "laika":
+        raise HTTPException(status_code=404, detail="LAIka's own files are not browsable here")
     if not projects._known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return project_id, projects._project_data(project_id)
@@ -60,7 +60,7 @@ def _area_root(project_id, data, area, create=False):
     try:
         rel = Path(data.get("repo") or "").relative_to(HOST_PROJECTS)
     except ValueError:
-        raise HTTPException(status_code=404, detail="This project's code lives outside /opt/sid-projects")
+        raise HTTPException(status_code=404, detail="This project's code lives outside /var/lib/laika/projects")
     return PROJECTS_MOUNT / rel
 
 
@@ -119,7 +119,7 @@ def list_files(project_id: str, area: Literal["code", "data"] = "code", path: st
 
 
 def _zip_folder(folder, area):
-    handle = tempfile.NamedTemporaryFile(prefix="sid-zip-", suffix=".zip", delete=False)
+    handle = tempfile.NamedTemporaryFile(prefix="laika-zip-", suffix=".zip", delete=False)
     handle.close()
     with zipfile.ZipFile(handle.name, "w", zipfile.ZIP_DEFLATED) as archive:
         for current, dirs, files in os.walk(folder, followlinks=False):
@@ -148,7 +148,7 @@ def download(project_id: str, area: Literal["code", "data"] = "code", path: List
             if not rel:
                 raise HTTPException(status_code=422, detail="Choose items, not the top level")
             items.append((target, target.name))
-        handle = tempfile.NamedTemporaryFile(prefix="sid-zip-", suffix=".zip", delete=False)
+        handle = tempfile.NamedTemporaryFile(prefix="laika-zip-", suffix=".zip", delete=False)
         handle.close()
         file_ops.write_zip(handle.name, items, forbid_git=(area == "code"))
         return FileResponse(handle.name, media_type="application/zip", filename=f"{project_id}-{area}-selection.zip",
@@ -168,7 +168,7 @@ def download(project_id: str, area: Literal["code", "data"] = "code", path: List
 async def _receive(request, dest_dir):
     """Stream the request body into a temp file in dest_dir (size-capped)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(dir=dest_dir, prefix=".sid-upload-", delete=False)
+    handle = tempfile.NamedTemporaryFile(dir=dest_dir, prefix=".laika-upload-", delete=False)
     size = 0
     try:
         async for chunk in request.stream():

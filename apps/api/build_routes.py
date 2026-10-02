@@ -1,10 +1,10 @@
 """Project types, goal templates and builds for the dashboard.
 
-The apps service detects each project's type (sid:project-type:<id>) and
-starts builds the dashboard asks for (sid:build-request:<id>) as their own
-host units (scripts/sid-build.py). This API only reads results and leaves
+The apps service detects each project's type (laika:project-type:<id>) and
+starts builds the dashboard asks for (laika:build-request:<id>) as their own
+host units (scripts/laika-build.py). This API only reads results and leaves
 requests; the build zips and logs are read from the read-only /projects
-mount (/opt/sid-projects/<id>/builds).
+mount (/var/lib/laika/projects/<id>/builds).
 """
 
 import json
@@ -21,7 +21,7 @@ import project_catalog
 import project_routes as projects
 
 router = APIRouter()
-PROJECTS_MOUNT = Path(os.environ.get("SID_PROJECTS_MOUNT", "/projects"))
+PROJECTS_MOUNT = Path(os.environ.get("LAIKA_PROJECTS_MOUNT", "/projects"))
 BUILD_ID = re.compile(r"^[A-Za-z0-9]{1,40}$")
 LOG_TAIL = 200 * 1024
 PENDING = ("queued", "running")
@@ -29,14 +29,14 @@ PENDING = ("queued", "running")
 
 def detection(project_id):
     try:
-        value = json.loads(projects._redis().redis.get(f"sid:project-type:{project_id}") or "{}")
+        value = json.loads(projects._redis().redis.get(f"laika:project-type:{project_id}") or "{}")
     except (TypeError, ValueError):
         value = {}
     return value if isinstance(value, dict) else {}
 
 
 def type_info(project_id, data):
-    """What the project is: the owner's choice, else what SID detected, else
+    """What the project is: the owner's choice, else what LAIka detected, else
     a guess from the owner's description."""
     found = detection(project_id)
     chosen = projects._text(data.get("type"))
@@ -67,13 +67,13 @@ def _project(project_id, builds=False):
     project_id = projects._id(project_id)
     if not projects._known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    if builds and project_id == "sid":
-        raise HTTPException(status_code=404, detail="SID itself is deployed by its operator, not built here")
+    if builds and project_id == "laika":
+        raise HTTPException(status_code=404, detail="LAIka itself is deployed by its operator, not built here")
     return project_id
 
 
 def _build(project_id, build_id):
-    record = projects._data(projects._redis().redis.hgetall(f"sid:build:{project_id}:{build_id}"))
+    record = projects._data(projects._redis().redis.hgetall(f"laika:build:{project_id}:{build_id}"))
     if not record:
         return None
     return {"id": build_id, "status": projects._text(record.get("status"), "unknown"),
@@ -92,7 +92,7 @@ def project_catalog_view():
 def recheck(project_id: str):
     """Forget the detected type; the apps service detects it again within a few seconds."""
     project_id = _project(project_id)
-    projects._redis().redis.delete(f"sid:project-type:{project_id}")
+    projects._redis().redis.delete(f"laika:project-type:{project_id}")
     return {"id": project_id, "recheck_requested": True}
 
 
@@ -100,10 +100,10 @@ def recheck(project_id: str):
 def builds(project_id: str):
     project_id = _project(project_id, builds=True)
     main = projects._redis()
-    ids = main.redis.lrange(f"sid:builds:{project_id}", 0, 19) or []
+    ids = main.redis.lrange(f"laika:builds:{project_id}", 0, 19) or []
     items = [item for item in (_build(project_id, projects._text(b)) for b in ids) if item]
     return {"recipe": recipe_for(project_id, projects._project_data(project_id)), "builds": items,
-            "requested": bool(main.redis.get(f"sid:build-request:{project_id}"))}
+            "requested": bool(main.redis.get(f"laika:build-request:{project_id}"))}
 
 
 @router.post("/api/projects/{project_id}/builds", status_code=202)
@@ -116,12 +116,12 @@ def request_build(project_id: str):
     recipe = recipe_for(project_id, data)
     if recipe.get("unsupported"):
         raise HTTPException(status_code=409, detail=recipe["unsupported"])
-    for existing in main.redis.lrange(f"sid:builds:{project_id}", 0, 4) or []:
+    for existing in main.redis.lrange(f"laika:builds:{project_id}", 0, 4) or []:
         item = _build(project_id, projects._text(existing))
         if item and item["status"] in PENDING:
             raise HTTPException(status_code=409, detail="A build is already running")
     build_id = time.strftime("%Y%m%d%H%M%S", time.gmtime()) + secrets.token_hex(2)
-    if not main.redis.set(f"sid:build-request:{project_id}", json.dumps({"build_id": build_id}), nx=True, ex=3600):
+    if not main.redis.set(f"laika:build-request:{project_id}", json.dumps({"build_id": build_id}), nx=True, ex=3600):
         raise HTTPException(status_code=409, detail="A build was already requested")
     return {"id": project_id, "build_id": build_id, "status": "requested"}
 

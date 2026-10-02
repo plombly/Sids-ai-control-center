@@ -1,7 +1,0 @@
-#!/bin/sh
-# redis-cli against SID's Redis, authenticated with the container's own
-# REDIS_PASSWORD (so the password never appears on a command line).
-# Usage: scripts/sid-redis-cli hget sid:jobs:<id> status
-exec docker exec -i "${REDIS_CONTAINER:-sid-ai-redis}" sh -c \
-  'if [ -n "$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$REDIS_PASSWORD"; fi; exec redis-cli "$@"' \
-  redis-cli "$@"

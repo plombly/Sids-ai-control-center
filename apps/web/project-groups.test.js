@@ -10,12 +10,12 @@ const projects = [
   { id: 'shop', name: 'Shop', status: 'active', counts: {}, children: [{ id: 'shop-app', name: '<App>' }] },
   { id: 'shop-app', name: '<App>', status: 'active', parent: 'shop', parent_name: 'Shop', counts: {} },
   { id: 'blog', name: 'Blog', status: 'active', counts: {} },
-  { id: 'sid', name: 'SID', status: 'active', counts: {} }
+  { id: 'laika', name: 'LAIka', status: 'active', counts: {} }
 ];
 
 test('children are nested under their parent everywhere projects are listed', () => {
   const nested = nestProjects(projects);
-  assert.deepEqual(nested.map(p => p.id), ['shop', 'blog', 'sid']);
+  assert.deepEqual(nested.map(p => p.id), ['shop', 'blog', 'laika']);
   assert.deepEqual(nested[0].members.map(p => p.id), ['shop-app']);
   const html = projectsMarkup(projects);
   assert.match(html, /card-children[\s\S]*href="#\/projects\/shop-app">↳ &lt;App&gt;/);
@@ -35,20 +35,20 @@ test('a child page says where it belongs and its inherited settings are locked',
   assert.match(settings, /Tests follow the parent project, Shop/);
 });
 
-test('a parent lists its children and can add more; SID can be a parent', () => {
+test('a parent lists its children and can add more; LAIka can be a parent', () => {
   const html = groupOverviewMarkup(projects[0]);
   assert.match(html, /Child projects/);
   assert.match(html, /href="#\/projects\/shop-app">&lt;App&gt;/);
   assert.match(html, /data-group-new-child="shop"/);
   assert.match(groupOverviewMarkup(projects[2]), /Project group[\s\S]*New child project/);
-  assert.match(groupOverviewMarkup(projects[3]), /data-group-new-child="sid"/);
-  assert.equal(groupSettingsMarkup(projects[3], projects), ''); // SID is never a child
+  assert.match(groupOverviewMarkup(projects[3]), /data-group-new-child="laika"/);
+  assert.equal(groupSettingsMarkup(projects[3], projects), ''); // LAIka is never a child
 });
 
 test('group settings: pick a parent, or detach children', () => {
   const blog = groupSettingsMarkup(projects[2], projects);
   assert.match(blog, /<option value="shop">Shop<\/option>/);
-  assert.match(blog, /<option value="sid">SID<\/option>/);
+  assert.match(blog, /<option value="laika">LAIka<\/option>/);
   assert.doesNotMatch(blog, /value="shop-app"|value="blog"/); // no children or itself
   const app = groupSettingsMarkup(projects[1], projects);
   assert.match(app, /<option value="shop" selected>/);

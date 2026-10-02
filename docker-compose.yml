@@ -1,8 +1,10 @@
+name: laika
+
 services:
 
   postgres:
     image: postgres:18-alpine
-    container_name: sid-ai-postgres
+    container_name: laika-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -16,16 +18,16 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - sid-ai-internal
+      - laika-internal
 
   redis:
     image: redis:8-alpine
-    container_name: sid-ai-redis
+    container_name: laika-redis
     restart: unless-stopped
-    # Password: REDIS_PASSWORD from the root-only /etc/sid-ai/redis.env
+    # Password: REDIS_PASSWORD from the root-only /etc/laika/redis.env
     # (scripts/enable-redis-password.sh). Without the file, no password.
     env_file:
-      - path: /etc/sid-ai/redis.env
+      - path: /etc/laika/redis.env
         required: false
     command: ["sh", "-c", 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}']
     volumes:
@@ -38,38 +40,38 @@ services:
       timeout: 3s
       retries: 10
     networks:
-      - sid-ai-internal
+      - laika-internal
 
   api:
     build:
       context: ./apps/api
-    container_name: sid-ai-api
+    container_name: laika-api
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: ${REDIS_URL}
-      SID_NOTIFY_DIR: /notify
-    # SID_OPERATOR_TOKEN for write access (root-only file on the host,
+      LAIKA_NOTIFY_DIR: /notify
+    # LAIKA_OPERATOR_TOKEN for write access (root-only file on the host,
     # outside the repo). Absent file: writes stay open, Web approve refused.
     env_file:
-      - path: /etc/sid-ai/operator.env
+      - path: /etc/laika/operator.env
         required: false
-      - path: /etc/sid-ai/redis.env
+      - path: /etc/laika/redis.env
         required: false
     # Project file browser (apps/api/file_routes.py): code read-only, app
     # data and staged code uploads writable. Repositories are only ever
-    # written on the host (sid-project.py commit-upload).
+    # written on the host (laika-project.py commit-upload).
     volumes:
-      - /opt/sid-projects:/projects:ro
-      - /opt/sid-project-data:/project-data
-      - /opt/sid-uploads:/uploads
+      - /var/lib/laika/projects:/projects:ro
+      - /var/lib/laika/project-data:/project-data
+      - /var/lib/laika/uploads:/uploads
       # Project secrets (apps/api/env_routes.py), written here, read only by
       # each app's systemd unit on the host.
-      - /etc/sid-ai/project-env:/project-env
+      - /etc/laika/project-env:/project-env
       # Live job logs (apps/api/log_routes.py), read-only.
-      - /var/log/sid-ai/jobs:/job-logs:ro
+      - /var/log/laika/jobs:/job-logs:ro
       # Notification targets (apps/api/notify_routes.py), write-only from the page.
-      - /etc/sid-ai/notify:/notify
+      - /etc/laika/notify:/notify
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,18 +85,18 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      - sid-ai-internal
+      - laika-internal
 
   web:
     build:
       context: ./apps/web
-    container_name: sid-ai-web
+    container_name: laika-web
     restart: unless-stopped
     # Same token file as the api: nginx adds it to /api requests from other
     # machines only. Host networking lets nginx see real client addresses
     # and this server's own ones (apps/web/nginx.conf); it listens on 8080.
     env_file:
-      - path: /etc/sid-ai/operator.env
+      - path: /etc/laika/operator.env
         required: false
     depends_on:
       api:
@@ -102,5 +104,5 @@ services:
     network_mode: host
 
 networks:
-  sid-ai-internal:
-    name: sid-ai-internal
+  laika-internal:
+    name: laika-internal

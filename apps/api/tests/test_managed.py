@@ -11,11 +11,11 @@ from test_device_routes import DeviceRedis
 @pytest.fixture
 def api(monkeypatch):
     fake = DeviceRedis({
-        "sid:projects:app": {"id": "app", "name": "App", "status": "active", "view_only": "1"},
-        "sid:projects:shop": {"id": "shop", "name": "Shop", "status": "active"},
-        "sid:jobs:j-app": {"id": "j-app", "status": "needs_human", "project_id": "app"},
-        "sid:jobs:j-sid": {"id": "j-sid", "status": "awaiting_review"},
-        "sid:assist:" + "a" * 16: {"project_id": "app", "status": "brief"},
+        "laika:projects:app": {"id": "app", "name": "App", "status": "active", "view_only": "1"},
+        "laika:projects:shop": {"id": "shop", "name": "Shop", "status": "active"},
+        "laika:jobs:j-app": {"id": "j-app", "status": "needs_human", "project_id": "app"},
+        "laika:jobs:j-laika": {"id": "j-laika", "status": "awaiting_review"},
+        "laika:assist:" + "a" * 16: {"project_id": "app", "status": "brief"},
     }, members=["app", "shop"])
     monkeypatch.setattr(main, "redis", fake)
     monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
@@ -33,11 +33,11 @@ def api(monkeypatch):
     ("post", "/api/projects/app/undo", {"commit": "abc1234", "request_id": "undo-00001"}),
     ("post", "/api/projects/app/delete", {"confirm": "app", "request_id": "req-del-00001"}),
     ("post", "/api/jobs/j-app/actions", {"action": "reject", "request_id": "req-00000001", "expected_status": "needs_human"}),
-    ("post", "/api/jobs/j-sid/actions", {"action": "reject", "request_id": "req-00000002", "expected_status": "awaiting_review"}),
+    ("post", "/api/jobs/j-laika/actions", {"action": "reject", "request_id": "req-00000002", "expected_status": "awaiting_review"}),
     ("post", "/api/jobs/j-app/preview", None),
     ("post", "/api/assistant/" + "a" * 16 + "/reply", {"feedback": "x"}),
     ("post", "/api/goals", {"goal": "x"}),
-    ("patch", "/api/projects/sid", {"importance": "low"}),
+    ("patch", "/api/projects/laika", {"importance": "low"}),
 ])
 def test_every_write_to_a_managed_project_is_refused(api, method, path, body):
     client, _ = api
@@ -49,7 +49,7 @@ def test_every_write_to_a_managed_project_is_refused(api, method, path, body):
 def test_reads_stay_open_and_other_projects_are_untouched(api):
     client, _ = api
     assert client.get("/api/projects/app").json()["view_only"] is True
-    assert client.get("/api/projects/sid").json()["view_only"] is True
+    assert client.get("/api/projects/laika").json()["view_only"] is True
     assert client.get("/api/projects/shop").json()["view_only"] is False
     assert client.patch("/api/projects/shop", json={"importance": "low"}).status_code == 200
     # Unknown jobs get the endpoint's own answer, not "view-only".
@@ -61,8 +61,8 @@ def test_production_installs_have_no_built_in_project(api, monkeypatch):
     import project_routes
     client, _ = api
     monkeypatch.setattr(project_routes, "BUILTIN_PROJECT", False)
-    assert "sid" not in {p["id"] for p in client.get("/api/projects").json()}
-    assert client.get("/api/projects/sid").status_code == 404
-    assert "sid" not in {p["id"] for p in client.get("/api/app/summary").json()["projects"]}
+    assert "laika" not in {p["id"] for p in client.get("/api/projects").json()}
+    assert client.get("/api/projects/laika").status_code == 404
+    assert "laika" not in {p["id"] for p in client.get("/api/app/summary").json()["projects"]}
     monkeypatch.setattr(project_routes, "BUILTIN_PROJECT", True)
-    assert "sid" in {p["id"] for p in client.get("/api/projects").json()}
+    assert "laika" in {p["id"] for p in client.get("/api/projects").json()}

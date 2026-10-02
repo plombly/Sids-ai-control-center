@@ -2,7 +2,7 @@
 
 import pytest
 
-from sid_testing import BASE, INTEGRATED, JOB, make_builder as builder
+from laika_testing import BASE, INTEGRATED, JOB, make_builder as builder
 
 
 def refused(call, contains):
@@ -45,25 +45,25 @@ def test_cli_rejects_non_alphanumeric_job_id(job_review, monkeypatch):
 def test_reject_removes_builder_worktree_and_branch(job_review, fake_git, status):
     builder(job_review, status)
     job_review.reject(JOB)
-    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    record = job_review.r.records[f"laika:jobs:{JOB}"]
     assert record["status"] == "rejected"
     assert record["rejected_at"]
     assert fake_git.ran("worktree", "remove", "--force") == [
         ("worktree", "remove", "--force", str(job_review.WORKTREE_ROOT / f"job-{JOB}"))
     ]
-    assert fake_git.ran("branch", "-D") == [("branch", "-D", f"sid/job-{JOB}")]
+    assert fake_git.ran("branch", "-D") == [("branch", "-D", f"laika/job-{JOB}")]
     assert not fake_git.ran("merge")
 
 
 def test_reject_also_removes_live_integration_worktree_and_branch(job_review, fake_git):
     integration = job_review.WORKTREE_ROOT / f"job-{JOB}-integration"
     integration.mkdir()
-    fake_git.branch_heads[f"sid/integration-{JOB}"] = "c" * 40
+    fake_git.branch_heads[f"laika/integration-{JOB}"] = "c" * 40
     builder(job_review, integration_worktree=str(integration))
     job_review.reject(JOB)
     assert ("worktree", "remove", "--force", str(integration)) in fake_git.ran("worktree")
-    assert ("branch", "-D", f"sid/integration-{JOB}") in fake_git.ran("branch")
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
+    assert ("branch", "-D", f"laika/integration-{JOB}") in fake_git.ran("branch")
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "rejected"
 
 
 def test_reject_skips_integration_worktree_that_is_already_gone(job_review, fake_git):
@@ -73,7 +73,7 @@ def test_reject_skips_integration_worktree_that_is_already_gone(job_review, fake
     assert fake_git.ran("worktree", "remove", "--force") == [
         ("worktree", "remove", "--force", str(job_review.WORKTREE_ROOT / f"job-{JOB}"))
     ]
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "rejected"
 
 
 @pytest.mark.parametrize("status", [
@@ -84,7 +84,7 @@ def test_reject_refuses_other_statuses(job_review, fake_git, status):
     builder(job_review, status)
     refused(lambda: job_review.reject(JOB), "job status")
     assert fake_git.calls == []
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == status
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == status
 
 
 def test_reject_refuses_missing_job(job_review, fake_git):
@@ -92,16 +92,16 @@ def test_reject_refuses_missing_job(job_review, fake_git):
 
 
 @pytest.mark.parametrize("field,value,reason", [
-    ("worktree", "/opt/sids-ai-command-center", "unexpected worktree path"),
+    ("worktree", "/opt/laika", "unexpected worktree path"),
     ("branch", "main", "unexpected branch"),
-    ("integration_worktree", "/opt/sids-ai-command-center", "unexpected integration worktree"),
+    ("integration_worktree", "/opt/laika", "unexpected integration worktree"),
 ])
 def test_reject_refuses_unexpected_paths_before_removing_anything(
         job_review, fake_git, field, value, reason):
     builder(job_review, **{field: value})
     refused(lambda: job_review.reject(JOB), reason)
     assert fake_git.calls == []
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "awaiting_review"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "awaiting_review"
 
 
 def test_reject_tolerates_builder_worktree_already_gone(job_review, fake_git):
@@ -109,8 +109,8 @@ def test_reject_tolerates_builder_worktree_already_gone(job_review, fake_git):
     (job_review.WORKTREE_ROOT / f"job-{JOB}").rmdir()
     job_review.reject(JOB)
     assert fake_git.ran("worktree", "remove") == []
-    assert fake_git.ran("branch", "-D") == [("branch", "-D", f"sid/job-{JOB}")]
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
+    assert fake_git.ran("branch", "-D") == [("branch", "-D", f"laika/job-{JOB}")]
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "rejected"
 
 
 def test_reject_build_that_never_created_a_worktree(job_review, fake_git):
@@ -121,27 +121,27 @@ def test_reject_build_that_never_created_a_worktree(job_review, fake_git):
     job_review.reject(JOB)
     assert fake_git.ran("worktree", "remove") == []
     assert fake_git.ran("branch", "-D") == []
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "rejected"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "rejected"
 
 
 def test_reject_git_failure_leaves_job_unrejected(job_review, fake_git):
     builder(job_review)
     fake_git.failing.add(("branch", "-D"))
     refused(lambda: job_review.reject(JOB), "failed")
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "awaiting_review"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "awaiting_review"
 
 
 # --- approve -----------------------------------------------------------------
 
-LOCK = "sid:approval-lock:main"
+LOCK = "laika:approval-lock:main"
 
 
 @pytest.mark.parametrize("expected_candidate", [INTEGRATED, None])
 def test_approve_advances_main_to_exact_candidate(
         job_review, fake_git, approvable, expected_candidate):
     job_review.approve(JOB, expected_candidate=expected_candidate)
-    assert fake_git.ran("merge") == [("merge", "--ff-only", f"sid/integration-{JOB}")]
-    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    assert fake_git.ran("merge") == [("merge", "--ff-only", f"laika/integration-{JOB}")]
+    record = job_review.r.records[f"laika:jobs:{JOB}"]
     assert record["status"] == "merged"
     assert record["integrated_candidate_commit"] == INTEGRATED
     assert LOCK not in job_review.r.values
@@ -164,7 +164,7 @@ def _git(**state):
     def mutate(job_review, fake_git, builder, reviewer, integration):
         for name, value in state.items():
             if name == "branch_head":
-                fake_git.branch_heads[f"sid/integration-{JOB}"] = value
+                fake_git.branch_heads[f"laika/integration-{JOB}"] = value
             else:
                 setattr(fake_git, name, value)
     return mutate
@@ -175,7 +175,7 @@ def _remove_integration(job_review, fake_git, builder, reviewer, integration):
 
 
 def _drop_reviewer(job_review, fake_git, builder, reviewer, integration):
-    del job_review.r.records["sid:jobs:rv1"]
+    del job_review.r.records["laika:jobs:rv1"]
 
 
 # Every refusal in _approve_unlocked, in source order, plus the new
@@ -198,7 +198,7 @@ APPROVE_REFUSALS = [
     ("main dirty", _git(main_dirty=True), "main worktree is not clean"),
     ("no integration base", _drop("builder", "integration_base_commit"), "integration base commit is missing"),
     ("stale main", _git(main_head="e" * 40), "stale main"),
-    ("integration worktree path", _set("builder", integration_worktree="/opt/sids-ai-command-center"), "unexpected integration worktree"),
+    ("integration worktree path", _set("builder", integration_worktree="/opt/laika"), "unexpected integration worktree"),
     ("integration worktree gone", _remove_integration, "integration worktree does not exist"),
     ("integration branch name", _set("builder", integration_branch="main"), "unexpected integration branch"),
     ("integrated HEAD moved", _git(integrated_head="d" * 40), "integrated worktree head changed"),
@@ -214,7 +214,7 @@ def test_approve_refusals_never_advance_main(
     mutate(job_review, fake_git, *approvable)
     refused(lambda: job_review.approve(JOB, expected_candidate=INTEGRATED), reason)
     assert fake_git.ran("merge") == []
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] != "merged"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] != "merged"
     assert LOCK not in job_review.r.values, "approval lock must be released"
 
 
@@ -241,7 +241,7 @@ def test_approve_refuses_while_another_approval_holds_the_lock(
 def test_approve_failed_merge_leaves_job_unmerged(job_review, fake_git, approvable):
     fake_git.failing.add(("merge", "--ff-only"))
     refused(lambda: job_review.approve(JOB, expected_candidate=INTEGRATED), "failed")
-    assert job_review.r.records[f"sid:jobs:{JOB}"]["status"] == "awaiting_review"
+    assert job_review.r.records[f"laika:jobs:{JOB}"]["status"] == "awaiting_review"
     assert LOCK not in job_review.r.values
 
 
@@ -269,7 +269,7 @@ def test_extend_build_failure_grants_rebuilds(job_review):
             failed_status="test_failed", build_attempt="2",
             needs_human_reason="build failed after 2 attempt(s)")
     job_review.extend(JOB, 2)
-    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    record = job_review.r.records[f"laika:jobs:{JOB}"]
     assert record["status"] == "test_failed"  # the orchestrator retries it
     assert record["max_build_attempts"] == "4"
     assert record["needs_human_kind"] == ""
@@ -290,7 +290,7 @@ def test_reintegrate_resets_review_recovery_budget(job_review, fake_git):
     builder(job_review, "needs_human", needs_human_kind="review",
             review_recoveries="2", source_candidate_commits='["s1"]')
     job_review.reintegrate(JOB)
-    record = job_review.r.records[f"sid:jobs:{JOB}"]
+    record = job_review.r.records[f"laika:jobs:{JOB}"]
     assert record["review_recoveries"] == "0"
     assert record["needs_human_kind"] == ""
     assert record["status"] == "awaiting_review"

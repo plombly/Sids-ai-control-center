@@ -1,7 +1,7 @@
-"""The weekly digest: what SID did across all projects in the last 7 days.
+"""The weekly digest: what LAIka did across all projects in the last 7 days.
 
 Pure text building, shared by the API (dashboard "Preview digest") and the
-host's scripts/sid-digest.py (posts it to Discord / ntfy on the schedule
+host's scripts/laika-digest.py (posts it to Discord / ntfy on the schedule
 from the settings page).
 """
 
@@ -45,7 +45,7 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
     codex = next((row for row in usage["by_provider"] if row["provider"] == "codex"), {})
 
     def project_of(record):
-        return record.get("project_id") or "sid"
+        return record.get("project_id") or "laika"
 
     lines, totals = [], {"done": 0, "failed": 0, "merged": 0, "undone": 0, "waiting": 0, "stuck": 0}
     for project_id, name in projects:
@@ -104,4 +104,4 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
         body += ["", f"Needs you now: {totals['waiting']} to approve, {totals['stuck']} stuck"]
     if dashboard:
         body += [dashboard]
-    return f"SID weekly digest · {start} – {end}", "\n".join(body)
+    return f"LAIka weekly digest · {start} – {end}", "\n".join(body)

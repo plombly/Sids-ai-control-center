@@ -78,15 +78,15 @@ class FakeRedis:
 
 def dashboard_redis(monkeypatch):
     fake = FakeRedis({
-        "sid:orchestrators:one": {
+        "laika:orchestrators:one": {
             "id": "one", "status": "idle", "goal_id": "g1", "last_seen": "bad",
         },
-        "sid:workers:w1": {"id": "w1", "role": "builder", "status": "working", "model": "m"},
-        "sid:goals:g1": {
+        "laika:workers:w1": {"id": "w1", "role": "builder", "status": "working", "model": "m"},
+        "laika:goals:g1": {
             "id": "g1", "goal": "line one\n" + "x" * 400, "status": "running",
             "jobs": '["j1"]', "updated_at": "20",
         },
-        "sid:jobs:j1": {
+        "laika:jobs:j1": {
             "id": "j1", "status": "awaiting_review", "role": "builder", "worker_id": "w1",
             "review_status": "complete", "review_verdict": "pass",
             "review_job_id": "review-j1", "integration_status": "passed",
@@ -95,19 +95,19 @@ def dashboard_redis(monkeypatch):
             ).strip(),
             "integrated_candidate_commit": "candidate-j1",
             "reviewed_commit": "candidate-j1",
-            "integration_worktree": "/opt/sid-worktrees/job-j1-integration",
-            "integration_branch": "sid/integration-j1",
+            "integration_worktree": "/var/lib/laika/worktrees/job-j1-integration",
+            "integration_branch": "laika/integration-j1",
             "input_tokens": "100", "cached_input_tokens": "25",
             "output_tokens": "30", "updated_at": "10",
         },
-        "sid:jobs:review-j1": {
+        "laika:jobs:review-j1": {
             "id": "review-j1", "role": "reviewer",
             "builder_job_id": "j1", "status": "review_complete",
             "review_verdict": "pass", "candidate_commit": "candidate-j1",
             "reviewed_commit": "candidate-j1", "updated_at": "9",
         },
-        "sid:jobs:bad": {"status": "failed", "input_tokens": "not-a-number", "updated_at": "30"},
-        "sid:jobs:missing": None,
+        "laika:jobs:bad": {"status": "failed", "input_tokens": "not-a-number", "updated_at": "30"},
+        "laika:jobs:missing": None,
     }, queue_depth=3)
     monkeypatch.setattr(main, "redis", fake)
     return fake
@@ -117,7 +117,7 @@ def test_dashboard_endpoints_and_bounded_normalization(client, monkeypatch):
     dashboard_redis(monkeypatch)
 
     assert client.get("/api/repository").status_code == 200
-    assert client.get("/api/queue").json() == {"name": "sid:jobs", "depth": 3}
+    assert client.get("/api/queue").json() == {"name": "laika:jobs", "depth": 3}
     assert client.get("/api/orchestrators").json()[0]["status"] == "active"
     assert client.get("/api/workers").json()[0]["job_id"] == "j1"
     assert set(client.get("/api/heartbeat").json()) == {"workers", "orchestrators"}
@@ -139,7 +139,7 @@ def test_dashboard_endpoints_and_bounded_normalization(client, monkeypatch):
 
 def test_repository_uses_main_head_from_redis(client, monkeypatch):
     sha = "0123456789abcdef0123456789abcdef01234567"
-    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"sid:main-head": sha}))
+    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"laika:main-head": sha}))
 
     response = client.get("/api/repository")
 
@@ -161,7 +161,7 @@ def test_repository_is_unknown_when_main_head_is_missing(client, monkeypatch):
 
 
 def test_repository_is_unknown_when_redis_errors(client, monkeypatch):
-    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"sid:main-head": RuntimeError("redis down")}))
+    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"laika:main-head": RuntimeError("redis down")}))
 
     response = client.get("/api/repository")
 
@@ -191,7 +191,7 @@ def test_dismissals_use_only_the_dismissed_set(client, monkeypatch):
 
 def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
-    fake.hashes["sid:jobs:approval"] = {
+    fake.hashes["laika:jobs:approval"] = {
         "id": "approval",
         "status": "awaiting_review",
         "review_status": "complete",
@@ -203,11 +203,11 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
         ).strip(),
         "integrated_candidate_commit": "candidate-approval",
         "reviewed_commit": "candidate-approval",
-        "integration_worktree": "/opt/sid-worktrees/job-approval-integration",
-        "integration_branch": "sid/integration-approval",
+        "integration_worktree": "/var/lib/laika/worktrees/job-approval-integration",
+        "integration_branch": "laika/integration-approval",
         "updated_at": "1",
     }
-    fake.hashes["sid:jobs:review-approval"] = {
+    fake.hashes["laika:jobs:review-approval"] = {
         "id": "review-approval",
         "role": "reviewer",
         "builder_job_id": "approval",
@@ -218,7 +218,7 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
         "updated_at": "0",
     }
     for index in range(12):
-        fake.hashes[f"sid:jobs:recent-{index}"] = {"status": "queued", "updated_at": str(100 + index)}
+        fake.hashes[f"laika:jobs:recent-{index}"] = {"status": "queued", "updated_at": str(100 + index)}
 
     assert client.get("/api/jobs?limit=2").json()[0]["id"] == "recent-11"
     assert [item["id"] for item in client.get("/api/approvals").json()] == ["j1", "approval"]
@@ -231,10 +231,10 @@ def test_approvals_are_not_limited_by_recent_jobs_and_bad_state_is_safe(client, 
 def test_dashboard_pagination_supports_offset_and_rejects_negative_offset(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
     for index in range(5):
-        fake.hashes[f"sid:jobs:page-{index}"] = {
+        fake.hashes[f"laika:jobs:page-{index}"] = {
             "status": "queued", "updated_at": str(100 + index),
         }
-        fake.hashes[f"sid:goals:page-{index}"] = {
+        fake.hashes[f"laika:goals:page-{index}"] = {
             "goal": f"goal {index}", "updated_at": str(100 + index),
         }
 
@@ -249,7 +249,7 @@ def test_dashboard_pagination_supports_offset_and_rejects_negative_offset(client
 def test_approval_requires_exact_integrated_review_metadata(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
 
-    fake.hashes["sid:jobs:unsafe"] = {
+    fake.hashes["laika:jobs:unsafe"] = {
         "id": "unsafe",
         "status": "awaiting_review",
         "review_status": "complete",
@@ -294,8 +294,8 @@ class WritableFakeRedis(FakeRedis):
 
 def with_shop(fake):
     """A registered project: the built-in one takes no goals from the API."""
-    fake.hashes["sid:projects:shop"] = {"id": "shop", "name": "Shop", "status": "active"}
-    fake.sets.setdefault("sid:projects", set()).add("shop")
+    fake.hashes["laika:projects:shop"] = {"id": "shop", "name": "Shop", "status": "active"}
+    fake.sets.setdefault("laika:projects", set()).add("shop")
     return fake
 
 
@@ -308,7 +308,7 @@ def test_the_built_in_project_takes_no_goals(client, monkeypatch):
 
 def test_goal_duplicate_guard_distinguishes_atomic_mode(client, monkeypatch):
     fake = WritableFakeRedis({
-        "sid:goals:existing": {
+        "laika:goals:existing": {
             "id": "existing",
             "goal": "same work",
             "status": "queued",
@@ -327,7 +327,7 @@ def test_goal_duplicate_guard_distinguishes_atomic_mode(client, monkeypatch):
     body = response.json()
     assert body["id"] != "existing"
     assert body["atomic"] is True
-    assert len(fake.queues["sid:goals"]) == 1
+    assert len(fake.queues["laika:goals"]) == 1
 
 
 def test_failed_queue_releases_request_id_reservation(client, monkeypatch):
@@ -345,12 +345,12 @@ def test_failed_queue_releases_request_id_reservation(client, monkeypatch):
     )
 
     assert response.status_code == 503
-    assert fake.get("sid:goal-requests:retry-me") is None
+    assert fake.get("laika:goal-requests:retry-me") is None
 
 
 def test_request_id_duplicate_rejects_atomic_mode_mismatch(client, monkeypatch):
     fake = WritableFakeRedis({
-        "sid:goals:existing": {
+        "laika:goals:existing": {
             "id": "existing",
             "goal": "original work",
             "status": "queued",
@@ -358,7 +358,7 @@ def test_request_id_duplicate_rejects_atomic_mode_mismatch(client, monkeypatch):
             "atomic": "false",
         }
     })
-    fake.values["sid:goal-requests:same-request"] = "existing"
+    fake.values["laika:goal-requests:same-request"] = "existing"
     monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
@@ -375,7 +375,7 @@ def test_request_id_duplicate_rejects_atomic_mode_mismatch(client, monkeypatch):
 
 def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch):
     fake = WritableFakeRedis({
-        "sid:goals:existing": {
+        "laika:goals:existing": {
             "id": "existing",
             "goal": "original work",
             "status": "queued",
@@ -383,7 +383,7 @@ def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch)
             "atomic": "true",
         }
     })
-    fake.values["sid:goal-requests:same-request"] = "existing"
+    fake.values["laika:goal-requests:same-request"] = "existing"
     monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
@@ -402,21 +402,21 @@ def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch)
 
 def test_job_detail_lineage_gate_and_related_jobs(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
-    fake.hashes["sid:jobs:j1"].update({
+    fake.hashes["laika:jobs:j1"].update({
         "build_attempt": "2", "max_build_attempts": "3", "review_recoveries": "1",
-        "retry_reason": "SID test gate failed", "needs_human_kind": "build",
+        "retry_reason": "LAIka test gate failed", "needs_human_kind": "build",
         "last_integrate_job_id": "int-1",
         # order is cherry-pick order and must be kept
         "source_candidate_commits": '["zz-first", "aa-second"]',
         "review_findings_history": '[{"review_job_id":"rv0","candidate":"c0","findings":"fix it"}, 3, "x"]',
         "integration_result": '{"returncode": 1, "stdout": "' + "x" * 3500 + 'END"}',
     })
-    fake.hashes["sid:jobs:repair-late"] = {"id": "repair-late", "role": "repair",
+    fake.hashes["laika:jobs:repair-late"] = {"id": "repair-late", "role": "repair",
                                            "target_builder_id": "j1", "status": "repair_complete",
                                            "created_at": "50"}
-    fake.hashes["sid:jobs:int-1"] = {"id": "int-1", "role": "integrate", "target_builder_id": "j1",
+    fake.hashes["laika:jobs:int-1"] = {"id": "int-1", "role": "integrate", "target_builder_id": "j1",
                                      "status": "integrate_complete", "created_at": "40"}
-    fake.hashes["sid:jobs:other"] = {"id": "other", "role": "reviewer", "builder_job_id": "j9",
+    fake.hashes["laika:jobs:other"] = {"id": "other", "role": "reviewer", "builder_job_id": "j9",
                                      "created_at": "45"}
 
     detail = client.get("/api/jobs/j1").json()
@@ -424,7 +424,7 @@ def test_job_detail_lineage_gate_and_related_jobs(client, monkeypatch):
     lineage = detail["lineage"]
     assert lineage["build_attempt"] == 2 and lineage["max_build_attempts"] == 3
     assert lineage["review_recoveries"] == 1
-    assert lineage["retry_reason"] == "SID test gate failed"
+    assert lineage["retry_reason"] == "LAIka test gate failed"
     assert lineage["needs_human_kind"] == "build"
     assert lineage["last_integrate_job_id"] == "int-1"
     assert lineage["repair_job_id"] is None
@@ -443,7 +443,7 @@ def test_job_detail_lineage_gate_and_related_jobs(client, monkeypatch):
 
 def test_job_detail_lineage_tolerates_missing_and_malformed_fields(client, monkeypatch):
     fake = dashboard_redis(monkeypatch)
-    fake.hashes["sid:jobs:j1"].update({
+    fake.hashes["laika:jobs:j1"].update({
         "source_candidate_commits": "not json",
         "review_findings_history": '{"not": "a list"}',
         "integration_result": "[1, 2]",
@@ -453,6 +453,6 @@ def test_job_detail_lineage_tolerates_missing_and_malformed_fields(client, monke
     assert detail["lineage"]["review_findings_history"] == []
     assert detail["lineage"]["build_attempt"] is None
     assert detail["gate"] is None
-    fake.hashes["sid:jobs:j1"].pop("integration_result")
+    fake.hashes["laika:jobs:j1"].pop("integration_result")
     assert client.get("/api/jobs/j1").json()["gate"] is None
     assert client.get("/api/jobs/nojob").status_code == 404

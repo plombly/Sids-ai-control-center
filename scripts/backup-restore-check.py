@@ -2,17 +2,17 @@
 """Prove the newest backup can actually be restored (monthly timer).
 
 A backup nobody has restored is a hope, not a backup. This takes the newest
-snapshot made by scripts/backup-sid.py and restores every part into
+snapshot made by scripts/laika-backup.py and restores every part into
 throwaway places, then checks what came back:
   repo.bundle          cloned; HEAD resolves and `git fsck` passes
   projects/*.bundle    the same for every project repository
   redis.rdb            loaded into a temporary Redis container; keys counted
   postgres.sql.gz      loaded into a temporary Postgres container; tables counted
-  config.tar.gz        opened; must contain /etc/sid-ai
+  config.tar.gz        opened; must contain /etc/laika
   project-data.tar.gz  opened (when present)
 Nothing touches the live system: temporary containers have no published
 ports and are removed, temporary files live in a root-only directory that is
-deleted afterwards. The result goes to Redis sid:backup:restore-check, which
+deleted afterwards. The result goes to Redis laika:backup:restore-check, which
 the health watchdog reports (and a failure pings you through notifications).
 """
 
@@ -30,13 +30,13 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
-BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/sid-ai/snapshots"))
+BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/laika/snapshots"))
 SNAPSHOT_NAME = re.compile(r"\d{8}T\d{6}Z")
 REDIS_IMAGE = os.getenv("RESTORE_CHECK_REDIS_IMAGE", "redis:8-alpine")
 POSTGRES_IMAGE = os.getenv("RESTORE_CHECK_POSTGRES_IMAGE", "postgres:18-alpine")
-RESULT_KEY = "sid:backup:restore-check"
+RESULT_KEY = "laika:backup:restore-check"
 
 
 def run(args, **kwargs):
@@ -84,7 +84,7 @@ def check_redis(rdb, workdir):
     data = workdir / "redis"
     data.mkdir(mode=0o700)
     shutil.copy2(rdb, data / "dump.rdb")
-    name = f"sid-restore-check-redis-{secrets.token_hex(4)}"
+    name = f"laika-restore-check-redis-{secrets.token_hex(4)}"
     started = run(["docker", "run", "-d", "--rm", "--name", name, "-v", f"{data}:/data", REDIS_IMAGE,
                    "redis-server", "--dir", "/data", "--dbfilename", "dump.rdb", "--appendonly", "no"])
     if started.returncode:
@@ -96,7 +96,7 @@ def check_redis(rdb, workdir):
         if not _wait(lambda: "loading:0" in cli("info", "persistence").stdout):
             raise RuntimeError("the dump did not finish loading")
         keys = int(cli("dbsize").stdout.strip() or 0)
-        jobs = len([k for k in cli("--scan", "--pattern", "sid:jobs:*").stdout.split() if k.count(":") == 2])
+        jobs = len([k for k in cli("--scan", "--pattern", "laika:jobs:*").stdout.split() if k.count(":") == 2])
         if keys == 0:
             raise RuntimeError("the restored Redis is empty")
         return f"{keys} keys, {jobs} jobs"
@@ -107,7 +107,7 @@ def check_redis(rdb, workdir):
 def check_postgres(dump, workdir):
     sql = gzip.decompress(dump.read_bytes()).decode(errors="replace")
     owners = sorted(set(re.findall(r"OWNER TO ([A-Za-z_][A-Za-z0-9_]*)", sql)) - {"postgres"})
-    name = f"sid-restore-check-pg-{secrets.token_hex(4)}"
+    name = f"laika-restore-check-pg-{secrets.token_hex(4)}"
     started = run(["docker", "run", "-d", "--rm", "--name", name, "-e", f"POSTGRES_PASSWORD={secrets.token_hex(16)}",
                    POSTGRES_IMAGE])
     if started.returncode:
@@ -139,7 +139,7 @@ def run_checks(snapshot):
         except Exception as exc:
             checks.append({"name": name, "ok": False, "detail": str(exc)[:300]})
 
-    with tempfile.TemporaryDirectory(prefix="sid-restore-check-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="laika-restore-check-") as tmp:
         workdir = Path(tmp)
         os.chmod(workdir, 0o700)
         check("repo", check_bundle, snapshot / "repo.bundle", workdir)
@@ -148,7 +148,7 @@ def run_checks(snapshot):
             check(f"project {bundle.stem}", check_bundle, bundle, workdir)
         if (projects / "project-data.tar.gz").exists():
             check("project data", check_tar, projects / "project-data.tar.gz")
-        check("config", check_tar, snapshot / "config.tar.gz", "etc/sid-ai")
+        check("config", check_tar, snapshot / "config.tar.gz", "etc/laika")
         check("redis", check_redis, snapshot / "redis.rdb", workdir)
         check("postgres", check_postgres, snapshot / "postgres.sql.gz", workdir)
     return checks
@@ -165,7 +165,7 @@ def main():
     try:
         import redis as redis_lib
         r = redis_lib.Redis.from_url(os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
-                                     password=sid_redis.password(), decode_responses=True)
+                                     password=laika_redis.password(), decode_responses=True)
         r.set(RESULT_KEY, json.dumps(result))
     except Exception as exc:
         print(f"could not record the result: {exc}", file=sys.stderr)

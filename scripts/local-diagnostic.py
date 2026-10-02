@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Check the local SID runtime without changing any service state."""
+"""Check the local LAIka runtime without changing any service state."""
 
 import json
 import os
@@ -12,19 +12,19 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 REPO = Path(os.getenv("REPO_ROOT", Path(__file__).resolve().parent.parent))
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = "6379"
-API_HEALTH_URL = os.getenv("SID_API_HEALTH_URL", "http://127.0.0.1:8000/health")
-ORCHESTRATOR_SERVICE = os.getenv("SID_ORCHESTRATOR_SERVICE", "sid-ai-orchestrator.service")
+API_HEALTH_URL = os.getenv("LAIKA_API_HEALTH_URL", "http://127.0.0.1:8000/health")
+ORCHESTRATOR_SERVICE = os.getenv("LAIKA_ORCHESTRATOR_SERVICE", "laika-orchestrator.service")
 WORKER_SERVICES = tuple(
     value.strip()
     for value in os.getenv(
-        "SID_WORKER_SERVICES",
-        "sid-ai-worker@01.service,sid-ai-worker@02.service,sid-ai-worker@03.service,sid-ai-worker@04.service",
+        "LAIKA_WORKER_SERVICES",
+        "laika-worker@01.service,laika-worker@02.service,laika-worker@03.service,laika-worker@04.service",
     ).split(",")
     if value.strip()
 )
@@ -56,7 +56,7 @@ def check_redis():
         client = redis.Redis(
             host=REDIS_HOST,
             port=int(REDIS_PORT),
-            password=sid_redis.password(),
+            password=laika_redis.password(),
             socket_connect_timeout=5,
             socket_timeout=5,
         )

@@ -1,4 +1,4 @@
-"""Goal assistant: apps/api/goal_assist.py and scripts/sid-assist.py."""
+"""Goal assistant: apps/api/goal_assist.py and scripts/laika-assist.py."""
 
 import json
 import subprocess
@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from sid_testing import ROOT, MemoryRedis, load_module
+from laika_testing import ROOT, MemoryRedis, load_module
 
 sys.path.insert(0, str(ROOT / "apps/api"))
 sys.path.insert(0, str(ROOT / "services"))
@@ -70,12 +70,12 @@ class Run:
 
 @pytest.fixture
 def assist(tmp_path, monkeypatch):
-    module = load_module(ROOT / "scripts/sid-assist.py")
+    module = load_module(ROOT / "scripts/laika-assist.py")
     monkeypatch.setattr(module, "LOG_ROOT", tmp_path)
     r = AssistRedis()
     repo = tmp_path / "repo"
     repo.mkdir()
-    r.records["sid:projects:game"] = {"id": "game", "name": "Game", "repo": str(repo), "root": str(tmp_path),
+    r.records["laika:projects:game"] = {"id": "game", "name": "Game", "repo": str(repo), "root": str(tmp_path),
                                       "worktrees": str(tmp_path / "w"), "logs": str(tmp_path / "l")}
     goal_assist.save(r, "a" * 16, status="queued", project_id="game", turns=[{"from": "you", "idea": "pause menu"}])
     calls = []
@@ -117,7 +117,7 @@ def test_failures_are_explained(assist, monkeypatch):
     module.main("a" * 16, r=r, runner=runner_for(Run("", ok=False, unavailable=True)))
     session = goal_assist.load(r, "a" * 16)
     assert session["status"] == "failed" and "not available" in session["error"]
-    assert r.get("sid:provider-cooldown:claude")
+    assert r.get("laika:provider-cooldown:claude")
     # While Claude cools down nothing runs.
     goal_assist.save(r, "a" * 16, status="queued")
     module.main("a" * 16, r=r, runner=runner_for())
@@ -152,7 +152,7 @@ def test_a_turn_cancelled_while_thinking_is_not_overwritten(assist):
 
 
 def test_apps_service_starts_queued_turns_only(monkeypatch):
-    module = load_module(ROOT / "services/apps/sid_apps.py")
+    module = load_module(ROOT / "services/apps/laika_apps.py")
     module.redis = AssistRedis()
     started = []
     monkeypatch.setattr(module, "run", lambda args, **k: started.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
@@ -160,4 +160,4 @@ def test_apps_service_starts_queued_turns_only(monkeypatch):
     goal_assist.save(module.redis, "c" * 16, status="cancelled")
     for session in ("b" * 16, "c" * 16, "../etc"):
         module.launch_assist(session)
-    assert len(started) == 1 and started[0][-1] == "b" * 16 and started[0][-2].endswith("scripts/sid-assist.py")
+    assert len(started) == 1 and started[0][-1] == "b" * 16 and started[0][-2].endswith("scripts/laika-assist.py")

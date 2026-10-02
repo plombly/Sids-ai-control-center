@@ -47,9 +47,9 @@ export async function fetchHistoryPage(offset, fetchImpl = fetch) {
   if (!Array.isArray(body)) throw new Error('Malformed payload');
   return normalize('jobs', body);
 }
-// Operator token for writes (the API requires it when SID_OPERATOR_TOKEN is
+// Operator token for writes (the API requires it when LAIKA_OPERATOR_TOKEN is
 // set). Kept in this browser only; storage can be unavailable.
-const TOKEN_KEY = 'sid-operator-token';
+const TOKEN_KEY = 'laika-operator-token';
 export const operatorToken = {
   get() {
     try {
@@ -65,7 +65,7 @@ export const operatorToken = {
     } catch {}
   }
 };
-export const authHeaders = (token = operatorToken.get()) => (token ? { 'x-sid-token': token } : {});
+export const authHeaders = (token = operatorToken.get()) => (token ? { 'x-laika-token': token } : {});
 // crypto.randomUUID() only exists in secure contexts (HTTPS or localhost); the
 // dashboard is usually opened over plain http on the LAN, where it is missing.
 export const newRequestId = () => {

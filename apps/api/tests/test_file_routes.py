@@ -26,8 +26,8 @@ def files(monkeypatch, tmp_path):
     monkeypatch.setattr(file_routes, "PROJECTS_MOUNT", projects_mount)
     monkeypatch.setattr(file_routes, "DATA_MOUNT", data_mount)
     monkeypatch.setattr(file_routes, "UPLOADS_MOUNT", uploads)
-    fake = FakeRedis({"sid:projects:shop": {"id": "shop", "name": "Shop", "status": "active",
-                                             "repo": "/opt/sid-projects/shop/repo"}}, members={"shop"})
+    fake = FakeRedis({"laika:projects:shop": {"id": "shop", "name": "Shop", "status": "active",
+                                             "repo": "/var/lib/laika/projects/shop/repo"}}, members={"shop"})
     monkeypatch.setattr(main, "redis", fake)
     with TestClient(main.app) as client:
         yield client, fake, repo, data_mount / "shop", uploads
@@ -51,9 +51,9 @@ def test_paths_cannot_leave_the_project(files, path, code):
     assert client.get("/api/projects/shop/files/download", params={"area": "code", "path": path}).status_code == code
 
 
-def test_sid_and_unknown_projects_are_not_browsable(files):
+def test_laika_and_unknown_projects_are_not_browsable(files):
     client, *_ = files
-    assert client.get("/api/projects/sid/files").status_code == 404
+    assert client.get("/api/projects/laika/files").status_code == 404
     assert client.get("/api/projects/ghost/files").status_code == 404
 
 
@@ -189,7 +189,7 @@ def test_upload_conflict_choices(files):
     client.put("/api/projects/shop/files/data?path=n.txt", content=b"one")
     clash = client.put("/api/projects/shop/files/data?path=n.txt", content=b"two")
     assert clash.status_code == 409 and clash.json()["detail"]["conflicts"] == ["n.txt"]
-    assert (data / "n.txt").read_bytes() == b"one" and not [p for p in data.iterdir() if p.name.startswith(".sid")]
+    assert (data / "n.txt").read_bytes() == b"one" and not [p for p in data.iterdir() if p.name.startswith(".laika")]
     assert client.put("/api/projects/shop/files/data?path=n.txt&on_conflict=keep", content=b"two").json()["path"] == "n (2).txt"
     client.put("/api/projects/shop/files/data?path=n.txt&on_conflict=overwrite", content=b"three")
     assert (data / "n.txt").read_bytes() == b"three"

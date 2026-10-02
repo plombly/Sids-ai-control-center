@@ -1,10 +1,10 @@
 """A project's recent history on main, grouped the way you think about it.
 
-Commits that came from one SID job (its builder, repairs and integration,
+Commits that came from one LAIka job (its builder, repairs and integration,
 merged together) form one change, titled with the job's title; anything
 else (uploads and file edits from the dashboard, undo commits, hand-made
 commits) is a change of its own. The apps service publishes this per
-project as JSON in sid:history:<id> whenever main moves (the API container
+project as JSON in laika:history:<id> whenever main moves (the API container
 has no git); the dashboard shows it and offers "Undo" for project changes.
 """
 
@@ -55,7 +55,7 @@ def build(repo, jobs, branch="main", limit=40):
             continue
         if job:
             changes.append({"kind": "job", "job_id": job.get("id"), "title": job.get("title") or commit["subject"],
-                            "time": commit["time"], "author": "SID", "head": commit["sha"],
+                            "time": commit["time"], "author": "LAIka", "head": commit["sha"],
                             "base": job.get("integration_base_commit"), "commits": [commit]})
         else:
             changes.append({"kind": "commit", "sha": commit["sha"], "title": commit["subject"], "time": commit["time"],
@@ -70,7 +70,7 @@ def build(repo, jobs, branch="main", limit=40):
 def publish(redis, project, load_jobs, branch="main"):
     """Store the history when main moved; returns True if it was rebuilt.
     load_jobs() -> merged job records of this project (only called then)."""
-    key = f"sid:history:{project.id}"
+    key = f"laika:history:{project.id}"
     current = head(project.repo, branch)
     try:
         stored = json.loads(redis.get(key) or "{}")

@@ -1,8 +1,8 @@
-# SID AI Command Center setup
+# LAIka setup
 
 ## 1. Overview
 
-SID is a self-hosted control plane: the FastAPI API and nginx web dashboard use
+LAIka is a self-hosted control plane: the FastAPI API and nginx web dashboard use
 Postgres and Redis, while the orchestrator plans goals and workers run builder,
 reviewer, repair, and integration jobs. The operator service runs approved host
 actions. The normal flow is **goal -> jobs -> build -> integrate -> review ->
@@ -16,9 +16,9 @@ Use a fresh Linux host with systemd, Docker and Docker Compose, git, and Python
 Create the durable test environment and install the repository requirements:
 
 ```sh
-python3 -m venv /opt/sid-venv
-/opt/sid-venv/bin/pip install -r apps/api/requirements-dev.txt
-/opt/sid-venv/bin/pip install -r services/worker/requirements.txt
+python3 -m venv /var/lib/laika/venv
+/var/lib/laika/venv/bin/pip install -r apps/api/requirements-dev.txt
+/var/lib/laika/venv/bin/pip install -r services/worker/requirements.txt
 ```
 
 The deterministic gate also uses pytest and Node.js. Install Node.js for the
@@ -37,12 +37,12 @@ The Claude subscription limits are shared with interactive Claude use.
 The documented host defaults are:
 
 ```text
-/opt/sids-ai-command-center/       live checkout (main)
-/opt/sid-worktrees/                job worktrees and integration worktrees
-/var/log/sid-ai/jobs/              job logs
-/var/log/sid-ai/integration/       integration-gate reports
-/opt/sid-venv/                     test Python environment
-/etc/sid-ai/operator.env           root-owned operator environment
+/opt/laika/       live checkout (main)
+/var/lib/laika/worktrees/                job worktrees and integration worktrees
+/var/log/laika/jobs/              job logs
+/var/log/laika/integration/       integration-gate reports
+/var/lib/laika/venv/                     test Python environment
+/etc/laika/operator.env           root-owned operator environment
 ```
 
 Relevant repository paths are:
@@ -72,10 +72,10 @@ default to `redis://127.0.0.1:6379/0`.
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `REDIS_URL` | Redis connection for API and host services | Compose: `redis://redis:6379/0`; host services: `redis://127.0.0.1:6379/0` |
-| `REPO_ROOT` | Live checkout used by host services | `/opt/sids-ai-command-center` |
-| `WORKTREE_ROOT` | Job worktree directory | `/opt/sid-worktrees` |
+| `REPO_ROOT` | Live checkout used by host services | `/opt/laika` |
+| `WORKTREE_ROOT` | Job worktree directory | `/var/lib/laika/worktrees` |
 | `DEFAULT_MODEL` | Codex/default pipeline model | `gpt-5.6-luna` |
-| `SID_PYTHON` | Python used for SID test gates | unset; `/opt/sid-venv/bin/python` when that venv exists, otherwise `/tmp/sid-agent-venv/bin/python` |
+| `LAIKA_PYTHON` | Python used for LAIka test gates | unset; `/var/lib/laika/venv/bin/python` when that venv exists, otherwise `/tmp/laika-agent-venv/bin/python` |
 | `ROLE_PROVIDERS` | Per-role provider overrides | planner `claude`, builder `codex`, reviewer `claude`, repair `claude` |
 | `CLAUDE_<ROLE>_MODEL` | Claude model for a role | planner `opus`; builder/reviewer/repair `sonnet` |
 | `CLAUDE_<ROLE>_BUDGET_USD` | Claude per-call budget ceiling | planner `1.00`; builder `3.00`; reviewer `1.50`; repair `2.00` |
@@ -87,22 +87,22 @@ default to `redis://127.0.0.1:6379/0`.
 | `MAX_BUILD_ATTEMPTS` | Build retry limit | `2` |
 | `OPERATOR_ALLOWED_ACTIONS` | Actions the host operator may execute | `reject,extend,reintegrate,reopen,dequeue_approve` (supplied unit and code default; no approval actions) |
 | `OPERATOR_REQUEST_TTL` | Operator request expiry in seconds | `600` |
-| `SID_OPERATOR_TOKEN` | Token protecting API writes | unset (empty) |
+| `LAIKA_OPERATOR_TOKEN` | Token protecting API writes | unset (empty) |
 
 Create the optional token file outside the repository. Use a generated value;
 do not put a real value in this guide or in source control:
 
 ```sh
-sudo install -d /etc/sid-ai
-sudo sh -c 'umask 077; printf "SID_OPERATOR_TOKEN=%s\n" "$(openssl rand -hex 32)" > /etc/sid-ai/operator.env'
-sudo chown root:root /etc/sid-ai/operator.env
-sudo chmod 600 /etc/sid-ai/operator.env
+sudo install -d /etc/laika
+sudo sh -c 'umask 077; printf "LAIKA_OPERATOR_TOKEN=%s\n" "$(openssl rand -hex 32)" > /etc/laika/operator.env'
+sudo chown root:root /etc/laika/operator.env
+sudo chmod 600 /etc/laika/operator.env
 ```
 
-When `SID_OPERATOR_TOKEN` is set, the API requires the `X-SID-Token` header on
+When `LAIKA_OPERATOR_TOKEN` is set, the API requires the `X-Laika-Token` header on
 every non-GET request. nginx injects the same header for dashboard API requests,
 so the dashboard does not ask the browser for the token. The default operator
-actions exclude `approve`; configure `SID_OPERATOR_TOKEN` first, then enable
+actions exclude `approve`; configure `LAIKA_OPERATOR_TOKEN` first, then enable
 `approve` only when the API is not reachable by people who must not approve
 merges.
 
@@ -111,15 +111,15 @@ list with a drop-in (it survives updates to the unit file) and restart the
 operator service:
 
 ```sh
-sudo install -d /etc/systemd/system/sid-ai-operator.service.d
+sudo install -d /etc/systemd/system/laika-operator.service.d
 printf '[Service]\nEnvironment=OPERATOR_ALLOWED_ACTIONS=approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen\n' \
-  | sudo tee /etc/systemd/system/sid-ai-operator.service.d/approval.conf
-sudo systemctl daemon-reload && sudo systemctl restart sid-ai-operator
+  | sudo tee /etc/systemd/system/laika-operator.service.d/approval.conf
+sudo systemctl daemon-reload && sudo systemctl restart laika-operator
 ```
 
 `queue_approve` approves a change to merge once it is fresh on `main` (merge
 queue); `approve` merges one exact candidate immediately. The API refuses both
-unless `SID_OPERATOR_TOKEN` is configured.
+unless `LAIKA_OPERATOR_TOKEN` is configured.
 
 ## 5. Start the containers
 
@@ -132,18 +132,18 @@ docker compose up -d --build
 Compose starts Postgres, Redis, the API, and the web dashboard. The API is on
 port `8000`, the dashboard is on port `8080`, and Redis is published on
 `127.0.0.1:6379`; Postgres is used by the Compose network. The dashboard has no
-login. Expose it only to people trusted to operate SID.
+login. Expose it only to people trusted to operate LAIka.
 
 ## 6. Install the systemd units
 
-Install `services/operator/sid-ai-operator.service` for host-side actions. It
+Install `deploy/systemd/laika-operator.service` for host-side actions. It
 uses the checkout, Redis, worktrees, and the operator action allowlist shown
 above:
 
 ```sh
-cp services/operator/sid-ai-operator.service /etc/systemd/system/
+cp deploy/systemd/laika-operator.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now sid-ai-operator.service
+systemctl enable --now laika-operator.service
 ```
 
 The repository does not provide orchestrator or worker unit files. The
@@ -151,30 +151,30 @@ following are minimal examples; adapt the instance count and environment to
 the host:
 
 ```ini
-# sid-ai-orchestrator.service (example)
+# laika-orchestrator.service (example)
 [Service]
-WorkingDirectory=/opt/sids-ai-command-center
-EnvironmentFile=-/etc/sid-ai/operator.env
-ExecStart=/opt/sid-venv/bin/python services/orchestrator/orchestrator.py
+WorkingDirectory=/opt/laika
+EnvironmentFile=-/etc/laika/operator.env
+ExecStart=/var/lib/laika/venv/bin/python services/orchestrator/orchestrator.py
 Restart=always
 
-# sid-ai-worker@.service (example)
+# laika-worker@.service (example)
 [Service]
-WorkingDirectory=/opt/sids-ai-command-center
-EnvironmentFile=-/etc/sid-ai/operator.env
+WorkingDirectory=/opt/laika
+EnvironmentFile=-/etc/laika/operator.env
 Environment=WORKER_ID=%i
-ExecStart=/opt/sid-venv/bin/python services/worker/worker.py
+ExecStart=/var/lib/laika/venv/bin/python services/worker/worker.py
 Restart=always
 ```
 
-Install the examples as `sid-ai-orchestrator.service` and
-`sid-ai-worker@.service`, then enable the orchestrator and the desired worker
-instances, for example `sid-ai-worker@01` through `sid-ai-worker@06`:
+Install the examples as `laika-orchestrator.service` and
+`laika-worker@.service`, then enable the orchestrator and the desired worker
+instances, for example `laika-worker@01` through `laika-worker@06`:
 
 ```sh
 systemctl daemon-reload
-systemctl enable --now sid-ai-orchestrator.service
-systemctl enable --now sid-ai-worker@01.service sid-ai-worker@02.service
+systemctl enable --now laika-orchestrator.service
+systemctl enable --now laika-worker@01.service laika-worker@02.service
 ```
 
 To force the test interpreter, add a drop-in for the orchestrator and worker
@@ -182,7 +182,7 @@ units:
 
 ```ini
 [Service]
-Environment=SID_PYTHON=/opt/sid-venv/bin/python
+Environment=LAIKA_PYTHON=/var/lib/laika/venv/bin/python
 ```
 
 Changes under `services/` require restarting the affected units. Changes under
@@ -195,11 +195,11 @@ The checkout must be clean, with nothing untracked. Run the gate from the
 checkout and check its exit code directly:
 
 ```sh
-SID_PYTHON=/opt/sid-venv/bin/python REPO_ROOT=<checkout> python3 scripts/integration-check.py
+LAIKA_PYTHON=/var/lib/laika/venv/bin/python REPO_ROOT=<checkout> python3 scripts/integration-check.py
 ```
 
 The gate runs the repository's API, host, syntax, diagnostic, workflow, and web
-checks and writes its report under `/var/log/sid-ai/integration/`.
+checks and writes its report under `/var/log/laika/integration/`.
 
 ## 8. Submit a goal
 
@@ -243,10 +243,10 @@ also has `dequeue <job-id>` for withdrawing a queued approval.
 Use read-only checks such as:
 
 ```sh
-docker exec sid-ai-redis redis-cli hgetall sid:workers:<worker-id>
-systemctl status sid-ai-orchestrator.service
-journalctl -u sid-ai-worker@01.service
+docker exec laika-redis redis-cli hgetall laika:workers:<worker-id>
+systemctl status laika-orchestrator.service
+journalctl -u laika-worker@01.service
 ```
 
-Job logs are under `/var/log/sid-ai/jobs/`; integration reports are under
-`/var/log/sid-ai/integration/`.
+Job logs are under `/var/log/laika/jobs/`; integration reports are under
+`/var/log/laika/integration/`.

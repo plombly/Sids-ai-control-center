@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 
 @pytest.fixture
@@ -15,19 +15,19 @@ def orch():
 
 
 def put(orch, job_id, status, scope, created="1", deps=(), **fields):
-    orch.r.records[f"sid:jobs:{job_id}"] = {
+    orch.r.records[f"laika:jobs:{job_id}"] = {
         "id": job_id, "role": "builder", "status": status, "prompt": f"do {job_id}",
         "scope": json.dumps(list(scope)), "dependencies": json.dumps(list(deps)),
         "created_at": created, **fields}
-    return orch.r.records[f"sid:jobs:{job_id}"]
+    return orch.r.records[f"laika:jobs:{job_id}"]
 
 
 def job(orch, job_id):
-    return orch.r.records[f"sid:jobs:{job_id}"]
+    return orch.r.records[f"laika:jobs:{job_id}"]
 
 
 def queued(orch):
-    return [json.loads(raw)["id"] for raw in orch.r.values.get("sid:jobs", [])]
+    return [json.loads(raw)["id"] for raw in orch.r.values.get("laika:jobs", [])]
 
 
 @pytest.mark.parametrize("a,b,overlap", [
@@ -114,14 +114,14 @@ def test_dependencies_still_come_first(orch):
 
 def test_planned_jobs_wait_for_busy_files_and_are_retry_eligible(orch, monkeypatch):
     put(orch, "busy", "awaiting_review", ["apps/web/app.js"])
-    orch.r.records["sid:goals:g1"] = {"id": "g1", "goal": "ui work", "status": "queued"}
+    orch.r.records["laika:goals:g1"] = {"id": "g1", "goal": "ui work", "status": "queued"}
     monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None, project=None: {"jobs": [
         {"number": 1, "title": "ui", "task": "t1", "scope": ["apps/web/app.js"], "depends_on": []},
         {"number": 2, "title": "api", "task": "t2", "scope": ["apps/api/main.py"], "depends_on": []},
     ]})
     monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
     orch.process_goal(json.dumps({"id": "g1", "goal": "ui work"}))
-    jobs = {j["title"]: j for k, j in orch.r.records.items() if k.startswith("sid:jobs:") and j.get("title")}
+    jobs = {j["title"]: j for k, j in orch.r.records.items() if k.startswith("laika:jobs:") and j.get("title")}
     assert jobs["ui"]["status"] == "blocked"
     assert "held by job busy" in jobs["ui"]["blocked_reason"]
     assert jobs["api"]["status"] == "queued"

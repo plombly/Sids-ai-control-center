@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast, no-network regression checks for SID workflow control code."""
+"""Fast, no-network regression checks for LAIka workflow control code."""
 
 import importlib.util
 import json
@@ -53,7 +53,7 @@ def expect_exit(call, contains):
 
 
 def test_approval_review_gate():
-    module = load("sid_job_review_test", ROOT / "scripts/job-review.py")
+    module = load("laika_job_review_test", ROOT / "scripts/job-review.py")
 
     builder = {
         "status": "awaiting_review",
@@ -124,7 +124,7 @@ def test_immutable_candidate_contract():
 
     assert '"candidate_commit": candidate_commit' in worker
     assert '"reviewed_commit": candidate_commit' in worker
-    assert 'f"Apply SID job {job_id}"' in worker
+    assert 'f"Apply LAIka job {job_id}"' in worker
     assert 'Builder worktree changed after candidate commit' in worker
     assert 'Candidate changed during read-only review' in worker
 
@@ -159,7 +159,7 @@ def test_integration_and_review_duplicate_guards():
 
     # Integration must have an atomic per-job ownership reservation, not
     # merely an optimistic integration_status check.
-    assert 'lock_key = f"sid:integration-lock:{job_id}"' in worker
+    assert 'lock_key = f"laika:integration-lock:{job_id}"' in worker
     assert 'redis.set(lock_key, lock_owner, nx=True, ex=lock_ttl)' in worker
     assert 'lock_ttl = max(MAX_RUNTIME + 300, 7200)' in worker
     assert 'if not acquired:' in worker
@@ -239,10 +239,10 @@ def load_worker_for_behavior(name):
 
 
 def test_integration_success_behavior():
-    module = load_worker_for_behavior("sid_worker_integration_success")
+    module = load_worker_for_behavior("laika_worker_integration_success")
 
     job_id = "behavior1"
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     records = {
         key: {
             "candidate_commit": "source1",
@@ -289,10 +289,10 @@ def test_integration_success_behavior():
 
 
 def test_integration_conflict_preserves_main_behavior():
-    module = load_worker_for_behavior("sid_worker_integration_conflict")
+    module = load_worker_for_behavior("laika_worker_integration_conflict")
 
     job_id = "behavior2"
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     records = {
         key: {
             "candidate_commit": "source1",
@@ -341,10 +341,10 @@ def test_integration_conflict_preserves_main_behavior():
 
 
 def test_integration_gate_failure_preserves_main_behavior():
-    module = load_worker_for_behavior("sid_worker_gate_failure")
+    module = load_worker_for_behavior("laika_worker_gate_failure")
 
     job_id = "behavior3"
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     records = {
         key: {
             "candidate_commit": "source1",
@@ -394,10 +394,10 @@ def test_integration_gate_failure_preserves_main_behavior():
 
 
 def test_duplicate_integration_behavior():
-    module = load_worker_for_behavior("sid_worker_duplicate_integration")
+    module = load_worker_for_behavior("laika_worker_duplicate_integration")
 
     fake = MemoryRedis({})
-    fake.values["sid:integration-lock:duplicate1"] = "other-worker"
+    fake.values["laika:integration-lock:duplicate1"] = "other-worker"
     module.redis = fake
 
     entered = []
@@ -405,7 +405,7 @@ def test_duplicate_integration_behavior():
 
     assert module.prepare_integration("duplicate1") is False
     assert entered == []
-    assert fake.values["sid:integration-lock:duplicate1"] == "other-worker"
+    assert fake.values["laika:integration-lock:duplicate1"] == "other-worker"
 
 
 def approval_fixture(name, main_commit="base1"):
@@ -436,9 +436,9 @@ def approval_fixture(name, main_commit="base1"):
         "integration_status": "passed",
         "reviewed_commit": "integrated1",
         "integration_worktree": str(integrated),
-        "integration_branch": "sid/integration-builder123",
+        "integration_branch": "laika/integration-builder123",
         "worktree": str(builder_wt),
-        "branch": "sid/job-builder123",
+        "branch": "laika/job-builder123",
     }
     reviewer = {
         "role": "reviewer",
@@ -464,7 +464,7 @@ def approval_fixture(name, main_commit="base1"):
             return Result("integrated1\n")
         if args == ("status", "--porcelain") and Path(cwd) == integrated:
             return Result("")
-        if args == ("rev-parse", "sid/integration-builder123"):
+        if args == ("rev-parse", "laika/integration-builder123"):
             return Result("integrated1\n")
         if args[:2] == ("merge", "--ff-only"):
             return Result()
@@ -475,13 +475,13 @@ def approval_fixture(name, main_commit="base1"):
         raise AssertionError(f"unexpected git call: {args} cwd={cwd}")
 
     module.git = fake_git
-    module.r = MemoryRedis({"sid:jobs:builder123": builder})
+    module.r = MemoryRedis({"laika:jobs:builder123": builder})
     return td, module, builder, reviewer, calls
 
 
 def test_integrated_commit_binding_behavior():
     td, module, builder, reviewer, calls = approval_fixture(
-        "sid_approval_binding"
+        "laika_approval_binding"
     )
     try:
         builder["reviewed_commit"] = "wrong"
@@ -498,7 +498,7 @@ def test_integrated_commit_binding_behavior():
 
 def test_stale_main_refusal_behavior():
     td, module, builder, reviewer, calls = approval_fixture(
-        "sid_approval_stale",
+        "laika_approval_stale",
         main_commit="new-main",
     )
     try:
@@ -510,7 +510,7 @@ def test_stale_main_refusal_behavior():
 
 def test_exact_approval_behavior():
     td, module, builder, reviewer, calls = approval_fixture(
-        "sid_approval_exact"
+        "laika_approval_exact"
     )
     try:
         module._approve_unlocked("builder123")
@@ -520,12 +520,12 @@ def test_exact_approval_behavior():
             if args[:2] == ("merge", "--ff-only")
         ]
         assert merges == [
-            ("merge", "--ff-only", "sid/integration-builder123")
+            ("merge", "--ff-only", "laika/integration-builder123")
         ]
 
-        assert module.r.records["sid:jobs:builder123"]["status"] == "merged"
+        assert module.r.records["laika:jobs:builder123"]["status"] == "merged"
         assert (
-            module.r.records["sid:jobs:builder123"]["integrated_candidate_commit"]
+            module.r.records["laika:jobs:builder123"]["integrated_candidate_commit"]
             == "integrated1"
         )
     finally:
@@ -540,14 +540,14 @@ def test_global_approval_lock_contract():
     assert "lock_key = current_project().approval_lock_key" in review_script, (
         "approval must use the project's repository-wide main lock"
     )
-    assert 'f"sid:approval-lock:{job_id}"' not in review_script, (
+    assert 'f"laika:approval-lock:{job_id}"' not in review_script, (
         "per-job approval lock does not serialize different jobs"
     )
-    projects = load("sid_projects_lock_test", ROOT / "services/sid_projects.py")
-    sid = projects.Project({"id": "sid", "repo": "/r", "worktrees": "/w", "logs": "/l"})
+    projects = load("laika_projects_lock_test", ROOT / "services/laika_projects.py")
+    laika = projects.Project({"id": "laika", "repo": "/r", "worktrees": "/w", "logs": "/l"})
     other = projects.Project({"id": "web-shop", "repo": "/r2", "worktrees": "/w2", "logs": "/l2"})
-    assert sid.approval_lock_key == "sid:approval-lock:main"
-    assert other.approval_lock_key == "sid:approval-lock:web-shop"
+    assert laika.approval_lock_key == "laika:approval-lock:main"
+    assert other.approval_lock_key == "laika:approval-lock:web-shop"
 
     approve_start = review_script.index("def approve(job_id, expected_candidate=None):")
     unlocked_start = review_script.index(
@@ -577,7 +577,7 @@ def test_global_approval_lock_contract():
 
 def test_review_packet_covers_full_integrated_change():
     """Re-reviews must see base..candidate, not only the last repair commit."""
-    module = load_worker_for_behavior("sid_worker_review_packet")
+    module = load_worker_for_behavior("laika_worker_review_packet")
     calls = []
 
     def fake_git(*args, cwd=None, check=True):
@@ -610,7 +610,7 @@ def test_review_packet_covers_full_integrated_change():
 
 
 def test_review_verdict_parsing():
-    module = load_worker_for_behavior("sid_worker_verdicts")
+    module = load_worker_for_behavior("laika_worker_verdicts")
     parse = module.parse_review_verdict
     assert parse(["notes\nVERDICT: PASS"])[0] == "pass"
     verdict, findings = parse(["NOTE: tidy naming\nVERDICT: PASS_WITH_NOTES"])
@@ -631,7 +631,7 @@ def test_reviewer_prompt_forbids_sandboxed_tests_and_carries_context():
 
 
 def test_worker_stop_flag_survives_heartbeat():
-    module = load_worker_for_behavior("sid_worker_control")
+    module = load_worker_for_behavior("laika_worker_control")
     fake = MemoryRedis({})
     module.redis = fake
     module.heartbeat()
@@ -646,7 +646,7 @@ def test_worker_stop_flag_survives_heartbeat():
 
 
 def test_merge_recorded_even_when_cleanup_fails():
-    td, module, builder, reviewer, calls = approval_fixture("sid_approval_cleanup")
+    td, module, builder, reviewer, calls = approval_fixture("laika_approval_cleanup")
     original = module.git
 
     def flaky_git(*args, cwd=module.REPO_ROOT, check=True):
@@ -658,7 +658,7 @@ def test_merge_recorded_even_when_cleanup_fails():
     module.git = flaky_git
     try:
         module._approve_unlocked("builder123")
-        record = module.r.records["sid:jobs:builder123"]
+        record = module.r.records["laika:jobs:builder123"]
         assert record["status"] == "merged"
         assert record["integrated_candidate_commit"] == "integrated1"
     finally:
@@ -672,10 +672,10 @@ def operator_fixture(name, builder):
     module.WORKTREE_ROOT = root
     (root / "job-b1").mkdir()
     builder.setdefault("worktree", str(root / "job-b1"))
-    builder.setdefault("branch", "sid/job-b1")
-    fake = MemoryRedis({"sid:jobs:b1": builder})
+    builder.setdefault("branch", "laika/job-b1")
+    fake = MemoryRedis({"laika:jobs:b1": builder})
     module.r = fake
-    module.job_record = lambda job_id: fake.records.get(f"sid:jobs:{job_id}") or module.fail("missing")
+    module.job_record = lambda job_id: fake.records.get(f"laika:jobs:{job_id}") or module.fail("missing")
     return td, module, fake
 
 
@@ -685,13 +685,13 @@ def test_extend_grants_repairs_to_exhausted_job():
         "review_verdict": "changes_required", "review_job_id": "rv1",
         "repair_attempts": "2", "repair_status": "exhausted",
     }
-    td, module, fake = operator_fixture("sid_extend", builder)
+    td, module, fake = operator_fixture("laika_extend", builder)
     try:
         module.extend("b1", 2)
-        record = fake.records["sid:jobs:b1"]
+        record = fake.records["laika:jobs:b1"]
         assert record["status"] == "awaiting_review"
         assert record["max_repair_attempts"] == "4"
-        fake.records["sid:jobs:b1"]["status"] = "merged"
+        fake.records["laika:jobs:b1"]["status"] = "merged"
         expect_exit(lambda: module.extend("b1"), "status")
     finally:
         td.cleanup()
@@ -705,13 +705,13 @@ def test_reintegrate_preserves_sources_and_clears_derived_state():
         "review_verdict": "changes_required", "reviewed_commit": "old",
         "integration_status": "passed", "integration_base_commit": "oldbase",
         "integrated_candidate_commit": "old", "repair_attempts": "2",
-        "integration_worktree": "/opt/sid-worktrees/job-b1-integration",
+        "integration_worktree": "/var/lib/laika/worktrees/job-b1-integration",
         "review_findings_history": "[]",
     }
-    td, module, fake = operator_fixture("sid_reintegrate", builder)
+    td, module, fake = operator_fixture("laika_reintegrate", builder)
     try:
         module.reintegrate("b1")
-        record = fake.records["sid:jobs:b1"]
+        record = fake.records["laika:jobs:b1"]
         assert record["status"] == "awaiting_review"
         assert json.loads(record["source_candidate_commits"]) == ["s1", "s2"]
         for field in ("review_job_id", "review_verdict", "reviewed_commit",
@@ -722,7 +722,7 @@ def test_reintegrate_preserves_sources_and_clears_derived_state():
         assert record["repair_attempts"] == "2"
         assert "integration_worktree" in record
         assert "review_findings_history" in record
-        queued = [json.loads(x) for x in fake.values["sid:jobs"]]
+        queued = [json.loads(x) for x in fake.values["laika:jobs"]]
         assert queued[0]["role"] == "integrate"
         assert queued[0]["target_builder_id"] == "b1"
 
@@ -737,15 +737,15 @@ def test_reopen_only_when_dependencies_recovered():
         "status": "blocked_failed_dependency", "goal_id": "g1",
         "dependencies": json.dumps(["dep1"]),
     }
-    td, module, fake = operator_fixture("sid_reopen", builder)
-    fake.records["sid:jobs:dep1"] = {"status": "repair_exhausted"}
-    fake.records["sid:goals:g1"] = {"status": "failed"}
+    td, module, fake = operator_fixture("laika_reopen", builder)
+    fake.records["laika:jobs:dep1"] = {"status": "repair_exhausted"}
+    fake.records["laika:goals:g1"] = {"status": "failed"}
     try:
         expect_exit(lambda: module.reopen("b1"), "still failed")
-        fake.records["sid:jobs:dep1"]["status"] = "merged"
+        fake.records["laika:jobs:dep1"]["status"] = "merged"
         module.reopen("b1")
-        assert fake.records["sid:jobs:b1"]["status"] == "blocked"
-        assert fake.records["sid:goals:g1"]["status"] == "running"
+        assert fake.records["laika:jobs:b1"]["status"] == "blocked"
+        assert fake.records["laika:goals:g1"]["status"] == "running"
     finally:
         td.cleanup()
 

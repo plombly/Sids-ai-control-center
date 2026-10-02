@@ -25,12 +25,12 @@ import {
 async function main() {
   // Operator token: sent on requests when set, absent otherwise.
   assert.deepEqual(authHeaders(''), {});
-  assert.deepEqual(authHeaders('tok'), {'x-sid-token': 'tok'});
+  assert.deepEqual(authHeaders('tok'), {'x-laika-token': 'tok'});
   assert.equal(operatorToken.get(), '');  // no localStorage under node: must not throw
   const seen = [];
-  await requestJSON('/api/x', {method: 'POST', headers: {'x-sid-token': 'tok'}},
+  await requestJSON('/api/x', {method: 'POST', headers: {'x-laika-token': 'tok'}},
     async (path, opts) => { seen.push(opts); return {ok: true, json: async () => ({})}; });
-  assert.equal(seen[0].headers['x-sid-token'], 'tok');
+  assert.equal(seen[0].headers['x-laika-token'], 'tok');
   assert.equal(seen[0].headers['content-type'], 'application/json');
   assert.equal(seen[0].method, 'POST');
   assert.match(tokenStateText({token_required: false}), /open/);

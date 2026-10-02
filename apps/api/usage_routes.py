@@ -39,7 +39,7 @@ def summarize(jobs, goals, since, only_project=None):
             builder = jobs.get(job.get(field) or "")
             if builder and builder.get("project_id"):
                 return builder["project_id"]
-        return "sid"
+        return "laika"
 
     def bucket():
         return {"jobs": 0, "cost_usd": 0.0, "seconds": 0.0, **{field: 0 for field in TOKEN_FIELDS}}
@@ -71,9 +71,9 @@ def summarize(jobs, goals, since, only_project=None):
         cost = _number(goal.get("planner_cost_usd"))
         if when < since or not goal.get("planner_provider"):
             continue
-        if only_project and (goal.get("project_id") or "sid") != only_project:
+        if only_project and (goal.get("project_id") or "laika") != only_project:
             continue
-        add(when, goal.get("project_id") or "sid", goal.get("planner_provider"), "planner", {}, cost, 0)
+        add(when, goal.get("project_id") or "laika", goal.get("planner_provider"), "planner", {}, cost, 0)
 
     def rows(table, key_name):
         out = [{key_name: key, **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in value.items()}}
@@ -89,8 +89,8 @@ def summarize(jobs, goals, since, only_project=None):
 @router.get("/api/usage")
 def usage(days: int = Query(default=30, ge=1, le=365), project: str = Query(default="", max_length=40)):
     import main
-    jobs = {key.split(":", 2)[2]: data for key, data in main._hashes("sid:jobs:*")}
-    goals = {key.split(":", 2)[2]: data for key, data in main._hashes("sid:goals:*")}
+    jobs = {key.split(":", 2)[2]: data for key, data in main._hashes("laika:jobs:*")}
+    goals = {key.split(":", 2)[2]: data for key, data in main._hashes("laika:goals:*")}
     result = summarize(jobs, goals, time.time() - days * 86400, only_project=project or None)
     result["days"] = days
     result["project"] = project or None

@@ -1,6 +1,6 @@
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 
 module = load_module(ROOT / "services/worker/worker.py")

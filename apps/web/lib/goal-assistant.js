@@ -42,7 +42,7 @@ function questionsMarkup(box, state, session) {
       const chips = (question.options || [])
         .map(choice => `<button type="button" class="template-chip${state.answers[index] === choice ? ' chosen' : ''}" data-assist-option="${attr(box)}" data-index="${index}" data-value="${escValue(choice)}">${esc(choice)}</button>`)
         .join('');
-      return `<div class="assist-question"><label for="${domId(box)}-a${index}">${esc(question.question)}</label>${chips ? `<div class="template-chips">${chips}</div>` : ''}<input id="${domId(box)}-a${index}" data-assist-field="answer" data-index="${index}" data-box="${attr(box)}" value="${escValue(state.answers[index] || '')}" placeholder="Your answer (or leave empty: SID picks a sensible default)" autocomplete="off"></div>`;
+      return `<div class="assist-question"><label for="${domId(box)}-a${index}">${esc(question.question)}</label>${chips ? `<div class="template-chips">${chips}</div>` : ''}<input id="${domId(box)}-a${index}" data-assist-field="answer" data-index="${index}" data-box="${attr(box)}" value="${escValue(state.answers[index] || '')}" placeholder="Your answer (or leave empty: LAIka picks a sensible default)" autocomplete="off"></div>`;
     })
     .join('');
   return `<p class="assist-step">A few questions first</p>${ideaQuote(session)}${items}<div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button><button type="button" data-assist-skip="${attr(box)}">Skip questions</button><button type="button" class="primary" data-assist-answer="${attr(box)}">Continue</button></span></div>`;
@@ -118,22 +118,22 @@ export function useTemplate(box, template) {
 
 export function projectOf(box) {
   if (box.startsWith('project:')) return box.slice('project:'.length);
-  if (typeof document === 'undefined') return 'sid';
-  return document.getElementById('home-goal-project')?.value || 'sid';
+  if (typeof document === 'undefined') return 'laika';
+  return document.getElementById('home-goal-project')?.value || 'laika';
 }
 
 const storage = {
   get(box) {
     try {
-      return sessionStorage.getItem(`sid-assist:${box}`) || '';
+      return sessionStorage.getItem(`laika-assist:${box}`) || '';
     } catch {
       return '';
     }
   },
   set(box, id) {
     try {
-      if (id) sessionStorage.setItem(`sid-assist:${box}`, id);
-      else sessionStorage.removeItem(`sid-assist:${box}`);
+      if (id) sessionStorage.setItem(`laika-assist:${box}`, id);
+      else sessionStorage.removeItem(`laika-assist:${box}`);
     } catch {}
   }
 };
@@ -202,7 +202,7 @@ async function start(state, box, idea) {
 }
 
 const submitted = (response, state) =>
-  reset(state, response?.duplicate ? 'SID is already working on that.' : `Started. It shows up under "In progress" in a moment.`);
+  reset(state, response?.duplicate ? 'LAIka is already working on that.' : `Started. It shows up under "In progress" in a moment.`);
 
 if (typeof document !== 'undefined') {
   document.addEventListener('input', event => {

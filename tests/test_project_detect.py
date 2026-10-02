@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from sid_testing import ROOT
+from laika_testing import ROOT
 
 sys.path.insert(0, str(ROOT / "services"))
 import project_detect  # noqa: E402

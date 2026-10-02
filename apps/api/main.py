@@ -18,23 +18,23 @@ from database import init_database
 from schemas import DismissalsRequest, GoalAccepted, GoalSubmit, OperatorActionRequest, PromptSubmit, WorkerAction
 
 app = FastAPI(
-    title="SID's AI Command Center",
+    title="LAIka",
     version="0.1.0"
 )
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
 
-# Write access control. When SID_OPERATOR_TOKEN is set (host file
-# /etc/sid-ai/operator.env via docker-compose), every request that can change
-# state must carry it in X-SID-Token. Reads stay open. Web approval is only
+# Write access control. When LAIKA_OPERATOR_TOKEN is set (host file
+# /etc/laika/operator.env via docker-compose), every request that can change
+# state must carry it in X-Laika-Token. Reads stay open. Web approval is only
 # accepted when a token is configured.
-OPERATOR_TOKEN = os.environ.get("SID_OPERATOR_TOKEN", "")
+OPERATOR_TOKEN = os.environ.get("LAIKA_OPERATOR_TOKEN", "")
 _READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _token_ok(request):
-    supplied = request.headers.get("x-sid-token", "")
+    supplied = request.headers.get("x-laika-token", "")
     return bool(OPERATOR_TOKEN) and hmac.compare_digest(supplied, OPERATOR_TOKEN)
 
 
@@ -59,12 +59,12 @@ async def require_operator_token(request: Request, call_next):
                     "detail": "This device may not do that; use the dashboard"})
         elif OPERATOR_TOKEN:
             return JSONResponse(status_code=401, content={
-                "detail": "Operator token required: enter it in the dashboard (X-SID-Token)"})
+                "detail": "Operator token required: enter it in the dashboard (X-Laika-Token)"})
     return await call_next(request)
 
 
 engine = create_engine(DATABASE_URL)
-# REDIS_PASSWORD comes from /etc/sid-ai/redis.env (docker-compose env_file).
+# REDIS_PASSWORD comes from /etc/laika/redis.env (docker-compose env_file).
 redis = Redis.from_url(REDIS_URL, password=os.environ.get("REDIS_PASSWORD") or None, decode_responses=True)
 
 API_DEFAULT_LIMIT = 8
@@ -195,7 +195,7 @@ def _hashes(pattern):
 
 
 def _job_statuses():
-    return {_key_suffix(key): data.get("status") for key, data in _hashes("sid:jobs:*")}
+    return {_key_suffix(key): data.get("status") for key, data in _hashes("laika:jobs:*")}
 
 
 def _keys(pattern):
@@ -234,7 +234,7 @@ def _job(key, data):
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
         "title": _job_title(data),
-        "project_id": _text(data.get("project_id"), "sid"),
+        "project_id": _text(data.get("project_id"), "laika"),
         "goal_id": _text(data.get("goal_id")),
         "status": _text(data.get("status"), "unknown"),
         "role": _text(data.get("job_role", data.get("role"))),
@@ -308,7 +308,7 @@ def _from_snapshot(name, rows, build):
 
 
 def _all_jobs():
-    return _from_snapshot("jobs", _hashes("sid:jobs:*"), lambda rows: sorted(
+    return _from_snapshot("jobs", _hashes("laika:jobs:*"), lambda rows: sorted(
         (_job(key, data) for key, data in rows), key=lambda item: (-item["sort_time"], item["id"])))
 
 
@@ -323,7 +323,7 @@ def _goal(key, data):
     counts = dict(sorted(counts.items()))
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
-        "project_id": _text(data.get("project_id"), "sid"),
+        "project_id": _text(data.get("project_id"), "laika"),
         "status": _text(data.get("status"), "unknown"),
         "summary": _bounded_summary(data.get("summary", data.get("text", data.get("goal")))),
         "prompt": _bounded_summary(data.get("goal", data.get("prompt", data.get("text")))),
@@ -342,7 +342,7 @@ def _goal(key, data):
 
 
 def _all_goals():
-    return _from_snapshot("goals", _hashes("sid:goals:*"), lambda rows: sorted(
+    return _from_snapshot("goals", _hashes("laika:goals:*"), lambda rows: sorted(
         (_goal(key, data) for key, data in rows), key=lambda item: (-item["sort_time"], item["id"])))
 
 
@@ -353,7 +353,7 @@ def _worker(key, data, jobs):
     active = [job for job in matches if job["status"] not in JOB_TERMINAL_STATUSES | FAILURE_STATUSES]
     job = max(active or matches, key=lambda item: (item["sort_time"], item["id"]), default={})
     active_job = max(active, key=lambda item: (item["sort_time"], item["id"]), default={})
-    job_data = _hash(f"sid:jobs:{job.get('id')}") if job else {}
+    job_data = _hash(f"laika:jobs:{job.get('id')}") if job else {}
     merged = {**data, **job_data}
     return {
         "id": worker_id,
@@ -393,7 +393,7 @@ def _orchestrator(key, data):
 
 def _repository():
     try:
-        value = redis.get("sid:main-head")
+        value = redis.get("laika:main-head")
         sha = value.strip() if isinstance(value, str) else ""
         if sha:
             return {"branch": "main", "head": sha, "short": sha[:12], "status": "ok"}
@@ -405,7 +405,7 @@ def _repository():
 @app.get("/")
 def root():
     return {
-        "name": "SID's AI Command Center",
+        "name": "LAIka",
         "version": "0.1.0",
         "status": "online"
     }
@@ -441,10 +441,10 @@ def health():
 
 def _pipeline_health():
     try:
-        workers = list(redis.scan_iter("sid:workers:*"))
+        workers = list(redis.scan_iter("laika:workers:*"))
         return {
-            "orchestrators": sum(1 for _ in redis.scan_iter("sid:orchestrators:*")),
-            "operator_service": any(True for _ in redis.scan_iter("sid:operator-service:*")),
+            "orchestrators": sum(1 for _ in redis.scan_iter("laika:orchestrators:*")),
+            "operator_service": any(True for _ in redis.scan_iter("laika:operator-service:*")),
             "workers": len(workers),
             "workers_busy": sum(1 for key in workers if redis.hget(key, "status") == "working"),
         }
@@ -459,18 +459,18 @@ def api_status():
     jobs = _all_jobs()
     goals = _all_goals()
     workers = api_workers()
-    orchestrators = [_orchestrator(key, _hash(key)) for key in _keys("sid:orchestrators:*")]
+    orchestrators = [_orchestrator(key, _hash(key)) for key in _keys("laika:orchestrators:*")]
     active_ids = {item["active_goal"] for item in orchestrators if item["active_goal"]}
     active_goal = next((goal for goal in goals if goal["id"] in active_ids), None)
     if active_goal is None:
         active_goal = next((goal for goal in goals if goal["status"] in {"active", "running", "in_progress"}), None)
     try:
-        queue_depth = redis.llen(os.getenv("WORKER_QUEUE", "sid:jobs"))
+        queue_depth = redis.llen(os.getenv("WORKER_QUEUE", "laika:jobs"))
     except Exception:
         queue_depth = None
     return {
         "repository": _repository(),
-        "queue": {"name": os.getenv("WORKER_QUEUE", "sid:jobs"), "depth": queue_depth},
+        "queue": {"name": os.getenv("WORKER_QUEUE", "laika:jobs"), "depth": queue_depth},
         "orchestrators": orchestrators,
         "active_goal": active_goal,
         "workers": workers,
@@ -488,7 +488,7 @@ def api_repository():
 
 @app.get("/api/queue")
 def api_queue():
-    name = os.getenv("WORKER_QUEUE", "sid:jobs")
+    name = os.getenv("WORKER_QUEUE", "laika:jobs")
     try:
         depth = redis.llen(name)
     except Exception:
@@ -498,12 +498,12 @@ def api_queue():
 
 @app.get("/api/orchestrators")
 def api_orchestrators():
-    return [_orchestrator(key, _hash(key)) for key in _keys("sid:orchestrators:*")]
+    return [_orchestrator(key, _hash(key)) for key in _keys("laika:orchestrators:*")]
 
 
 def api_workers():
     jobs = _all_jobs()
-    return sorted([_worker(key, _hash(key), jobs) for key in _keys("sid:workers:*")], key=lambda item: item["id"])
+    return sorted([_worker(key, _hash(key), jobs) for key in _keys("laika:workers:*")], key=lambda item: item["id"])
 
 
 @app.get("/api/workers")
@@ -574,7 +574,7 @@ def _approval_ready(job):
     if job.get("reviewed_commit") != integrated_commit:
         return False
 
-    review = _hash(f"sid:jobs:{review_job_id}")
+    review = _hash(f"laika:jobs:{review_job_id}")
     if (
         not review
         or review.get("role") != "reviewer"
@@ -637,7 +637,7 @@ def _valid_identifier(value, label="identifier"):
 
 @app.get("/api/dismissals")
 def api_dismissals():
-    values = redis.smembers("sid:dismissed")
+    values = redis.smembers("laika:dismissed")
     return {"ids": sorted(value.decode() if isinstance(value, bytes) else str(value) for value in values)}
 
 
@@ -651,18 +651,18 @@ def add_dismissals(payload: DismissalsRequest):
         if value not in seen:
             seen.add(value)
             ids.append(value)
-    added = [item_id for item_id in ids if redis.sadd("sid:dismissed", item_id) == 1]
-    return {"ids": added, "total": redis.scard("sid:dismissed")}
+    added = [item_id for item_id in ids if redis.sadd("laika:dismissed", item_id) == 1]
+    return {"ids": added, "total": redis.scard("laika:dismissed")}
 
 
 @app.delete("/api/dismissals/{item_id:path}")
 def remove_dismissal(item_id: str):
     _valid_identifier(item_id, "dismissal id")
-    return {"id": item_id, "removed": redis.srem("sid:dismissed", item_id) == 1}
+    return {"id": item_id, "removed": redis.srem("laika:dismissed", item_id) == 1}
 
 
 def _goal_record(goal_id):
-    key = f"sid:goals:{_valid_identifier(goal_id, 'goal id')}"
+    key = f"laika:goals:{_valid_identifier(goal_id, 'goal id')}"
     data = _hash(key)
     if not data:
         raise HTTPException(status_code=404, detail="Goal not found")
@@ -670,7 +670,7 @@ def _goal_record(goal_id):
 
 
 def _job_record(job_id):
-    key = f"sid:jobs:{_valid_identifier(job_id, 'job id')}"
+    key = f"laika:jobs:{_valid_identifier(job_id, 'job id')}"
     data = _hash(key)
     if not data:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -684,12 +684,12 @@ def _submit_goal(payload, project_id=None):
     request_id = _text(payload.request_id)
     if request_id:
         _valid_identifier(request_id, "request id")
-        marker = f"sid:goal-requests:{request_id}"
+        marker = f"laika:goal-requests:{request_id}"
         try:
             if not redis.set(marker, "reserved", nx=True, ex=86400):
                 existing = redis.get(marker)
                 if existing and existing != "reserved":
-                    existing_goal = _hash(f"sid:goals:{existing}")
+                    existing_goal = _hash(f"laika:goals:{existing}")
                     existing_atomic = str(
                         existing_goal.get("atomic", "false")
                     ).lower() in {"1", "true", "yes"}
@@ -712,7 +712,7 @@ def _submit_goal(payload, project_id=None):
 
     # A small duplicate guard for clients that omit request_id. Atomic and
     # non-atomic submissions are intentionally distinct workflows.
-    for key in _keys("sid:goals:*"):
+    for key in _keys("laika:goals:*"):
         old = _hash(key)
         old_atomic = str(old.get("atomic", "false")).lower() in {"1", "true", "yes"}
         if (
@@ -720,7 +720,7 @@ def _submit_goal(payload, project_id=None):
             and old.get("status") in {"queued", "planning", "running"}
             and old_atomic == bool(payload.atomic)
             # The same prompt in another project is different work.
-            and (old.get("project_id") or "sid") == (project_id or "sid")
+            and (old.get("project_id") or "laika") == (project_id or "laika")
         ):
             return {"id": _text(old.get("id"), _key_suffix(key)), "status": old.get("status"), "atomic": old_atomic, "duplicate": True}
 
@@ -732,17 +732,17 @@ def _submit_goal(payload, project_id=None):
     }
     if project_id is not None:
         record["project_id"] = project_id
-    redis.hset(f"sid:goals:{goal_id}", mapping=record)
+    redis.hset(f"laika:goals:{goal_id}", mapping=record)
     try:
         queued = {"id": goal_id, "goal": goal, "atomic": payload.atomic}
         if project_id is not None:
             queued["project_id"] = project_id
-        redis.rpush(os.getenv("GOAL_QUEUE", "sid:goals"), json.dumps(queued))
+        redis.rpush(os.getenv("GOAL_QUEUE", "laika:goals"), json.dumps(queued))
     except Exception:
-        redis.hset(f"sid:goals:{goal_id}", mapping={"status": "queue_failed", "updated_at": str(time.time())})
+        redis.hset(f"laika:goals:{goal_id}", mapping={"status": "queue_failed", "updated_at": str(time.time())})
         if request_id:
             try:
-                marker = f"sid:goal-requests:{request_id}"
+                marker = f"laika:goal-requests:{request_id}"
                 if redis.get(marker) == "reserved":
                     redis.delete(marker)
             except Exception:
@@ -750,7 +750,7 @@ def _submit_goal(payload, project_id=None):
         raise HTTPException(status_code=503, detail="Goal queue is unavailable")
     if request_id:
         try:
-            redis.set(f"sid:goal-requests:{request_id}", goal_id, ex=86400)
+            redis.set(f"laika:goal-requests:{request_id}", goal_id, ex=86400)
         except Exception:
             pass
     result = {"id": goal_id, "status": "accepted", "atomic": bool(payload.atomic)}
@@ -788,7 +788,7 @@ def get_goal_detail(goal_id: str):
     key, data = _goal_record(goal_id)
     result = _goal(key, data)
     result["atomic"] = str(data.get("atomic", "false")).lower() in {"1", "true", "yes"}
-    result["jobs"] = [_job(f"sid:jobs:{job_id}", _hash(f"sid:jobs:{job_id}")) for job_id in result["child_job_ids"] if _hash(f"sid:jobs:{job_id}")]
+    result["jobs"] = [_job(f"laika:jobs:{job_id}", _hash(f"laika:jobs:{job_id}")) for job_id in result["child_job_ids"] if _hash(f"laika:jobs:{job_id}")]
     return result
 
 
@@ -851,7 +851,7 @@ def _job_gate(data):
 def _related_jobs(job_id):
     """Reviewer, repair and integrate jobs that acted on this job."""
     related = []
-    for key in _keys("sid:jobs:*"):
+    for key in _keys("laika:jobs:*"):
         data = _hash(key)
         if job_id not in (data.get("builder_job_id"), data.get("target_builder_id")):
             continue
@@ -887,7 +887,7 @@ def api_agent_activity(limit: int = Query(API_DEFAULT_LIMIT, ge=0, le=API_MAX_LI
 
 def _worker_record(worker_id):
     worker_id = _valid_identifier(worker_id, "worker id")
-    key = f"sid:workers:{worker_id}"
+    key = f"laika:workers:{worker_id}"
     data = _hash(key)
     if not data:
         raise HTTPException(status_code=404, detail="Worker not found")
@@ -903,7 +903,7 @@ def stop_worker(worker_id: str, action: WorkerAction | None = None):
         raise HTTPException(status_code=409, detail="Worker is busy; it cannot be stopped")
     # The worker process reads this control key between jobs; writing the
     # heartbeat hash alone was overwritten by the next heartbeat.
-    redis.set(f"sid:worker-control:{worker_id}", "disabled")
+    redis.set(f"laika:worker-control:{worker_id}", "disabled")
     redis.hset(key, mapping={"status": "disabled", "stop_reason": _text(action.reason if action else None, "requested"), "updated_at": str(time.time())})
     return _worker(key, {**data, "status": "disabled"}, jobs)
 
@@ -924,7 +924,7 @@ def start_worker(worker_id: str):
     key, data = _worker_record(worker_id)
     if _text(data.get("status")).lower() in _BUSY_WORKER_STATUSES:
         raise HTTPException(status_code=409, detail="Worker is already active")
-    redis.delete(f"sid:worker-control:{worker_id}")
+    redis.delete(f"laika:worker-control:{worker_id}")
     redis.hset(key, mapping={"status": "idle", "updated_at": str(time.time())})
     return _worker(key, {**data, "status": "idle"}, _all_jobs())
 
@@ -932,7 +932,7 @@ def start_worker(worker_id: str):
 
 @app.get("/api/system-health")
 def api_system_health():
-    """The host watchdog's latest report (scripts/sid-watchdog.py, every 2 min)
+    """The host watchdog's latest report (scripts/laika-watchdog.py, every 2 min)
     plus the last backup record. Read-only; stale when the watchdog stops."""
     def load(key):
         try:
@@ -941,11 +941,11 @@ def api_system_health():
             return None
         return value if isinstance(value, dict) else None
 
-    report = load("sid:health")
+    report = load("laika:health")
     if report is not None:
         checked = _number(report.get("checked_at"))
         report["age_seconds"] = round(time.time() - checked) if checked else None
-    return {"report": report, "backup": load("sid:backup:last")}
+    return {"report": report, "backup": load("laika:backup:last")}
 
 
 @app.get("/api/providers")
@@ -954,13 +954,13 @@ def api_providers():
     workers report it. Read-only; the workers own the semaphore."""
     now_ts = time.time()
     try:
-        slots = redis.zrangebyscore("sid:provider-slots:claude", now_ts, "+inf", withscores=True)
-        limit = redis.get("sid:provider-limit:claude")
-        cooldown = redis.get("sid:provider-cooldown:claude")
-        cooldown_ttl = redis.ttl("sid:provider-cooldown:claude") if cooldown else None
+        slots = redis.zrangebyscore("laika:provider-slots:claude", now_ts, "+inf", withscores=True)
+        limit = redis.get("laika:provider-limit:claude")
+        cooldown = redis.get("laika:provider-cooldown:claude")
+        cooldown_ttl = redis.ttl("laika:provider-cooldown:claude") if cooldown else None
     except Exception:
         slots, limit, cooldown, cooldown_ttl = [], None, None, None
-    routing = next((_text(_hash(key).get("model")) for key in _keys("sid:workers:*")
+    routing = next((_text(_hash(key).get("model")) for key in _keys("laika:workers:*")
                     if _text(_hash(key).get("provider")) == "per role"), None)
     return {
         "claude": {
@@ -979,13 +979,13 @@ def api_merge_queue():
     """Queued approvals in merge order, with the state the operator service
     last recorded (it has the repository; the API does not)."""
     try:
-        ids = redis.lrange("sid:merge-queue", 0, -1)
-        main_head = redis.get("sid:main-head") or ""
+        ids = redis.lrange("laika:merge-queue", 0, -1)
+        main_head = redis.get("laika:main-head") or ""
     except Exception:
         ids, main_head = [], ""
     items = []
     for position, job_id in enumerate(ids, start=1):
-        data = _hash(f"sid:jobs:{job_id}")
+        data = _hash(f"laika:jobs:{job_id}")
         items.append({
             "position": position,
             "id": _text(job_id),
@@ -1003,9 +1003,9 @@ def api_merge_queue():
 
 # Operator actions. The API has no repository authority (no git, no
 # shell): it records a request and the host-side operator service
-# (services/operator/sid_operator.py) validates and executes it with
+# (services/operator/laika_operator.py) validates and executes it with
 # scripts/job-review.py. Nothing here writes job state.
-OPERATOR_STREAM = "sid:operator-requests"
+OPERATOR_STREAM = "laika:operator-requests"
 OPERATOR_STREAM_MAXLEN = 10000
 OPERATOR_REQUEST_FIELDS = ("request_id", "job_id", "action", "expected_status", "expected_candidate", "extra")
 _OPERATOR_JOB_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
@@ -1014,7 +1014,7 @@ _OPERATOR_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
 
 def _operator_service():
     """The live operator heartbeat (30s TTL), or None when offline."""
-    for key in _keys("sid:operator-service:*"):
+    for key in _keys("laika:operator-service:*"):
         data = _hash(key)
         if data:
             return data
@@ -1065,7 +1065,7 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
         "expected_candidate": payload.expected_candidate or "",
         "extra": str(payload.extra) if payload.extra is not None else "",
     }
-    key = f"sid:operator-results:{payload.request_id}"
+    key = f"laika:operator-results:{payload.request_id}"
 
     # A retried request (same id) returns its existing result, never a
     # second execution. The same id for a different action is a conflict.
@@ -1085,7 +1085,7 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
     # Advancing main from the Web is never accepted from an open API, even
     # if the host enabled it.
     if payload.action in ("approve", "queue_approve") and not OPERATOR_TOKEN:
-        raise HTTPException(status_code=403, detail="Web approval requires SID_OPERATOR_TOKEN on the API")
+        raise HTTPException(status_code=403, detail="Web approval requires LAIKA_OPERATOR_TOKEN on the API")
 
     # Early feedback only; the operator service re-checks at execution time.
     _, job = _job_record(job_id)
@@ -1113,7 +1113,7 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
 def get_operator_request(request_id: str):
     if not _OPERATOR_REQUEST_ID.fullmatch(request_id):
         raise HTTPException(status_code=422, detail="Invalid request id")
-    data = _hash(f"sid:operator-results:{request_id}")
+    data = _hash(f"laika:operator-results:{request_id}")
     if not data:
         raise HTTPException(status_code=404, detail="Operator request not found")
     return _operator_result(data)

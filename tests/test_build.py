@@ -1,4 +1,4 @@
-"""scripts/sid-build.py and project_catalog.resolve_recipe: Build button."""
+"""scripts/laika-build.py and project_catalog.resolve_recipe: Build button."""
 
 import json
 import subprocess
@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from sid_testing import ROOT, MemoryRedis, load_module
+from laika_testing import ROOT, MemoryRedis, load_module
 
 sys.path.insert(0, str(ROOT / "apps/api"))
 import project_catalog  # noqa: E402
@@ -20,10 +20,10 @@ def git(*args, cwd):
 
 @pytest.fixture
 def build(tmp_path, monkeypatch):
-    module = load_module(ROOT / "scripts/sid-build.py")
+    module = load_module(ROOT / "scripts/laika-build.py")
     monkeypatch.setattr(module, "ensure_build_network", lambda: None)  # tests never touch Docker or the firewall
     base = tmp_path / "projects"
-    monkeypatch.setattr(module.sid_projects, "PROJECTS_BASE", base)
+    monkeypatch.setattr(module.laika_projects, "PROJECTS_BASE", base)
     repo = base / "game" / "repo"
     repo.mkdir(parents=True)
     git("init", "-q", "-b", "main", cwd=repo)
@@ -32,9 +32,9 @@ def build(tmp_path, monkeypatch):
     git("add", "-A", cwd=repo)
     git("commit", "-q", "-m", "v1", cwd=repo)
     r = MemoryRedis()
-    r.records["sid:projects:game"] = {"id": "game", "root": str(base / "game"), "repo": str(repo),
+    r.records["laika:projects:game"] = {"id": "game", "root": str(base / "game"), "repo": str(repo),
                                       "worktrees": str(base / "game/worktrees"), "logs": str(base / "game/logs")}
-    r.set("sid:project-type:game", json.dumps({"type": "game", "stack": "love2d"}))
+    r.set("laika:project-type:game", json.dumps({"type": "game", "stack": "love2d"}))
     runs = []
 
     def runner(command, stdout=None, stderr=None):
@@ -51,15 +51,15 @@ def build(tmp_path, monkeypatch):
 
 
 def start(r, build_id):
-    r.lpush("sid:builds:game", build_id)
-    r.hset(f"sid:build:game:{build_id}", mapping={"id": build_id, "status": "queued"})
+    r.lpush("laika:builds:game", build_id)
+    r.hset(f"laika:build:game:{build_id}", mapping={"id": build_id, "status": "queued"})
 
 
 def test_a_build_runs_in_docker_and_keeps_a_zip(build):
     module, r, repo, folder, runs, runner = build
     start(r, "b1")
     assert module.main("game", "b1", r=r, runner=runner) == 0
-    record = r.hgetall("sid:build:game:b1")
+    record = r.hgetall("laika:build:game:b1")
     assert record["status"] == "succeeded" and record["files"] == "1"
     assert record["commit"] == subprocess.run(["git", "-C", str(repo), "rev-parse", "main"], capture_output=True,
                                               text=True).stdout.strip()
@@ -68,7 +68,7 @@ def test_a_build_runs_in_docker_and_keeps_a_zip(build):
     assert "built" in (folder / "b1.log").read_text()
     command = runs[0]
     assert command[:2] == ["docker", "run"] and "--rm" in command and "--memory" in command
-    assert "alpine:3" in command and "sid-build-cache-game:/root/.cache" in command
+    assert "alpine:3" in command and "laika-build-cache-game:/root/.cache" in command
     # Nothing of this server but the checkout and the cache is mounted.
     mounts = [command[i + 1] for i, a in enumerate(command) if a == "-v"]
     assert len(mounts) == 2
@@ -76,7 +76,7 @@ def test_a_build_runs_in_docker_and_keeps_a_zip(build):
     assert not (folder / "work-b1").exists()
     assert "work-b1" not in subprocess.run(["git", "-C", str(repo), "worktree", "list"], capture_output=True,
                                            text=True).stdout
-    assert json.loads(r.lrange("sid:events:game", 0, 0)[0])["kind"] == "build"
+    assert json.loads(r.lrange("laika:events:game", 0, 0)[0])["kind"] == "build"
 
 
 def test_a_failing_build_keeps_its_log(build):
@@ -88,7 +88,7 @@ def test_a_failing_build_keeps_its_log(build):
         return subprocess.CompletedProcess(command, 2)
 
     assert module.main("game", "b1", r=r, runner=failing) == 1
-    record = r.hgetall("sid:build:game:b1")
+    record = r.hgetall("laika:build:game:b1")
     assert record["status"] == "failed" and "exit 2" in record["error"]
     assert "boom" in (folder / "b1.log").read_text() and not (folder / "b1.zip").exists()
 
@@ -97,11 +97,11 @@ def test_missing_output_and_escaping_output_fail(build):
     module, r, repo, folder, runs, runner = build
     start(r, "b1")
     module.main("game", "b1", r=r, runner=lambda c, stdout=None, stderr=None: subprocess.CompletedProcess(c, 0))
-    assert "was not created" in r.hgetall("sid:build:game:b1")["error"]
-    r.hset("sid:projects:game", mapping={"build_command": "true", "build_output": "../.."})
+    assert "was not created" in r.hgetall("laika:build:game:b1")["error"]
+    r.hset("laika:projects:game", mapping={"build_command": "true", "build_output": "../.."})
     start(r, "b2")
     module.main("game", "b2", r=r, runner=runner)
-    assert r.hgetall("sid:build:game:b2")["status"] == "failed"
+    assert r.hgetall("laika:build:game:b2")["status"] == "failed"
 
 
 def test_symlinks_in_the_output_are_not_followed(build, tmp_path):
@@ -127,10 +127,10 @@ def test_symlinks_in_the_output_are_not_followed(build, tmp_path):
 
 def test_unsupported_stacks_are_refused_before_anything_runs(build):
     module, r, repo, folder, runs, runner = build
-    r.set("sid:project-type:game", json.dumps({"type": "game", "stack": "unity"}))
+    r.set("laika:project-type:game", json.dumps({"type": "game", "stack": "unity"}))
     start(r, "b1")
     assert module.main("game", "b1", r=r, runner=runner) == 1
-    assert "Unity" in r.hgetall("sid:build:game:b1")["error"] and not runs
+    assert "Unity" in r.hgetall("laika:build:game:b1")["error"] and not runs
 
 
 def test_only_the_newest_builds_are_kept(build, monkeypatch):
@@ -139,9 +139,9 @@ def test_only_the_newest_builds_are_kept(build, monkeypatch):
     for build_id in ("b1", "b2", "b3"):
         start(r, build_id)
         module.main("game", build_id, r=r, runner=runner)
-    assert r.lrange("sid:builds:game", 0, -1) == ["b3", "b2"]
+    assert r.lrange("laika:builds:game", 0, -1) == ["b3", "b2"]
     assert sorted(p.name for p in folder.iterdir()) == ["b2.log", "b2.zip", "b3.log", "b3.zip"]
-    assert not r.hgetall("sid:build:game:b1")
+    assert not r.hgetall("laika:build:game:b1")
 
 
 def test_recipes_resolve_overrides_and_placeholders():
@@ -169,8 +169,8 @@ def test_builds_use_the_firewalled_network_or_none(build):
     start(r, "b1")
     module.main("game", "b1", r=r, runner=runner)
     command = runs[0]
-    assert command[command.index("--network") + 1] == "sid-build-net"
-    r.hset("sid:projects:game", mapping={"build_network": "none"})
+    assert command[command.index("--network") + 1] == "laika-build-net"
+    r.hset("laika:projects:game", mapping={"build_network": "none"})
     start(r, "b2")
     calls = []
     module.main("game", "b2", r=r, runner=runner, network_setup=lambda: calls.append(1))
@@ -185,11 +185,11 @@ def test_a_build_never_runs_when_the_firewall_cannot_be_set_up(build):
     def broken():
         raise RuntimeError("could not set up the build firewall (INPUT)")
     assert module.main("game", "b1", r=r, runner=runner, network_setup=broken) == 1
-    assert "firewall" in r.hgetall("sid:build:game:b1")["error"] and not runs
+    assert "firewall" in r.hgetall("laika:build:game:b1")["error"] and not runs
 
 
 def test_firewall_setup_is_idempotent_and_blocks_private_networks():
-    module = load_module(ROOT / "scripts/sid-build.py")
+    module = load_module(ROOT / "scripts/laika-build.py")
     present, calls = set(), []
 
     def run(argv, **kwargs):
@@ -205,10 +205,10 @@ def test_firewall_setup_is_idempotent_and_blocks_private_networks():
 
     module.ensure_build_network(run)
     first = [c for c in calls if c[1:2] in (["-A"], ["-I"])]
-    assert ["docker", "network", "create"] == calls[1][:3] and "com.docker.network.bridge.name=sid-build0" in calls[1]
-    assert any(c[1] == "-I" and c[2] == "INPUT" and c[-1] == "SID-BUILD-IN" for c in first)
+    assert ["docker", "network", "create"] == calls[1][:3] and "com.docker.network.bridge.name=laika-build0" in calls[1]
+    assert any(c[1] == "-I" and c[2] == "INPUT" and c[-1] == "LAIKA-BUILD-IN" for c in first)
     assert any(c[1] == "-I" and c[2] == "DOCKER-USER" for c in first)
-    assert ["iptables", "-A", "SID-BUILD-FWD", "-d", "10.0.0.0/8", "-j", "DROP"] in first
+    assert ["iptables", "-A", "LAIKA-BUILD-FWD", "-d", "10.0.0.0/8", "-j", "DROP"] in first
     assert not any(c[1] == "-F" for c in calls)  # never flushed while builds may run
     calls.clear()
     module.ensure_build_network(run)

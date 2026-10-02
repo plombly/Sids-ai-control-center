@@ -1,15 +1,15 @@
 """Phones and other apps: per-device keys and the app API.
 
-The operator adds a device in Settings ("Add a phone"); SID issues a random
-key, shows it once (as a QR code the SID app scans) and stores only its
+The operator adds a device in Settings ("Add a phone"); LAIka issues a random
+key, shows it once (as a QR code the LAIka app scans) and stores only its
 SHA-256. A request carrying `Authorization: Bearer <key>` is that device.
 A device may read everything and do the safe actions in DEVICE_WRITES
 (give goals, use the goal assistant, answer stuck jobs and internet
 requests, request builds); it can never approve a merge, change settings
 or manage devices. Keys are revoked from Settings.
 
-Redis: sid:devices:<id> (hash: name, key_hash, created_at, last_used_at,
-last_seen_from, revoked_at), sid:device-key:<sha256> -> id, set sid:devices.
+Redis: laika:devices:<id> (hash: name, key_hash, created_at, last_used_at,
+last_seen_from, revoked_at), laika:device-key:<sha256> -> id, set laika:devices.
 """
 
 import hashlib
@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 router = APIRouter()
 API_VERSION = 1
-KEY_PREFIX = "sidk_"
+KEY_PREFIX = "laika_"
 DEVICE_ID = re.compile(r"^[a-f0-9]{12}$")
 # Writes a device key may make (method, path). Job actions are narrowed
 # further to DEVICE_JOB_ACTIONS in the actions endpoint.
@@ -57,16 +57,16 @@ def device_for(request):
     if not key.startswith(KEY_PREFIX) or len(key) > 100:
         return None
     redis = _main().redis
-    device_id = redis.get(f"sid:device-key:{key_hash(key)}")
+    device_id = redis.get(f"laika:device-key:{key_hash(key)}")
     if not device_id:
         return None
-    record = redis.hgetall(f"sid:devices:{device_id}") or {}
+    record = redis.hgetall(f"laika:devices:{device_id}") or {}
     if not record or record.get("revoked_at"):
         return None
     now = time.time()
     if now - float(record.get("last_used_at") or 0) > USED_EVERY:
         forwarded = request.headers.get("x-real-ip") or (request.client.host if request.client else "")
-        redis.hset(f"sid:devices:{device_id}", mapping={"last_used_at": str(now), "last_seen_from": forwarded[:64]})
+        redis.hset(f"laika:devices:{device_id}", mapping={"last_used_at": str(now), "last_seen_from": forwarded[:64]})
     return record
 
 
@@ -81,7 +81,7 @@ def _view(record):
 
 
 def server_name():
-    return (_main().redis.get("sid:server-name") or "SID").strip()[:60] or "SID"
+    return (_main().redis.get("laika:server-name") or "LAIka").strip()[:60] or "LAIka"
 
 
 class DeviceCreate(BaseModel):
@@ -94,7 +94,7 @@ class DeviceCreate(BaseModel):
 @router.get("/api/devices")
 def list_devices():
     redis = _main().redis
-    records = [redis.hgetall(f"sid:devices:{device_id}") or {} for device_id in sorted(redis.smembers("sid:devices") or [])]
+    records = [redis.hgetall(f"laika:devices:{device_id}") or {} for device_id in sorted(redis.smembers("laika:devices") or [])]
     items = [_view(r) for r in records if r and not r.get("revoked_at")]
     return {"devices": sorted(items, key=lambda d: -d["created_at"]), "server_name": server_name()}
 
@@ -108,14 +108,14 @@ def create_device(payload: DeviceCreate, request: Request):
     key = KEY_PREFIX + secrets.token_urlsafe(32)
     now = time.time()
     if payload.server_name and payload.server_name.strip():
-        redis.set("sid:server-name", payload.server_name.strip())
-    redis.hset(f"sid:devices:{device_id}", mapping={"id": device_id, "name": payload.name.strip(),
+        redis.set("laika:server-name", payload.server_name.strip())
+    redis.hset(f"laika:devices:{device_id}", mapping={"id": device_id, "name": payload.name.strip(),
                                                     "key_hash": key_hash(key), "created_at": str(now)})
-    redis.set(f"sid:device-key:{key_hash(key)}", device_id)
-    redis.sadd("sid:devices", device_id)
+    redis.set(f"laika:device-key:{key_hash(key)}", device_id)
+    redis.sadd("laika:devices", device_id)
     pairing = {"v": 1, "name": server_name(), "url": payload.url.rstrip("/"), "key": key}
     text = json.dumps(pairing, separators=(",", ":"))
-    return {"device": _view(redis.hgetall(f"sid:devices:{device_id}")), "key": key, "pairing": pairing,
+    return {"device": _view(redis.hgetall(f"laika:devices:{device_id}")), "key": key, "pairing": pairing,
             "pairing_text": text, "qr_svg": _qr_svg(text)}
 
 
@@ -138,11 +138,11 @@ def revoke_device(device_id: str, request: Request):
     if not DEVICE_ID.fullmatch(device_id or ""):
         raise HTTPException(status_code=404, detail="Device not found")
     redis = _main().redis
-    record = redis.hgetall(f"sid:devices:{device_id}") or {}
+    record = redis.hgetall(f"laika:devices:{device_id}") or {}
     if not record:
         raise HTTPException(status_code=404, detail="Device not found")
-    redis.delete(f"sid:device-key:{record.get('key_hash', '')}")
-    redis.hset(f"sid:devices:{device_id}", mapping={"revoked_at": str(time.time())})
+    redis.delete(f"laika:device-key:{record.get('key_hash', '')}")
+    redis.hset(f"laika:devices:{device_id}", mapping={"revoked_at": str(time.time())})
     return {"id": device_id, "revoked": True}
 
 
@@ -150,16 +150,16 @@ def revoke_device(device_id: str, request: Request):
 
 @router.get("/api/app/info")
 def app_info(request: Request):
-    """What a SID app needs first: who this server is, which API version it
+    """What a LAIka app needs first: who this server is, which API version it
     speaks, and whether its key is valid."""
     main = _main()
     device = device_for(request)
     try:
-        system = json.loads(main.redis.get("sid:system-info") or "{}")
+        system = json.loads(main.redis.get("laika:system-info") or "{}")
     except (TypeError, ValueError):
         system = {}
     return {"server_name": server_name(), "api_version": API_VERSION, "min_api_version": 1,
-            "sid_commit": str(system.get("head") or "")[:12], "server_time": time.time(),
+            "laika_commit": str(system.get("head") or "")[:12], "server_time": time.time(),
             "device": {"id": device.get("id"), "name": device.get("name")} if device else None,
             "token_required": bool(main.OPERATOR_TOKEN),
             "device_actions": sorted(DEVICE_JOB_ACTIONS)}

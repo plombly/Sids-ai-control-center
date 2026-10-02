@@ -1,0 +1,10 @@
+[Unit]
+Description=LAIka health watchdog
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+Environment=REPO_ROOT=/opt/laika
+Environment=WATCHDOG_WORKERS=8
+ExecStart=/usr/bin/python3 /opt/laika/scripts/laika-watchdog.py

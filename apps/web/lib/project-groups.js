@@ -37,7 +37,7 @@ export function groupOverviewMarkup(project) {
 // Settings: which group the project belongs to.
 export function groupSettingsMarkup(project, projects = []) {
   const id = project?.id;
-  if (!id || id === 'sid') return '';
+  if (!id || id === 'laika') return '';
   const children = Array.isArray(project.children) ? project.children : [];
   if (children.length) {
     const rows = children
@@ -50,7 +50,7 @@ export function groupSettingsMarkup(project, projects = []) {
   return `<form id="project-group-form" class="goal-form group-settings"><h3>Project group</h3><label class="field">Part of<select name="parent"><option value="">No group (a normal project)</option>${options}</select></label><span class="field-hint">A child project follows its parent's importance and internet settings, and the parent's goals can plan work in it. It keeps its own code, tests, builds and approvals.</span><div class="form-row"><button type="submit">Save</button><span id="group-status" class="form-status" role="status"></span></div></form>`;
 }
 
-const PENDING = 'sid-new-child-of';
+const PENDING = 'laika-new-child-of';
 export function takePendingParent() {
   try {
     const value = sessionStorage.getItem(PENDING) || '';
@@ -66,7 +66,7 @@ export async function setParent(id, parent) {
 }
 
 if (typeof document !== 'undefined') {
-  const refresh = () => window.dispatchEvent(new CustomEvent('sid:project-refresh'));
+  const refresh = () => window.dispatchEvent(new CustomEvent('laika:project-refresh'));
   const say = message => {
     const node = document.getElementById('group-status');
     if (node) node.textContent = message;

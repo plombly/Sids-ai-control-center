@@ -1,0 +1,13 @@
+[Unit]
+Description=LAIka: prove the newest backup restores
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/backup-restore-check.py
+TimeoutStartSec=30min

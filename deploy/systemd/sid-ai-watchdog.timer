@@ -1,9 +1,0 @@
-[Unit]
-Description=Run the SID health watchdog every 2 minutes
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
-
-[Install]
-WantedBy=timers.target

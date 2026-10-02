@@ -1,4 +1,4 @@
-"""What kinds of projects SID knows: types, goal templates and build recipes.
+"""What kinds of projects LAIka knows: types, goal templates and build recipes.
 
 Pure data, shared by the host (services/project_detect.py detects a
 project's type and stack from its files) and the API / dashboard (labels,
@@ -7,7 +7,7 @@ an Android app); a *stack* is how it is built (Godot, Flutter, Rust) and
 decides the build recipe.
 
 Build recipes run in the stack's official Docker image with only the
-project's files mounted (services/apps -> scripts/sid-build.py), so nothing
+project's files mounted (services/apps -> scripts/laika-build.py), so nothing
 has to be installed on the server. Some stacks cannot be built on a Linux
 server at all (iOS needs Xcode on a Mac; Unity and Unreal need their
 licensed editors); their recipe says so instead of offering a broken button.
@@ -201,7 +201,7 @@ TYPES = {
     },
     "other": {
         "label": "Something else", "icon": "✳",
-        "description": "Anything that does not fit above; describe it and SID will treat it accordingly.",
+        "description": "Anything that does not fit above; describe it and LAIka will treat it accordingly.",
         "keywords": [],
         "templates": [
             {"title": "Add a feature", "text": "Add ___: when ___, it should ___."},
@@ -244,13 +244,13 @@ RECIPES = {
                "command": "pip install -q pyinstaller pygame && (pip install -q -r requirements.txt || true) && pyinstaller --onefile --windowed --name {name} {entry}",
                "output": "dist"},
     "flutter": {"label": "Flutter (web + APK)", "image": "ghcr.io/cirruslabs/flutter:stable",
-                "command": "flutter pub get && flutter build web && (flutter build apk --release || true) && mkdir -p sid-build && cp -r build/web sid-build/web && (cp build/app/outputs/flutter-apk/*.apk sid-build/ || true)",
-                "output": "sid-build"},
+                "command": "flutter pub get && flutter build web && (flutter build apk --release || true) && mkdir -p laika-build && cp -r build/web laika-build/web && (cp build/app/outputs/flutter-apk/*.apk laika-build/ || true)",
+                "output": "laika-build"},
     "android_gradle": {"label": "Android (Gradle APK)", "image": "mingc/android-build-box:latest",
-                       "command": "chmod +x gradlew 2>/dev/null; (./gradlew assembleDebug || gradle assembleDebug) && mkdir -p sid-build && find . -name '*.apk' -path '*outputs*' -exec cp {} sid-build/ \\;",
-                       "output": "sid-build", "note": "The Android build image is large (several GB) and downloads on the first build."},
+                       "command": "chmod +x gradlew 2>/dev/null; (./gradlew assembleDebug || gradle assembleDebug) && mkdir -p laika-build && find . -name '*.apk' -path '*outputs*' -exec cp {} laika-build/ \\;",
+                       "output": "laika-build", "note": "The Android build image is large (several GB) and downloads on the first build."},
     "expo": {"label": "Expo / React Native (web export)", "image": "node:22-bookworm",
-             "command": "npm ci || npm install; npx expo export --platform web --output-dir sid-build", "output": "sid-build",
+             "command": "npm ci || npm install; npx expo export --platform web --output-dir laika-build", "output": "laika-build",
              "note": "Phone builds of Expo apps are made with Expo's EAS service; this builds the web version."},
     "electron": {"label": "Electron", "image": "node:22-bookworm",
                  "command": "npm ci || npm install; npm run build --if-present; npx --yes electron-builder --linux --dir || true", "output": "dist"},
@@ -258,10 +258,10 @@ RECIPES = {
     "mkdocs": {"label": "MkDocs", "image": "python:3.12-bookworm", "command": "pip install -q mkdocs mkdocs-material && mkdocs build", "output": "site"},
     "hugo": {"label": "Hugo", "image": "hugomods/hugo:exts", "command": "hugo --minify", "output": "public"},
     "platformio": {"label": "PlatformIO firmware", "image": "python:3.12-bookworm",
-                   "command": "pip install -q platformio && pio run && mkdir -p sid-build && find .pio/build -name 'firmware.*' -exec cp {} sid-build/ \\;", "output": "sid-build"},
-    "xcode": {"label": "Xcode (iOS / macOS)", "unsupported": "iOS and macOS apps can only be built on a Mac with Xcode (Apple's rule). SID can still write and review the code."},
-    "unity": {"label": "Unity", "unsupported": "Unity builds need a licensed Unity editor; build from Unity on your machine. SID can still write and review the code."},
-    "unreal": {"label": "Unreal Engine", "unsupported": "Unreal builds need the Unreal editor and toolchain; build from Unreal on your machine. SID can still write and review the code."},
+                   "command": "pip install -q platformio && pio run && mkdir -p laika-build && find .pio/build -name 'firmware.*' -exec cp {} laika-build/ \\;", "output": "laika-build"},
+    "xcode": {"label": "Xcode (iOS / macOS)", "unsupported": "iOS and macOS apps can only be built on a Mac with Xcode (Apple's rule). LAIka can still write and review the code."},
+    "unity": {"label": "Unity", "unsupported": "Unity builds need a licensed Unity editor; build from Unity on your machine. LAIka can still write and review the code."},
+    "unreal": {"label": "Unreal Engine", "unsupported": "Unreal builds need the Unreal editor and toolchain; build from Unreal on your machine. LAIka can still write and review the code."},
 }
 
 
@@ -293,7 +293,7 @@ def resolve_recipe(fields, detection, project_id):
     base = dict(RECIPES.get(stack, {}))
     custom = {k: fields.get(f"build_{k}") for k in ("image", "command", "output") if fields.get(f"build_{k}")}
     if not base and not custom.get("command"):
-        return {"label": "No build recipe", "unsupported": "SID does not know how to build this project yet. "
+        return {"label": "No build recipe", "unsupported": "LAIka does not know how to build this project yet. "
                 "Set a build command (and the Docker image to run it in) in Settings.", "source": "none"}
     recipe = {**base, **custom}
     if custom.get("command"):

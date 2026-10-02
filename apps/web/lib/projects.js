@@ -19,7 +19,7 @@ export function projectListMarkup(projects) {
     )} · needs human ${number(counts.jobs_needs_human)} · merged ${number(counts.jobs_merged)}`;
     return `<div class="item"><div class="item-head"><div class="item-title"><a href="#/projects/${encodeURIComponent(
       id
-    )}">${esc(project.name)}</a> <span class="subtle">${esc(id)}</span>${id === 'sid' ? ' <span class="pill">this system</span>' : ''}</div><div>${pill(project.importance)}${
+    )}">${esc(project.name)}</a> <span class="subtle">${esc(id)}</span>${id === 'laika' ? ' <span class="pill">this system</span>' : ''}</div><div>${pill(project.importance)}${
       project.status !== 'active' ? ` ${pill(project.status)}` : ''
     }</div></div><div class="subtle">${esc(countsLine)}</div><div class="subtle">remaining effort ${esc(
       number(stats.remaining_effort)
@@ -31,12 +31,12 @@ export function newProjectFormMarkup() {
   return `<form id="new-project-form" class="goal-form"><div class="form-row"><label>ID <input name="id" required></label><label>Name <input name="name" required></label><label>Importance <select name="importance"><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option></select></label></div><div class="form-row"><label>Source <select name="source"><option value="">empty</option><option value="clone">clone</option></select></label><label>URL <input name="url"></label><label>Push remote <input name="push_remote"></label><label>Gate <input name="gate"></label><button type="submit">Create project</button></div><span id="new-project-status" class="form-status" role="status"></span></form>`;
 }
 
-// SID's own page: what it is and what is configured on the host instead.
+// LAIka's own page: what it is and what is configured on the host instead.
 export function systemInfoMarkup(system) {
   const info = system || {};
   const row = (label, value) => `<div><span class="subtle">${esc(label)}</span> ${value}</div>`;
   const head = info.head ? `${esc(info.branch || 'main')} @ ${esc(info.head)} <span class="subtle">${esc(info.subject || '')}</span>` : '<span class="subtle">not reported yet</span>';
-  return `<div class="system-info"><h3>This is SID itself</h3><p class="subtle">Goals you submit here improve the command center through the same plan, build, review and approval flow as any project. Its code, tests and GitHub connection are set up on the server, so this page has no build, file, GitHub or delete settings.</p><div class="stack">${row(
+  return `<div class="system-info"><h3>This is LAIka itself</h3><p class="subtle">Goals you submit here improve the command center through the same plan, build, review and approval flow as any project. Its code, tests and GitHub connection are set up on the server, so this page has no build, file, GitHub or delete settings.</p><div class="stack">${row(
     'GitHub',
     info.remote ? esc(info.remote) : '<span class="subtle">not reported yet</span>'
   )}${row('Code', head)}${row('Checks before merge', esc(info.gate || 'scripts/integration-check.py'))}${row(
@@ -49,10 +49,10 @@ const TAB_LABELS = { overview: 'Overview', activity: 'Activity', files: 'Files',
 const GOAL_DONE = /^(completed|failed|planning_failed|cancelled)$/;
 
 // Builder-managed projects (LAIka itself, its app) are view-only here.
-const isViewOnly = project => project?.view_only === true || project?.id === 'sid';
+const isViewOnly = project => project?.view_only === true || project?.id === 'laika';
 
-export function tabsMarkup(id, tab, viewOnly = id === 'sid') {
-  const tabs = id === 'sid' ? ['overview', 'activity', 'history'] : viewOnly ? ['overview', 'activity', 'builds', 'history'] : ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
+export function tabsMarkup(id, tab, viewOnly = id === 'laika') {
+  const tabs = id === 'laika' ? ['overview', 'activity', 'history'] : viewOnly ? ['overview', 'activity', 'builds', 'history'] : ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
   return `<nav class="project-tabs" aria-label="Project sections">${tabs
     .map(key => `<a href="#/projects/${encodeURIComponent(id)}${key === 'overview' ? '' : `/${key}`}" class="${key === tab ? 'active' : ''}"${key === tab ? ' aria-current="page"' : ''}>${TAB_LABELS[key]}</a>`)
     .join('')}</nav>`;
@@ -94,9 +94,9 @@ function overviewMarkup(project) {
     .join('');
   if (isViewOnly(project)) {
     // An at-a-glance review: what the builder changed, nothing to act on.
-    return `${viewOnlyNotice()}${id === 'sid' ? systemInfoMarkup(project.system) : ''}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+    return `${viewOnlyNotice()}${id === 'laika' ? systemInfoMarkup(project.system) : ''}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
   }
-  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should SID do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'sid' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should LAIka do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'laika' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
@@ -126,7 +126,7 @@ export function activityMarkup(events, now = Date.now() / 1000) {
     .join('')}</ol>`;
 }
 
-// History: main's recent changes; a SID job's commits are one change.
+// History: main's recent changes; a LAIka job's commits are one change.
 export function historyMarkup(history, now = Date.now() / 1000) {
   const changes = Array.isArray(history?.changes) ? history.changes : [];
   if (!changes.length) return '<div class="empty">No history yet (it appears within a few seconds of the first commit).</div>';
@@ -155,14 +155,14 @@ export function historyMarkup(history, now = Date.now() / 1000) {
     .join('');
   const note = history.can_undo
     ? 'Undo adds a new commit that reverses the change, so nothing is lost and it can itself be undone.'
-    : "SID's own history is shown for reference; its changes go through review instead of Undo.";
+    : "LAIka's own history is shown for reference; its changes go through review instead of Undo.";
   return `<p class="subtle">${note}</p><ul class="history-list">${items}</ul>`;
 }
 
 function settingsMarkup(project) {
   const id = text(project?.id, '');
-  if (id === 'sid') return systemInfoMarkup(project.system);
-  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. SID creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+  if (id === 'laika') return systemInfoMarkup(project.system);
+  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
 export function projectDetailMarkup(project, tab = 'overview') {
@@ -184,7 +184,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
       }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
         project.importance === 'low' ? ' selected' : ''
       }>low</option></select></label>`;
-  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'sid' ? 'SID · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${tabsMarkup(id, tab, isViewOnly(project))}<div class="project-tab-body">${body}</div></section>`;
+  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'laika' ? 'LAIka · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${tabsMarkup(id, tab, isViewOnly(project))}<div class="project-tab-body">${body}</div></section>`;
 }
 
 const APP_STATES = {
@@ -195,7 +195,7 @@ const APP_STATES = {
 // The running app: state, link from this browser, restart, last log lines.
 export function appStatusMarkup(project, hostname = globalThis.location?.hostname || 'localhost') {
   const id = text(project?.id, '');
-  if (!id || id === 'sid' || !text(project?.run_command, '')) return '';
+  if (!id || id === 'laika' || !text(project?.run_command, '')) return '';
   const app = project.app || {};
   const port = app.port || project.run_port;
   const state = text(app.state, 'starting');
@@ -210,7 +210,7 @@ export function appStatusMarkup(project, hostname = globalThis.location?.hostnam
 // Dependency setup, tests and the run command; empty means automatic/off.
 export function buildSettingsMarkup(project) {
   const id = text(project?.id, '');
-  if (!id || id === 'sid') return '';
+  if (!id || id === 'laika') return '';
   const input = (name, label, placeholder, hint) =>
     `<label class="field">${esc(label)}<input name="${name}" value="${escValue(project[name])}" placeholder="${escValue(placeholder)}" autocomplete="off"></label><span class="field-hint">${esc(hint)}</span>`;
   return `<form id="project-settings-form" class="goal-form build-settings"><h3>Build &amp; run</h3>${input(
@@ -234,10 +234,10 @@ export function buildSettingsRequest(values) {
   return body;
 }
 
-// Deleting wipes the project from the server; SID itself cannot be deleted.
+// Deleting wipes the project from the server; LAIka itself cannot be deleted.
 // Secrets for the running app: names only, values are write-only.
 export function envMarkup(id, env) {
-  if (!id || id === 'sid') return '';
+  if (!id || id === 'laika') return '';
   const variables = Array.isArray(env?.variables) ? env.variables : [];
   const rows = variables.length
     ? variables
@@ -263,7 +263,7 @@ export function trashMarkup(items, now = Date.now() / 1000) {
 }
 
 export function deleteProjectMarkup(id) {
-  if (!id || id === 'sid') return '';
+  if (!id || id === 'laika') return '';
   return `<form id="project-delete-form" class="goal-form danger-zone"><h3>Delete project</h3><p class="subtle">Moves the project to the trash with its repository, app data, deploy key, goals and jobs, and stops its app. You can restore it from the Projects page for 1 day; after that it is removed for good. Work that is running must finish first.</p><div class="form-row"><input name="confirm" autocomplete="off" placeholder="Type ${esc(
     id
   )} to confirm" aria-label="Project ID to confirm"><button type="submit" class="danger-button">Delete project</button></div><span id="project-delete-status" class="form-status" role="status"></span></form>`;
@@ -363,7 +363,7 @@ if (typeof document !== 'undefined') {
       const optional = path => requestJSON(path).catch(() => null);
       const [project, extra, catalog, allProjects] = await Promise.all([
         requestJSON(`/api/projects/${id}?limit=25`),
-        tab === 'settings' && route.projectId !== 'sid' ? optional(`/api/projects/${id}/env`)
+        tab === 'settings' && route.projectId !== 'laika' ? optional(`/api/projects/${id}/env`)
           : tab === 'history' ? optional(`/api/projects/${id}/history`)
           : tab === 'activity' ? optional(`/api/projects/${id}/activity`)
           : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
@@ -411,10 +411,10 @@ if (typeof document !== 'undefined') {
   registerPanel(() => {
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
   });
-  window.addEventListener('sid:project-refresh', () => activeRoute && render(activeRoute, true));
+  window.addEventListener('laika:project-refresh', () => activeRoute && render(activeRoute, true));
   const undo = async button => {
     const title = button.dataset.undoTitle || 'this change';
-    if (!globalThis.confirm?.(`Undo "${title}"? SID adds a new commit to main that reverses it.`)) return;
+    if (!globalThis.confirm?.(`Undo "${title}"? LAIka adds a new commit to main that reverses it.`)) return;
     button.disabled = true;
     button.textContent = 'Undoing…';
     try {

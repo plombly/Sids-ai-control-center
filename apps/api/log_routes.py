@@ -7,8 +7,8 @@ list the dashboard shows as the run happens: messages, commands with their
 exit codes and output, file changes, and the final result. Gate output
 (<job>-tests.log) is served the same way as plain text.
 
-The API container sees the logs read-only: SID's at /job-logs
-(/var/log/sid-ai/jobs) and projects' under /projects (/opt/sid-projects).
+The API container sees the logs read-only: LAIka's at /job-logs
+(/var/log/laika/jobs) and projects' under /projects (/var/lib/laika/projects).
 """
 
 import json
@@ -20,8 +20,8 @@ from fastapi import APIRouter, HTTPException, Query
 router = APIRouter()
 
 MOUNTS = (
-    (Path("/var/log/sid-ai/jobs"), Path(os.environ.get("SID_JOB_LOGS_MOUNT", "/job-logs"))),
-    (Path("/opt/sid-projects"), Path(os.environ.get("SID_PROJECTS_MOUNT", "/projects"))),
+    (Path("/var/log/laika/jobs"), Path(os.environ.get("LAIKA_JOB_LOGS_MOUNT", "/job-logs"))),
+    (Path("/var/lib/laika/projects"), Path(os.environ.get("LAIKA_PROJECTS_MOUNT", "/projects"))),
 )
 CHUNK = 256 * 1024
 TEXT_LIMIT = 4000
@@ -149,7 +149,7 @@ def job_log(job_id: str, after: int = Query(default=0, ge=0), tests: bool = Fals
     import main
     if not job_id.replace("-", "").isalnum() or len(job_id) > 64:
         raise HTTPException(status_code=422, detail="Invalid job id")
-    job = main._hash(f"sid:jobs:{job_id}")
+    job = main._hash(f"laika:jobs:{job_id}")
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     log = job.get("log") or ""

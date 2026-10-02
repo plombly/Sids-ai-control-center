@@ -5,11 +5,11 @@ import sys
 
 import pytest
 
-from sid_testing import ROOT, load_module
+from laika_testing import ROOT, load_module
 
 sys.path.insert(0, str(ROOT / "services"))
 import project_sandbox  # noqa: E402
-import sid_projects  # noqa: E402
+import laika_projects  # noqa: E402
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def project(tmp_path, monkeypatch):
     (sdk / "bin").mkdir(parents=True)
     monkeypatch.setattr(project_sandbox, "TOOLCHAINS", (str(sdk),))
     (tmp_path / "repo").mkdir()
-    return type("P", (), {"id": "app", "is_sid": False, "repo": tmp_path / "repo", "root": tmp_path})(), sdk
+    return type("P", (), {"id": "app", "is_builtin": False, "repo": tmp_path / "repo", "root": tmp_path})(), sdk
 
 
 def pairs(args, flag):
@@ -46,13 +46,13 @@ def test_pub_cache_is_shared_but_only_setup_and_agents_write_it(project):
 
 def test_flutter_and_dart_projects_are_detected(tmp_path):
     (tmp_path / "pubspec.yaml").write_text("name: x\ndependencies:\n  flutter:\n    sdk: flutter\n")
-    assert sid_projects.detect_setup(tmp_path) == "flutter pub get"
-    assert sid_projects.detect_gate(tmp_path) == "flutter analyze --no-pub"
+    assert laika_projects.detect_setup(tmp_path) == "flutter pub get"
+    assert laika_projects.detect_gate(tmp_path) == "flutter analyze --no-pub"
     (tmp_path / "test").mkdir()
-    assert sid_projects.detect_gate(tmp_path) == "flutter analyze --no-pub && flutter test --no-pub"
+    assert laika_projects.detect_gate(tmp_path) == "flutter analyze --no-pub && flutter test --no-pub"
     (tmp_path / "pubspec.yaml").write_text("name: x\n")
-    assert sid_projects.detect_setup(tmp_path) == "dart pub get"
-    assert sid_projects.detect_gate(tmp_path) == "dart analyze --no-pub && dart test --no-pub"
+    assert laika_projects.detect_setup(tmp_path) == "dart pub get"
+    assert laika_projects.detect_gate(tmp_path) == "dart analyze --no-pub && dart test --no-pub"
 
 
 def test_setup_runs_again_when_dependencies_change(tmp_path):

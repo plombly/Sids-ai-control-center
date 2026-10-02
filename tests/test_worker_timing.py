@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def raw_job(job_id="j1", role="builder"):
 
 
 def test_claim_sets_started_and_removes_finished(worker_module, monkeypatch):
-    key = "sid:jobs:j1"
+    key = "laika:jobs:j1"
     worker_module.redis.records[key] = {"finished_at": "old", "status": "queued"}
     monkeypatch.setattr(worker_module.time, "time", lambda: 100.5)
     seen = {}
@@ -34,7 +34,7 @@ def test_claim_sets_started_and_removes_finished(worker_module, monkeypatch):
 
 
 def test_reclaim_overwrites_started_at(worker_module, monkeypatch):
-    key = "sid:jobs:j1"
+    key = "laika:jobs:j1"
     worker_module.redis.records[key] = {}
     times = iter((10.0, 10.0, 10.0, 10.0, 20.0, 20.0, 20.0, 20.0))
     monkeypatch.setattr(worker_module.time, "time", lambda: next(times))
@@ -53,7 +53,7 @@ def test_reclaim_overwrites_started_at(worker_module, monkeypatch):
     lambda module, key: module.redis.hset(key, "status", "failed"),
 ])
 def test_finished_at_written_after_success_and_failure(worker_module, monkeypatch, handler):
-    key = "sid:jobs:j1"
+    key = "laika:jobs:j1"
     worker_module.redis.records[key] = {}
     clock = iter((1.0, 1.0, 2.0, 2.0))
     monkeypatch.setattr(worker_module.time, "time", lambda: next(clock))
@@ -65,7 +65,7 @@ def test_finished_at_written_after_success_and_failure(worker_module, monkeypatc
 
 
 def test_finished_at_written_when_handler_raises(worker_module, monkeypatch):
-    key = "sid:jobs:j1"
+    key = "laika:jobs:j1"
     worker_module.redis.records[key] = {}
     clock = iter((3.0, 3.0, 4.0, 4.0))
     monkeypatch.setattr(worker_module.time, "time", lambda: next(clock))
@@ -81,7 +81,7 @@ def test_finished_at_written_when_handler_raises(worker_module, monkeypatch):
 
 
 def test_heartbeat_publishes_started_at_while_busy_and_clears_when_idle(worker_module):
-    key = "sid:jobs:j1"
+    key = "laika:jobs:j1"
     worker_module.redis.records[key] = {}
     seen = {}
 
@@ -103,4 +103,4 @@ def test_deleted_job_hash_is_not_recreated(worker_module):
 
     worker_module.process_job(raw_job("gone"))
 
-    assert "sid:jobs:gone" not in worker_module.redis.records
+    assert "laika:jobs:gone" not in worker_module.redis.records

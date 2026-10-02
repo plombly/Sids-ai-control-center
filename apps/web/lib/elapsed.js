@@ -25,8 +25,8 @@ export function elapsedMarkup(startedAt, finishedAt, now = Date.now() / 1000) {
   return `took ${elapsedText(finishedAt - startedAt)} · finished ${clockText(finishedAt, now)}`;
 }
 
-if (typeof window !== 'undefined' && typeof document !== 'undefined' && !globalThis.__sidElapsedTimer) {
-  globalThis.__sidElapsedTimer = true;
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && !globalThis.__laikaElapsedTimer) {
+  globalThis.__laikaElapsedTimer = true;
   setInterval(() => {
     document.querySelectorAll('[data-elapsed-since]').forEach(element => {
       element.textContent = elapsedText(Date.now() / 1000 - Number(element.getAttribute('data-elapsed-since')));

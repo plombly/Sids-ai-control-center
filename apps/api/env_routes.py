@@ -1,7 +1,7 @@
 """Per-project secrets / environment variables for the running app.
 
 Values are write-only: the API stores them and lists names, never values.
-They live in one file per project, /etc/sid-ai/project-env/<id>.env on the
+They live in one file per project, /etc/laika/project-env/<id>.env on the
 host (root-only; mounted here at /project-env), in systemd EnvironmentFile
 syntax, and only the app's systemd unit reads them (services/apps). They
 never pass through Redis, so they are not in operator audit records, and
@@ -21,9 +21,9 @@ import project_routes as projects
 
 router = APIRouter()
 
-ENV_DIR = Path(os.environ.get("SID_PROJECT_ENV_DIR", "/project-env"))
+ENV_DIR = Path(os.environ.get("LAIKA_PROJECT_ENV_DIR", "/project-env"))
 NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-# Set by SID for every app; a project value would be ignored or break it.
+# Set by LAIka for every app; a project value would be ignored or break it.
 RESERVED = {"PORT", "HOST", "HOME", "DATA_DIR", "PATH", "TMPDIR", "LANG", "NODE_ENV", "PYTHONDONTWRITEBYTECODE"}
 MAX_VARIABLES = 200
 
@@ -76,13 +76,13 @@ def write_env(project_id, values):
             os.unlink(handle.name)
         raise
     # Restart the app with the new values (services/apps watches restart_at).
-    projects._redis().redis.hset(f"sid:projects:{project_id}", "restart_at", str(time.time()))
+    projects._redis().redis.hset(f"laika:projects:{project_id}", "restart_at", str(time.time()))
 
 
 def _project(project_id):
     project_id = projects._id(project_id)
-    if project_id == "sid":
-        raise HTTPException(status_code=404, detail="SID's own settings are not managed here")
+    if project_id == "laika":
+        raise HTTPException(status_code=404, detail="LAIka's own settings are not managed here")
     if not projects._known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return project_id
@@ -111,7 +111,7 @@ def set_env(project_id: str, payload: Variable):
     if not NAME.fullmatch(payload.name):
         raise HTTPException(status_code=422, detail="Names use letters, digits and _ and do not start with a digit")
     if payload.name.upper() in RESERVED:
-        raise HTTPException(status_code=422, detail=f"{payload.name} is set by SID for every app")
+        raise HTTPException(status_code=422, detail=f"{payload.name} is set by LAIka for every app")
     if any(c in payload.value for c in "\n\r\0"):
         raise HTTPException(status_code=422, detail="Values must be a single line")
     values = read_env(project_id)

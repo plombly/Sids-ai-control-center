@@ -15,7 +15,7 @@ const AREA_NOTES = {
   code: 'Every change here is committed straight to main as you: no review, no tests.',
   data: "Your app's data folder (DATA_DIR). Changes here are immediate and not part of the code."
 };
-const DRAG_TYPE = 'application/x-sid-files';
+const DRAG_TYPE = 'application/x-laika-files';
 
 // --- pure helpers (tested in project-files.test.js) ---------------------------------------
 
@@ -721,7 +721,7 @@ const scrollToFiles = () => root()?.scrollIntoView?.({ behavior: 'smooth', block
 onRoute(route => {
   wire();
   closeMenu();
-  if (!(route.view === 'projects' && route.projectId && !route.create) || route.projectId === 'sid') {
+  if (!(route.view === 'projects' && route.projectId && !route.create) || route.projectId === 'laika') {
     view = null;
     return;
   }

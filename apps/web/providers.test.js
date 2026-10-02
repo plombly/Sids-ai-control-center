@@ -14,7 +14,7 @@ test('renders routing entries', () => {
 });
 
 test('renders Claude capacity', () => {
-  assert.match(providersMarkup({ claude: { limit: 2, in_use: [{ holder: 'sid-worker-01', lease_expires: 123 }] } }), /Claude slots: 1\/2/);
+  assert.match(providersMarkup({ claude: { limit: 2, in_use: [{ holder: 'laika-worker-01', lease_expires: 123 }] } }), /Claude slots: 1\/2/);
   assert.match(providersMarkup({ claude: { limit: null, in_use: [] } }), /Claude slots: 0\/—/);
 });
 

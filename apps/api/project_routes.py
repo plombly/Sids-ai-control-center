@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _IMPORTANCE = {"high": 0, "medium": 1, "low": 2}
-_GOAL_KEY = re.compile(r"^sid:goals:([a-z0-9][a-z0-9-]{0,39})$")
-_JOB_KEY = re.compile(r"^sid:jobs:([a-z0-9][a-z0-9-]{0,39})$")
+_GOAL_KEY = re.compile(r"^laika:goals:([a-z0-9][a-z0-9-]{0,39})$")
+_JOB_KEY = re.compile(r"^laika:jobs:([a-z0-9][a-z0-9-]{0,39})$")
 
 
 class ProjectGoal(BaseModel):
@@ -42,7 +42,7 @@ class ProjectPatch(BaseModel):
     build_command: Optional[str] = Field(default=None, max_length=500, pattern=_COMMAND)
     build_image: Optional[str] = Field(default=None, max_length=300)
     build_output: Optional[str] = Field(default=None, max_length=200, pattern=_COMMAND)
-    # Internet access (services/network_access.py, scripts/sid-build.py):
+    # Internet access (services/network_access.py, scripts/laika-build.py):
     # tests "" = offline, ask when they need it / "always"; builds "" or
     # "internet" = internet but not this server or the LAN / "none".
     gate_network: Optional[Literal["", "always"]] = None
@@ -108,14 +108,14 @@ def _redis():
 
 
 def _members(main):
-    return {_text(_clean(value)) for value in (main.redis.smembers("sid:projects") or set())}
+    return {_text(_clean(value)) for value in (main.redis.smembers("laika:projects") or set())}
 
 
 def _project_data(project_id):
     main = _redis()
-    data = _data(main.redis.hgetall(f"sid:projects:{project_id}"))
-    if project_id == "sid" and not data:
-        data = {"id": "sid", "name": "SID AI Command Center", "importance": "medium", "status": "active"}
+    data = _data(main.redis.hgetall(f"laika:projects:{project_id}"))
+    if project_id == "laika" and not data:
+        data = {"id": "laika", "name": "LAIka", "importance": "medium", "status": "active"}
     return data
 
 
@@ -147,16 +147,16 @@ def _all_counts():
     """Counts for every project in one pass over goals and jobs, reused while
     the same 1-second snapshot is served (main._hashes)."""
     main = _redis()
-    goal_rows, job_rows = main._hashes("sid:goals:*"), main._hashes("sid:jobs:*")
+    goal_rows, job_rows = main._hashes("laika:goals:*"), main._hashes("laika:jobs:*")
     cached = _counts_cache["rows"]
     if cached and cached[0] is goal_rows and cached[1] is job_rows:
         return _counts_cache["counts"]
     counts = {}
     bucket = lambda pid: counts.setdefault(pid, dict(_ZERO_COUNTS))
-    for _, data in _scan_hashes(main, "sid:goals:*", _GOAL_KEY):
+    for _, data in _scan_hashes(main, "laika:goals:*", _GOAL_KEY):
         if data.get("status") in {"queued", "planning", "running"}:
-            bucket(_text(data.get("project_id"), "sid"))["goals_active"] += 1
-    for _, data in _scan_hashes(main, "sid:jobs:*", _JOB_KEY):
+            bucket(_text(data.get("project_id"), "laika"))["goals_active"] += 1
+    for _, data in _scan_hashes(main, "laika:jobs:*", _JOB_KEY):
         role = _text(data.get("job_role", data.get("role")))
         if role and role != "builder":
             continue
@@ -167,7 +167,7 @@ def _all_counts():
                  else "jobs_needs_human" if status == "needs_human"
                  else "jobs_merged" if status == "merged" else None)
         if field:
-            bucket(_text(data.get("project_id"), "sid"))[field] += 1
+            bucket(_text(data.get("project_id"), "laika"))[field] += 1
     _counts_cache.update(rows=(goal_rows, job_rows), counts=counts)
     return counts
 
@@ -178,7 +178,7 @@ def _counts(project_id):
 
 def _system_info():
     try:
-        info = json.loads(_redis().redis.get("sid:system-info") or "{}")
+        info = json.loads(_redis().redis.get("laika:system-info") or "{}")
     except (TypeError, ValueError):
         info = {}
     info = info if isinstance(info, dict) else {}
@@ -188,7 +188,7 @@ def _system_info():
 
 
 def _app_status(project_id):
-    status = _data(_redis().redis.hgetall(f"sid:app-status:{project_id}"))
+    status = _data(_redis().redis.hgetall(f"laika:app-status:{project_id}"))
     if not status:
         return None
     return {"state": _text(status.get("state"), "unknown"), "port": _numeric(status.get("port")),
@@ -196,7 +196,7 @@ def _app_status(project_id):
             "log": _text(status.get("log")), "updated_at": _numeric(status.get("updated_at"))}
 
 
-# --- project groups (services/sid_projects.py: one level, the parent controls
+# --- project groups (services/laika_projects.py: one level, the parent controls
 # its children's importance and test internet access) -------------------------
 _INHERITED = ("importance", "gate_network")
 
@@ -218,7 +218,7 @@ def _group_info(project_id, data):
                 effective["status"] = "archived"
     else:
         for other in sorted(_members(main)):
-            if other != project_id and main.redis.hget(f"sid:projects:{other}", "parent") == project_id:
+            if other != project_id and main.redis.hget(f"laika:projects:{other}", "parent") == project_id:
                 child = _project_data(other)
                 group["children"].append({"id": other, "name": _text(child.get("name"), other),
                                           "status": _text(child.get("status"), "active")})
@@ -235,13 +235,13 @@ def _item(project_id, data=None):
     main = _redis()
     data = data if data is not None else _project_data(project_id)
     data, group = _group_info(project_id, data)
-    stats = _data(main.redis.hgetall(f"sid:project-stats:{project_id}"))
+    stats = _data(main.redis.hgetall(f"laika:project-stats:{project_id}"))
     return {
         "id": project_id,
-        "name": _text(data.get("name"), "SID AI Command Center" if project_id == "sid" else project_id),
+        "name": _text(data.get("name"), "LAIka" if project_id == "laika" else project_id),
         "importance": _text(data.get("importance"), "medium"),
         "status": _text(data.get("status"), "active"),
-        "gate_command": "scripts/integration-check.py" if project_id == "sid" else _text(data.get("gate_command")),
+        "gate_command": "scripts/integration-check.py" if project_id == "laika" else _text(data.get("gate_command")),
         "setup_command": _text(data.get("setup_command")),
         "run_command": _text(data.get("run_command")),
         "run_port": _numeric(data.get("run_port")),
@@ -255,8 +255,8 @@ def _item(project_id, data=None):
         "build_output": _text(data.get("build_output")),
         "gate_network": _text(data.get("gate_network"), ""),
         "build_network": _text(data.get("build_network"), "") or "internet",
-        # SID itself: the control plane, configured on the host.
-        "system": _system_info() if project_id == "sid" else None,
+        # LAIka itself: the control plane, configured on the host.
+        "system": _system_info() if project_id == "laika" else None,
         "push_remote": _text(data.get("push_remote")),
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
@@ -268,11 +268,11 @@ def _item(project_id, data=None):
 
 # Development installs show the built-in project (LAIka itself, view-only);
 # production installs have no such project at all.
-BUILTIN_PROJECT = os.environ.get("SID_BUILTIN_PROJECT", "1") != "0"
+BUILTIN_PROJECT = os.environ.get("LAIKA_BUILTIN_PROJECT", "1") != "0"
 
 
 def _known(project_id):
-    if project_id == "sid":
+    if project_id == "laika":
         return BUILTIN_PROJECT
     return project_id in _members(_redis())
 
@@ -280,9 +280,9 @@ def _known(project_id):
 @router.get("/api/projects")
 def list_projects(include_archived: bool = False):
     main = _redis()
-    ids = _members(main) - {"sid"}
+    ids = _members(main) - {"laika"}
     if BUILTIN_PROJECT:
-        ids.add("sid")
+        ids.add("laika")
     result = []
     for project_id in ids:
         item = _item(project_id)
@@ -298,10 +298,10 @@ def get_project(project_id: str, limit: int = Query(25, ge=1, le=100)):
         raise HTTPException(status_code=404, detail="Project not found")
     main = _redis()
     item = _item(project_id)
-    goals = [(key, data) for key, data in _scan_hashes(main, "sid:goals:*", _GOAL_KEY)
-             if _text(data.get("project_id"), "sid") == project_id]
-    jobs = [(key, data) for key, data in _scan_hashes(main, "sid:jobs:*", _JOB_KEY)
-            if _text(data.get("project_id"), "sid") == project_id
+    goals = [(key, data) for key, data in _scan_hashes(main, "laika:goals:*", _GOAL_KEY)
+             if _text(data.get("project_id"), "laika") == project_id]
+    jobs = [(key, data) for key, data in _scan_hashes(main, "laika:jobs:*", _JOB_KEY)
+            if _text(data.get("project_id"), "laika") == project_id
             and (not _text(data.get("job_role", data.get("role")))
                  or _text(data.get("job_role", data.get("role"))) == "builder")]
     goals.sort(key=lambda pair: (-(_numeric(pair[1].get("updated_at")) or 0), pair[0]))
@@ -331,12 +331,12 @@ def patch_project(project_id: str, payload: ProjectPatch):
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     main = _redis()
-    key = f"sid:projects:{project_id}"
-    if project_id == "sid" and not main.redis.hgetall(key):
-        main.redis.hset(key, mapping={"id": "sid", "name": "SID AI Command Center", "status": "active"})
+    key = f"laika:projects:{project_id}"
+    if project_id == "laika" and not main.redis.hgetall(key):
+        main.redis.hset(key, mapping={"id": "laika", "name": "LAIka", "status": "active"})
     changes = payload.model_dump(exclude_none=True)
-    if project_id == "sid":
-        # SID's commands are its own gate and control plane: never editable.
+    if project_id == "laika":
+        # LAIka's commands are its own gate and control plane: never editable.
         changes = {k: v for k, v in changes.items() if k in ("importance", "type", "type_description")}
     _check_build_fields(changes)
     managed = sorted(set(changes) & set(_INHERITED))
@@ -375,7 +375,7 @@ def set_parent(project_id: str, payload: ProjectParent):
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     main = _redis()
-    key = f"sid:projects:{project_id}"
+    key = f"laika:projects:{project_id}"
     current = _text(_project_data(project_id).get("parent"), "")
     if payload.parent:
         reason = _parent_problem(project_id, payload.parent)
@@ -393,12 +393,12 @@ def set_parent(project_id: str, payload: ProjectParent):
 
 
 def _parent_problem(child_id, parent_id):
-    """Mirrors services/sid_projects.check_parent (the host's rules)."""
-    if child_id == "sid":
-        return "SID itself cannot be a child project"
+    """Mirrors services/laika_projects.check_parent (the host's rules)."""
+    if child_id == "laika":
+        return "LAIka itself cannot be a child project"
     if child_id == parent_id:
         return "A project cannot be its own parent"
-    if parent_id != "sid" and parent_id not in _members(_redis()):
+    if parent_id != "laika" and parent_id not in _members(_redis()):
         return f"Unknown project: {parent_id}"
     parent = _project_data(parent_id)
     if parent.get("status", "active") != "active":
@@ -406,7 +406,7 @@ def _parent_problem(child_id, parent_id):
     if parent.get("parent"):
         return f"{parent_id} is itself a child project (groups have one level)"
     main = _redis()
-    if any(main.redis.hget(f"sid:projects:{other}", "parent") == child_id for other in _members(main) if other != child_id):
+    if any(main.redis.hget(f"laika:projects:{other}", "parent") == child_id for other in _members(main) if other != child_id):
         return f"{child_id} has child projects of its own (groups have one level)"
     return ""
 
@@ -414,8 +414,8 @@ def _parent_problem(child_id, parent_id):
 def _event(project_id, kind, title):
     entry = {"at": time.time(), "kind": kind, "title": title[:200], "detail": "", "ref": ""}
     try:
-        _redis().redis.lpush(f"sid:events:{project_id}", json.dumps(entry))
-        _redis().redis.ltrim(f"sid:events:{project_id}", 0, 499)
+        _redis().redis.lpush(f"laika:events:{project_id}", json.dumps(entry))
+        _redis().redis.ltrim(f"laika:events:{project_id}", 0, 499)
     except Exception:
         pass
 
@@ -424,9 +424,9 @@ def _event(project_id, kind, title):
 def restart_app(project_id: str):
     """Ask the apps service to redeploy this project's app now."""
     project_id = _id(project_id)
-    if project_id == "sid" or not _known(project_id):
+    if project_id == "laika" or not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    _redis().redis.hset(f"sid:projects:{project_id}", "restart_at", str(time.time()))
+    _redis().redis.hset(f"laika:projects:{project_id}", "restart_at", str(time.time()))
     return {"id": project_id, "restart_requested": True}
 
 
@@ -438,10 +438,10 @@ def _operator_request(action, request_id, fields):
     main = _redis()
     service = main._operator_service()
     if not service:
-        raise HTTPException(status_code=503, detail="Operator service is offline; use scripts/sid-project.py on the host")
+        raise HTTPException(status_code=503, detail="Operator service is offline; use scripts/laika-project.py on the host")
     if action not in _text(service.get("allowed_actions"), "").split(","):
         raise HTTPException(status_code=403, detail=f"Action {action} is disabled on the host (OPERATOR_ALLOWED_ACTIONS)")
-    key = f"sid:operator-results:{request_id}"
+    key = f"laika:operator-results:{request_id}"
     fields = {"request_id": request_id, "action": action, "job_id": "", **{k: v or "" for k, v in fields.items()}}
     existing = main._hash(key)
     if existing:
@@ -486,10 +486,10 @@ def retry_clone(project_id: str, payload: ProjectRequest):
 @router.post("/api/projects/{project_id}/push-setup", status_code=202)
 def push_setup(project_id: str, payload: ProjectPushSetup):
     project_id = _id(project_id)
-    if project_id == "sid":
-        # SID's own GitHub remote and key are configured on the host; this
+    if project_id == "laika":
+        # LAIka's own GitHub remote and key are configured on the host; this
         # would replace them and could break pushing.
-        raise HTTPException(status_code=403, detail="SID's GitHub setup is managed on the host, not from the dashboard")
+        raise HTTPException(status_code=403, detail="LAIka's GitHub setup is managed on the host, not from the dashboard")
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return _operator_request("project_push_setup", payload.request_id,
@@ -503,7 +503,7 @@ def history(project_id: str):
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     try:
-        data = json.loads(_redis().redis.get(f"sid:history:{project_id}") or "{}")
+        data = json.loads(_redis().redis.get(f"laika:history:{project_id}") or "{}")
     except (TypeError, ValueError):
         data = {}
     return {"project_id": project_id, "head": data.get("head"), "changes": data.get("changes") or [],
@@ -518,10 +518,10 @@ class ProjectUndo(BaseModel):
 
 @router.post("/api/projects/{project_id}/undo", status_code=202)
 def undo(project_id: str, payload: ProjectUndo):
-    """Undo one change (a whole SID job or one commit) with a new commit on main."""
+    """Undo one change (a whole LAIka job or one commit) with a new commit on main."""
     project_id = _id(project_id)
-    if project_id == "sid":
-        raise HTTPException(status_code=403, detail="SID's own changes are not undone from the dashboard")
+    if project_id == "laika":
+        raise HTTPException(status_code=403, detail="LAIka's own changes are not undone from the dashboard")
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if bool(payload.job) == bool(payload.commit):
@@ -535,8 +535,8 @@ def trash():
     """Deleted projects that can still be restored (newest first)."""
     main = _redis()
     items = []
-    for trash_id in main.redis.smembers("sid:trash") or []:
-        info = _data(main.redis.hgetall(f"sid:trash:{_text(_clean(trash_id))}"))
+    for trash_id in main.redis.smembers("laika:trash") or []:
+        info = _data(main.redis.hgetall(f"laika:trash:{_text(_clean(trash_id))}"))
         if info:
             items.append({"trash_id": _text(info.get("trash_id")), "project_id": _text(info.get("project_id")),
                           "name": _text(info.get("name")), "deleted_at": _numeric(info.get("deleted_at")),
@@ -553,7 +553,7 @@ def restore(trash_id: str, payload: ProjectRestore):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z", trash_id or ""):
         raise HTTPException(status_code=422, detail="Invalid trash id")
     main = _redis()
-    info = _data(main.redis.hgetall(f"sid:trash:{trash_id}"))
+    info = _data(main.redis.hgetall(f"laika:trash:{trash_id}"))
     if not info:
         raise HTTPException(status_code=404, detail="Not in the trash (it may have been emptied)")
     project_id = _text(info.get("project_id"))
@@ -564,10 +564,10 @@ def restore(trash_id: str, payload: ProjectRestore):
 
 @router.post("/api/projects/{project_id}/delete", status_code=202)
 def delete_project(project_id: str, payload: ProjectDelete):
-    """Wipe a project from the server (host runs sid-project.py delete)."""
+    """Wipe a project from the server (host runs laika-project.py delete)."""
     project_id = _id(project_id)
-    if project_id == "sid":
-        raise HTTPException(status_code=403, detail="SID itself cannot be deleted")
+    if project_id == "laika":
+        raise HTTPException(status_code=403, detail="LAIka itself cannot be deleted")
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     if payload.confirm != project_id:

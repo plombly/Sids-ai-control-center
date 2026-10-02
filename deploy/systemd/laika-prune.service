@@ -1,0 +1,7 @@
+[Unit]
+Description=LAIka log retention (30 days, final jobs only)
+
+[Service]
+Type=oneshot
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/usr/bin/python3 /opt/laika/scripts/laika-prune.py --days 30 --apply

@@ -10,12 +10,12 @@ import sys
 from pathlib import Path
 import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Queue a SID review of an existing builder job"
+        description="Queue a LAIka review of an existing builder job"
     )
     parser.add_argument("builder_job_id", help="Builder job to review")
     parser.add_argument(
@@ -32,10 +32,10 @@ def main():
 
     r = redis.Redis.from_url(
         "redis://127.0.0.1:6379/0",
-        password=sid_redis.password(), decode_responses=True,
+        password=laika_redis.password(), decode_responses=True,
     )
 
-    builder_key = f"sid:jobs:{args.builder_job_id}"
+    builder_key = f"laika:jobs:{args.builder_job_id}"
     builder = r.hgetall(builder_key)
 
     if not builder:
@@ -57,7 +57,7 @@ def main():
 
     existing_review = builder.get("review_job_id")
     if existing_review:
-        existing = r.hgetall(f"sid:jobs:{existing_review}")
+        existing = r.hgetall(f"laika:jobs:{existing_review}")
         status = existing.get("status", "unknown") if existing else "missing"
         raise SystemExit(
             f"Builder job already has reviewer {existing_review} ({status})"
@@ -72,7 +72,7 @@ def main():
             f"Builder job already has reviewer {r.hget(builder_key, 'review_job_id')}"
         )
 
-    prompt = f"""You are the review agent for SID's AI Command Center.
+    prompt = f"""You are the review agent for LAIka.
 
 Review builder job {args.builder_job_id}.
 Review immutable integrated candidate commit {candidate_commit}.
@@ -118,7 +118,7 @@ material findings, explicitly say so.
 
     try:
         r.hset(
-            f"sid:jobs:{job_id}",
+            f"laika:jobs:{job_id}",
             mapping={
                 "status": "queued",
                 "provider": args.provider,
@@ -138,11 +138,11 @@ material findings, explicitly say so.
                 "updated_at": str(time.time()),
             },
         )
-        r.rpush("sid:jobs", json.dumps(job))
+        r.rpush("laika:jobs", json.dumps(job))
     except Exception:
         if r.hget(builder_key, "review_job_id") == job_id:
             r.hdel(builder_key, "review_job_id", "review_status")
-        r.delete(f"sid:jobs:{job_id}")
+        r.delete(f"laika:jobs:{job_id}")
         raise
 
     print(job_id)

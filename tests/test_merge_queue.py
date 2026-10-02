@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from sid_testing import INTEGRATED, JOB, ROOT, MemoryRedis, load_module, make_builder
+from laika_testing import INTEGRATED, JOB, ROOT, MemoryRedis, load_module, make_builder
 
-QUEUE = "sid:merge-queue"
+QUEUE = "laika:merge-queue"
 SOURCES = '["s1","s2"]'
 H0, H1 = "0" * 40, "1" * 40
 
@@ -19,7 +19,7 @@ def ready_builder(job_review, job_id=JOB, base=H0, candidate=INTEGRATED, **field
         "integrated_candidate_commit": candidate, "reviewed_commit": candidate,
         "source_candidate_commits": SOURCES, **fields,
     }
-    job_review.r.records[f"sid:jobs:{job_id}"] = record
+    job_review.r.records[f"laika:jobs:{job_id}"] = record
     return record
 
 
@@ -35,7 +35,7 @@ def test_queue_approval_records_the_approved_change(job_review):
     ready_builder(job_review)
     job_review.queue_approval(JOB, INTEGRATED)
     job_review.queue_approval(JOB, INTEGRATED)  # idempotent
-    b = job_review.r.records[f"sid:jobs:{JOB}"]
+    b = job_review.r.records[f"laika:jobs:{JOB}"]
     assert json.loads(b["approval_intent_sources"]) == ["s1", "s2"]
     assert b["approval_intent_candidate"] == INTEGRATED
     assert b["merge_queue_state"] == "queued"
@@ -66,11 +66,11 @@ def test_dequeue_and_reject_remove_from_queue(job_review, fake_git):
     job_review.queue_approval(JOB, INTEGRATED)
     job_review.dequeue_approval(JOB)
     assert job_review.r.values[QUEUE] == []
-    assert "approval_intent_sources" not in job_review.r.records[f"sid:jobs:{JOB}"]
+    assert "approval_intent_sources" not in job_review.r.records[f"laika:jobs:{JOB}"]
     make_builder(job_review)  # reject needs worktree/branch fields
-    job_review.r.records[f"sid:jobs:{JOB}"].update(ready_builder(job_review))
-    job_review.r.records[f"sid:jobs:{JOB}"]["worktree"] = str(job_review.WORKTREE_ROOT / f"job-{JOB}")
-    job_review.r.records[f"sid:jobs:{JOB}"]["branch"] = f"sid/job-{JOB}"
+    job_review.r.records[f"laika:jobs:{JOB}"].update(ready_builder(job_review))
+    job_review.r.records[f"laika:jobs:{JOB}"]["worktree"] = str(job_review.WORKTREE_ROOT / f"job-{JOB}")
+    job_review.r.records[f"laika:jobs:{JOB}"]["branch"] = f"laika/job-{JOB}"
     job_review.queue_approval(JOB, INTEGRATED)
     job_review.reject(JOB)
     assert job_review.r.values[QUEUE] == []
@@ -110,7 +110,7 @@ def queue_env(job_review, fake_git):
     merged = []
 
     def approve(job_id, expected_candidate=None):
-        record = job_review.r.records[f"sid:jobs:{job_id}"]
+        record = job_review.r.records[f"laika:jobs:{job_id}"]
         assert expected_candidate == record["integrated_candidate_commit"]
         record["status"] = "merged"
         merged.append(job_id)
@@ -125,9 +125,9 @@ def test_ready_job_merges_through_approve_with_its_current_candidate(job_review,
     assert job_review.process_merge_queue() == [JOB]
     assert queue_env == [JOB]
     assert job_review.r.values[QUEUE] == []
-    b = job_review.r.records[f"sid:jobs:{JOB}"]
+    b = job_review.r.records[f"laika:jobs:{JOB}"]
     assert (b["merge_queue_state"], b["merged_via"]) == ("merged", "merge-queue")
-    assert job_review.r.values["sid:main-head"] == H0
+    assert job_review.r.values["laika:main-head"] == H0
 
 
 def test_at_most_one_merge_per_pass(job_review, queue_env):
@@ -139,8 +139,8 @@ def test_at_most_one_merge_per_pass(job_review, queue_env):
     assert job_review.r.values[QUEUE] == ["b"]
     # main moved: b is now stale and waits for re-integration
     assert job_review.process_merge_queue() == []
-    assert job_review.r.records["sid:jobs:b"]["merge_queue_state"] == "waiting"
-    assert "stale" in job_review.r.records["sid:jobs:b"]["merge_queue_reason"]
+    assert job_review.r.records["laika:jobs:b"]["merge_queue_state"] == "waiting"
+    assert "stale" in job_review.r.records["laika:jobs:b"]["merge_queue_reason"]
 
 
 def test_ready_job_behind_a_waiting_one_still_merges(job_review, queue_env):
@@ -197,23 +197,23 @@ def test_cli_queue_requires_full_candidate(job_review, monkeypatch):
 def orch():
     module = load_module(ROOT / "services/orchestrator/orchestrator.py")
     module.r = MemoryRedis()
-    module.r.records["sid:workers:w1"] = {"id": "w1", "job_id": ""}
+    module.r.records["laika:workers:w1"] = {"id": "w1", "job_id": ""}
     return module
 
 
 def queued_builder(orch, job_id="b1", base=H0, **fields):
-    orch.r.records[f"sid:jobs:{job_id}"] = {
+    orch.r.records[f"laika:jobs:{job_id}"] = {
         "id": job_id, "role": "builder", "status": "awaiting_review",
         "integration_status": "passed", "review_status": "complete", "review_verdict": "pass",
         "integration_base_commit": base, "integrated_candidate_commit": INTEGRATED,
         "reviewed_commit": INTEGRATED, "source_candidate_commits": SOURCES,
         "review_job_id": "rv1", **fields}
     orch.r.rpush(QUEUE, job_id)
-    return orch.r.records[f"sid:jobs:{job_id}"]
+    return orch.r.records[f"laika:jobs:{job_id}"]
 
 
 def integrate_jobs(orch):
-    return [json.loads(raw) for raw in orch.r.values.get("sid:jobs", [])]
+    return [json.loads(raw) for raw in orch.r.values.get("laika:jobs", [])]
 
 
 def test_stale_queued_approval_is_reintegrated_on_new_main(orch):
@@ -231,11 +231,11 @@ def test_stale_queued_approval_is_reintegrated_on_new_main(orch):
 
 def test_fresh_unqueued_or_busy_candidates_are_left_alone(orch):
     queued_builder(orch, "fresh", base=H1)
-    orch.r.records["sid:jobs:unqueued"] = {"id": "unqueued", "role": "builder", "status": "awaiting_review",
+    orch.r.records["laika:jobs:unqueued"] = {"id": "unqueued", "role": "builder", "status": "awaiting_review",
                                            "integration_status": "passed", "review_status": "complete",
                                            "review_verdict": "pass", "integration_base_commit": H0}
     queued_builder(orch, "busy")
-    orch.r.records["sid:workers:w1"]["job_id"] = "rv1"  # its review is running
+    orch.r.records["laika:workers:w1"]["job_id"] = "rv1"  # its review is running
     orch.refresh_queued_candidates(head=H1)
     assert integrate_jobs(orch) == []
 
@@ -244,7 +244,7 @@ def test_fresh_unqueued_or_busy_candidates_are_left_alone(orch):
 
 def test_two_queued_approvals_both_merge_across_a_main_move(job_review, queue_env, orch):
     orch.r = job_review.r  # one Redis for host authority and orchestrator
-    orch.r.records["sid:workers:w1"] = {"id": "w1", "job_id": ""}
+    orch.r.records["laika:workers:w1"] = {"id": "w1", "job_id": ""}
     ready_builder(job_review, "a")
     job_review.queue_approval("a", INTEGRATED)
     ready_builder(job_review, "b", candidate="c" * 39 + "b")
@@ -253,7 +253,7 @@ def test_two_queued_approvals_both_merge_across_a_main_move(job_review, queue_en
     assert job_review.process_merge_queue() == ["a"]          # main -> H1, b stale
     orch.refresh_queued_candidates(head=H1)                   # b re-integrated
     assert job_review.process_merge_queue() == []           # b waits for review
-    b = job_review.r.records["sid:jobs:b"]
+    b = job_review.r.records["laika:jobs:b"]
     # the worker re-integrates the same sources on H1 and a fresh review passes:
     b.update(integration_status="passed", integration_base_commit=H1,
              integrated_candidate_commit="f" * 40, reviewed_commit="f" * 40,
@@ -266,7 +266,7 @@ def test_two_queued_approvals_both_merge_across_a_main_move(job_review, queue_en
 # --- operator service and API accept the new actions -----------------------------------
 
 def test_operator_dispatches_queue_actions(job_review):
-    op = load_module(ROOT / "services/operator/sid_operator.py")
+    op = load_module(ROOT / "services/operator/laika_operator.py")
     seen = []
     job_review.queue_approval = lambda job_id, candidate: seen.append(("queue", job_id, candidate))
     job_review.dequeue_approval = lambda job_id: seen.append(("dequeue", job_id))

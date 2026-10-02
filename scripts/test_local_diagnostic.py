@@ -78,8 +78,8 @@ def test_service_check_reports_systemd_state(monkeypatch):
 
     monkeypatch.setattr(diagnostic.subprocess, "run", fake_run)
 
-    passed, detail = diagnostic.check_service("worker", "sid-worker.service")
+    passed, detail = diagnostic.check_service("worker", "laika-worker.service")
 
     assert passed is False
     assert "inactive" in detail
-    assert calls == [["systemctl", "is-active", "sid-worker.service"]]
+    assert calls == [["systemctl", "is-active", "laika-worker.service"]]

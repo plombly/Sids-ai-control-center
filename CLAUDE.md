@@ -1,24 +1,24 @@
-# CLAUDE.md — SID's AI Command Center
+# CLAUDE.md — LAIka
 
 Context for Claude Code working on this repository. Read this fully before
-changing anything. The owner is SID (the operator). Ask before anything
+changing anything. The owner is the operator (Dylan). Ask before anything
 destructive or anything that affects the running system.
 
 ## What this is
 
 A self-hosted AI software-engineering control plane on host `ai-server`:
 goals are planned into jobs, builder agents implement them in isolated Git
-worktrees, SID integrates each candidate onto the latest main in isolation,
+worktrees, LAIka integrates each candidate onto the latest main in isolation,
 an independent reviewer agent reviews that exact integrated candidate, and a
 human approves before main advances.
 
 ```
-apps/api/            FastAPI (Docker: sid-ai-api, :8000). Reads Redis, NO repo authority
-apps/web/            Dependency-free UI served by nginx (Docker: sid-ai-web, :8080, /api -> api)
-apps/tui/sid-tui.py  Terminal dashboard
+apps/api/            FastAPI (Docker: laika-api, :8000). Reads Redis, NO repo authority
+apps/web/            Dependency-free UI served by nginx (Docker: laika-web, :8080, /api -> api)
+apps/tui/laika-tui.py  Terminal dashboard
 services/orchestrator/orchestrator.py   planning, repair dispatch, dependency release, goal state
 services/worker/worker.py               builder / reviewer / repair / integrate jobs
-services/operator/sid_operator.py       executes Web operator actions via job-review.py (host, not Docker)
+services/operator/laika_operator.py       executes Web operator actions via job-review.py (host, not Docker)
 scripts/job-review.py        HOST-SIDE authority: approve / reject / extend / reintegrate / reopen
 scripts/integration-check.py deterministic gate (tests, self-tests, diagnostics)
 scripts/workflow-self-test.py, efficiency-self-test.py   fast no-network contract tests
@@ -29,54 +29,54 @@ Runtime (all live, all as root):
 
 | Thing | Where |
 | --- | --- |
-| Live checkout (main) | `/opt/sids-ai-command-center` |
-| Job worktrees | `/opt/sid-worktrees/job-<id>` and `job-<id>-integration` |
-| Job logs | `/var/log/sid-ai/jobs/<id>.jsonl`, `<id>-tests.log`; gate reports in `/var/log/sid-ai/integration/` |
-| Test Python | `/opt/sid-venv/bin/python` (via `SID_PYTHON`; `/tmp` venv is legacy — /tmp is wiped on reboot) |
-| Orchestrator unit | `sid-ai-orchestrator.service` (`sid-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
-| Worker units | `sid-ai-worker@01..06.service` (+ drop-in `sid-python.conf` setting SID_PYTHON) |
-| Operator unit | `sid-ai-operator.service`; template in `services/operator/`, installing it is SID's call |
-| Redis | Docker `sid-ai-redis`, host `127.0.0.1:6379`; inspect with `scripts/sid-redis-cli ...`. Password (once `scripts/enable-redis-password.sh` ran): `REDIS_PASSWORD` in root-only `/etc/sid-ai/redis.env`, read by `services/sid_redis.py` in every host program and by compose for redis/api; never print it |
-| Postgres | Docker `sid-ai-postgres` (only used by projects/tasks/agents API) |
+| Live checkout (main) | `/opt/laika` |
+| Job worktrees | `/var/lib/laika/worktrees/job-<id>` and `job-<id>-integration` |
+| Job logs | `/var/log/laika/jobs/<id>.jsonl`, `<id>-tests.log`; gate reports in `/var/log/laika/integration/` |
+| Test Python | `/var/lib/laika/venv/bin/python` (via `LAIKA_PYTHON`; `/tmp` venv is legacy — /tmp is wiped on reboot) |
+| Orchestrator unit | `laika-orchestrator.service` (`laika-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
+| Worker units | `laika-worker@01..06.service` (+ drop-in `laika-python.conf` setting LAIKA_PYTHON) |
+| Operator unit | `laika-operator.service`; template in `deploy/systemd/`, installing it is the operator's call |
+| Redis | Docker `laika-redis`, host `127.0.0.1:6379`; inspect with `scripts/laika-redis-cli ...`. Password (once `scripts/enable-redis-password.sh` ran): `REDIS_PASSWORD` in root-only `/etc/laika/redis.env`, read by `services/laika_redis.py` in every host program and by compose for redis/api; never print it |
+| Postgres | Docker `laika-postgres` (only used by projects/tasks/agents API) |
 | Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
 | Claude CLI | `claude` 2.1.285, claude.ai subscription login (shares plan limits with interactive sessions) |
-| Role routing | `services/agent_cli.py`: planner=claude/opus, builder=codex, reviewer=claude/sonnet, repair=claude/sonnet; `ROLE_PROVIDERS`, `CLAUDE_<ROLE>_MODEL`, `CLAUDE_<ROLE>_BUDGET_USD`. Claude limit/auth errors fall back to Codex and set `sid:provider-cooldown:claude` (30 min) |
-| Write access | `SID_OPERATOR_TOKEN` in `/etc/sid-ai/operator.env` (root 600, never print it); API (:8000) needs `X-SID-Token` on every non-GET; nginx injects it for the dashboard (:8080) only for requests from OTHER machines, so the browser needs nothing (single-operator LAN, by SID's choice), while code running on this server (project tests, agents) gets no token: the web container uses host networking and lists the server's own addresses at start (apps/web/sid-local-addrs.sh). Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
+| Role routing | `services/agent_cli.py`: planner=claude/opus, builder=codex, reviewer=claude/sonnet, repair=claude/sonnet; `ROLE_PROVIDERS`, `CLAUDE_<ROLE>_MODEL`, `CLAUDE_<ROLE>_BUDGET_USD`. Claude limit/auth errors fall back to Codex and set `laika:provider-cooldown:claude` (30 min) |
+| Write access | `LAIKA_OPERATOR_TOKEN` in `/etc/laika/operator.env` (root 600, never print it); API (:8000) needs `X-Laika-Token` on every non-GET; nginx injects it for the dashboard (:8080) only for requests from OTHER machines, so the browser needs nothing (single-operator LAN, by the operator's choice), while code running on this server (project tests, agents) gets no token: the web container uses host networking and lists the server's own addresses at start (apps/web/laika-local-addrs.sh). Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
 
-Redis keys: `sid:goals:<id>` (hash; `sid:goals:<id>:planning` is a STRING lock
-— never hash-command it), `sid:jobs:<id>` (hash), queues `sid:goals` / `sid:jobs`
-(lists), `sid:workers:<id>` (heartbeat hash, 30s TTL),
-`sid:worker-control:<id>` (`disabled` = stop claiming jobs),
-`sid:integration-lock:<id>`, `sid:approval-lock:main`,
-`sid:orchestrators:<id>` (orchestrator heartbeat), `sid:goal-requests:<request_id>`
+Redis keys: `laika:goals:<id>` (hash; `laika:goals:<id>:planning` is a STRING lock
+— never hash-command it), `laika:jobs:<id>` (hash), queues `laika:goals` / `laika:jobs`
+(lists), `laika:workers:<id>` (heartbeat hash, 30s TTL),
+`laika:worker-control:<id>` (`disabled` = stop claiming jobs),
+`laika:integration-lock:<id>`, `laika:approval-lock:main`,
+`laika:orchestrators:<id>` (orchestrator heartbeat), `laika:goal-requests:<request_id>`
 (goal submit idempotency, 24h).
-Operator actions: `sid:operator-requests` (STREAM, consumer group `sid-operator`),
-`sid:operator-results:<request_id>` (hash, kept as audit; status `pending` ->
+Operator actions: `laika:operator-requests` (STREAM, consumer group `laika-operator`),
+`laika:operator-results:<request_id>` (hash, kept as audit; status `pending` ->
 `running` -> `succeeded|refused|error|expired|interrupted`, or `queue_failed`),
-`sid:operator-service:<id>` (heartbeat hash, 30s TTL, lists `allowed_actions`).
+`laika:operator-service:<id>` (heartbeat hash, 30s TTL, lists `allowed_actions`).
 
 ## Working rules (non-negotiable)
 
-1. **Never edit `/opt/sids-ai-command-center` directly.** Work in the dev
+1. **Never edit `/opt/laika` directly.** Work in the dev
    worktree `/opt/sid-dev` on branch `dev/claude`. The live tree must stay
    clean: workers refuse to integrate when main is dirty, and the gate's
    `local-diagnostic` check fails on ANY untracked file there.
 2. **Commit before running the gate.** `local-diagnostic` also requires the
    tree it runs in to be clean, including untracked files.
 3. **Gate command** (from `/opt/sid-dev`, after committing):
-   `SID_PYTHON=/opt/sid-venv/bin/python REPO_ROOT=/opt/sid-dev python3 scripts/integration-check.py`
+   `LAIKA_PYTHON=/var/lib/laika/venv/bin/python REPO_ROOT=/opt/sid-dev python3 scripts/integration-check.py`
    Check its exit code directly. Do not pipe it into `tail`, because the pipe
    hides failure.
-4. **Deploying is SID's call.** Propose, don't do: merging to main
+4. **Deploying is the operator's call.** Propose, don't do: merging to main
    (`git merge --ff-only dev/claude` in the live tree), restarting units, or
    rebuilding containers. Before any restart, confirm no worker is busy
-   (`scripts/sid-redis-cli hget sid:workers:sid-worker-0N status`
+   (`scripts/laika-redis-cli hget laika:workers:laika-worker-0N status`
    is not `working`). Restarting a worker mid-job kills that job.
    Workers/orchestrator need a restart for `services/` changes; api/web need
    `docker compose up -d --build api web` for `apps/` changes;
    `scripts/job-review.py` takes effect immediately for the CLI, but the
    operator service loads it at start and needs a restart
-   (`sid-ai-operator.service`) for job-review or operator changes.
+   (`laika-operator.service`) for job-review or operator changes.
 5. **Do not read or print secrets**: `.env`, `/root/.codex/auth.json`,
    `/root/.claude*`, container env. Nothing here requires them.
 6. **Do not mutate Redis job/goal state by hand** except through
@@ -136,7 +136,7 @@ Other roles: reviewer (`review_complete`), repair (`repair_complete`),
 integrate (`integrate_complete` / `integration_failed`).
 
 Self-healing (orchestrator loop; approval is never automatic):
-- Workers publish the job they hold (`job_id` in `sid:workers:<id>`). A job in
+- Workers publish the job they hold (`job_id` in `laika:workers:<id>`). A job in
   an in-flight status that no live worker holds and the queue lacks, for
   `LOST_JOB_CONFIRM_SECONDS` (60), is failed "worker lost". Skipped while any
   live worker is too old to report `job_id`.
@@ -151,18 +151,18 @@ Self-healing (orchestrator loop; approval is never automatic):
 - A failed repair resets the builder worktree to the committed candidate.
 
 Projects (2026-09-30): fully separated repositories sharing only the workers.
-- Registry: Redis hash sid:projects:<id> + set sid:projects, managed by
-  scripts/sid-project.py (create --empty|--clone URL, register-existing,
+- Registry: Redis hash laika:projects:<id> + set laika:projects, managed by
+  scripts/laika-project.py (create --empty|--clone URL, register-existing,
   retry-clone, push-setup, set-importance, archive, list). Roots under
-  /opt/sid-projects/<id>/{repo,worktrees,logs}; per-project deploy key.
-  SID itself is project "sid" (its paths, gate and Redis key names never
-  come from the registry). services/sid_projects.py resolves a project;
-  an unknown project is an error, never a fallback to SID.
+  /var/lib/laika/projects/<id>/{repo,worktrees,logs}; per-project deploy key.
+  LAIka itself is project "laika" (its paths, gate and Redis key names never
+  come from the registry). services/laika_projects.py resolves a project;
+  an unknown project is an error, never a fallback to LAIka.
 - Every job carries project_id (reviews/repairs/integrations inherit it
   from their builder). Worker switches repo/worktree/log roots per job;
   job-review.py actions run inside the job's project; approval lock, merge
-  queue and main-head are per project (SID keeps sid:merge-queue etc.).
-- Non-SID gates: the project's gate_command, run with SID's venv first on
+  queue and main-head are per project (LAIka keeps laika:merge-queue etc.).
+- Non-LAIka gates: the project's gate_command, run with LAIka's venv first on
   PATH, bytecode/pytest caches off, and every untracked file the gate
   created removed afterwards (by exact path) so nothing leaks into
   candidates or makes integrated worktrees look modified.
@@ -170,64 +170,64 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   #/projects list + create, #/projects/<id> with its own prompt input,
   importance, GitHub push setup. Creation/clone/push-setup go through the
   operator service (actions create_project, project_retry_clone,
-  project_push_setup), which runs sid-project.py on the host.
+  project_push_setup), which runs laika-project.py on the host.
 - Scheduler: workers rank ready jobs by project importance (6 general
   workers: high>medium>low; workers 07-08 WORKER_CLASS=support:
   medium>low>high), then in-flight work, then least remaining effort
-  (planner sizes S/M/L = 1/3/8, sid:project-stats:<id>) minus aging, then
+  (planner sizes S/M/L = 1/3/8, laika:project-stats:<id>) minus aging, then
   age; claim by LREM. Re-ranked every pick; never preempts.
-- Sandbox (services/project_sandbox.py, bubblewrap): non-SID gates and
+- Sandbox (services/project_sandbox.py, bubblewrap): non-LAIka gates and
   Claude runs (reviewer/repair/builder/planner) see the host read-only with
-  SID's trees, /etc/sid-ai, backups, logs, /root and other projects hidden,
+  LAIka's trees, /etc/laika, backups, logs, /root and other projects hidden,
   the docker socket and the project's deploy key masked, a private /tmp,
   and only the job's worktree writable (its .git pointer and the repo's
   .git read-only). Gates also get no network unless the operator allowed
-  it (see "Internet access"; SID_SANDBOX_GATE_NETWORK=1 allows it everywhere). SID_PROJECT_SANDBOX=0 turns it off. Codex for projects runs
+  it (see "Internet access"; LAIKA_SANDBOX_GATE_NETWORK=1 allows it everywhere). LAIKA_PROJECT_SANDBOX=0 turns it off. Codex for projects runs
   inside this sandbox with its own sandbox off
   (project_sandbox.codex_command: --dangerously-bypass-approvals-and-
   sandbox): its bubblewrap cannot nest (Ubuntu's userns restriction; tested
   with extra caps too). Its commands: no caps, NoNewPrivs, network yes,
-  ~/.codex readable. SID itself keeps Codex's own sandbox. Host git
+  ~/.codex readable. LAIka itself keeps Codex's own sandbox. Host git
   refuses to run in a project worktree whose .git pointer was replaced
-  (check_worktree_pointer), so no project can plant hooks/config for SID.
+  (check_worktree_pointer), so no project can plant hooks/config for LAIka.
 - Build settings per project (web "Build & run", PATCH /api/projects/<id>):
   setup_command (dependency install, runs once per worktree WITH network in
   the sandbox, kind "setup", package cache <project>/cache; its new
   top-level files go into the repo's shared .git/info/exclude so they are
   never committed; tracked files it changes are restored), gate_command,
   run_command, run_port. Empty setup/gate = detected from the worktree
-  (sid_projects.detect_setup/detect_gate), so a project that starts empty
+  (laika_projects.detect_setup/detect_gate), so a project that starts empty
   gets tests once the builder adds package.json/pyproject. Gates put the
   worktree's node_modules/.bin and .venv/bin first on PATH.
-- Apps (services/apps/sid_apps.py, unit deploy/systemd/sid-ai-apps.service):
+- Apps (services/apps/laika_apps.py, unit deploy/systemd/laika-apps.service):
   a project with run_command runs from <project>/live (detached worktree at
-  main) as transient unit sid-app-<id> (systemd-run, Restart=always, gives
+  main) as transient unit laika-app-<id> (systemd-run, Restart=always, gives
   up after 5 quick exits), sandbox kind "app" (host network, live checkout
   and <project>/data writable), env PORT (8100-8199, assigned once) and
   HOST=0.0.0.0. Redeploys on a new main commit, changed command/port or
-  POST /api/projects/<id>/app/restart; status in sid:app-status:<id>.
+  POST /api/projects/<id>/app/restart; status in laika:app-status:<id>.
 - Files (web #/projects/<id>/files, apps/api/file_routes.py): browse and
   download "Code (main)" = the project's repo checkout (read-only mount
-  /opt/sid-projects:/projects:ro in the api container, .git hidden) and
-  "App data" = /opt/sid-project-data/<id> (rw mount; the app's DATA_DIR);
+  /var/lib/laika/projects:/projects:ro in the api container, .git hidden) and
+  "App data" = /var/lib/laika/project-data/<id> (rw mount; the app's DATA_DIR);
   upload/new folder/delete in data. Code uploads are staged in
-  /opt/sid-uploads/<request_id>/file and committed to main on the host by
-  sid-project.py commit-upload (operator action project_commit_upload,
-  holds the project's approval lock, author "SID operator", hooks off).
-  Paths are confined (no .., no .git, symlinks may not lead out); SID's own
+  /var/lib/laika/uploads/<request_id>/file and committed to main on the host by
+  laika-project.py commit-upload (operator action project_commit_upload,
+  holds the project's approval lock, author "LAIka operator", hooks off).
+  Paths are confined (no .., no .git, symlinks may not lead out); LAIka's own
   repo is not browsable. Operations (apps/api/file_ops.py, stdlib only,
   shared by API and host): mkdir, rename, move, copy, delete, zip, unzip
   (zip-slip/links/.git refused, size caps, never overwrites: "x (2)").
   Data: POST /api/projects/<id>/files/data/op runs them at once. Code: the
   same endpoint on /code queues project_commit_upload with op/path/dest and
-  the host runs sid-project.py code-change, which commits the result to
-  main (shared change_main(): lock, clean main, "SID operator", hooks off).
+  the host runs laika-project.py code-change, which commits the result to
+  main (shared change_main(): lock, clean main, "LAIka operator", hooks off).
   Batches (POST /api/projects/<id>/files/batch: copy/move/delete/zip/
   rename of up to 500 paths, within a tab or between code and data):
   name clashes return 409 {"conflicts": [...]} until answered per name or
   for all (overwrite | skip | keep = "x (2)"); uploads take on_conflict
   the same way (default ask). Batches that change code go to the host as
-  project_commit_upload op "batch" -> sid-project.py code-batch: one commit,
+  project_commit_upload op "batch" -> laika-project.py code-batch: one commit,
   all or nothing (change_main resets the checkout on any failure); data
   originals of a data->code move are deleted only after the commit.
   Web UI (lib/project-files.js + file-kinds.js + file-dialogs.js): desktop-
@@ -238,25 +238,25 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   colours. Selection changes repaint in place (paint()), never re-render:
   a re-render between the two clicks of a double-click, or a layout shift
   during dragstart, breaks dblclick/drag (both found in browser testing).
-  New deploy keys live in /etc/sid-ai/project-keys/
+  New deploy keys live in /etc/laika/project-keys/
   <id>/ (older ones stay in the project dir). Backups include every project
-  repo bundle and a tarball of /opt/sid-project-data.
-- SID's own project page ("SID · this system"): goals and importance only;
-  GitHub push setup is refused for "sid" by API, operator and CLI (it would
-  replace SID's remote/key). The watchdog publishes sid:system-info (JSON:
+  repo bundle and a tarball of /var/lib/laika/project-data.
+- LAIka's own project page ("LAIka · this system"): goals and importance only;
+  GitHub push setup is refused for "laika" by API, operator and CLI (it would
+  replace LAIka's remote/key). The watchdog publishes laika:system-info (JSON:
   remote, branch, head; https credentials stripped) for that page.
-- Secrets: apps/api/env_routes.py writes /etc/sid-ai/project-env/<id>.env
+- Secrets: apps/api/env_routes.py writes /etc/laika/project-env/<id>.env
   (root-only, mounted only into the api; systemd EnvironmentFile syntax);
   values are write-only via the API and reach only the app/preview unit
   (EnvironmentFile=). Never through Redis.
 - Live logs: apps/api/log_routes.py (GET /api/jobs/<id>/log?after=&part=
   &tests=) reads job JSONL logs (Codex --json, Claude stream-json) from
-  /job-logs (/var/log/sid-ai/jobs, ro) and /projects; lib/job-log.js.
+  /job-logs (/var/log/laika/jobs, ro) and /projects; lib/job-log.js.
 - Usage: GET /api/usage?days=&project= (apps/api/usage_routes.py), panel
   lib/usage.js.
 - Previews: POST/DELETE /api/jobs/<id>/preview (ready changes of projects
   with a run command); services/apps runs the integrated candidate from
-  <root>/previews/job-<id> as sid-preview-<id> (ports 8200-8299, empty data
+  <root>/previews/job-<id> as laika-preview-<id> (ports 8200-8299, empty data
   dir, app limits and secrets) and tears it down on approve/reject/
   re-integration, stop, or after PREVIEW_HOURS (4).
 - Dashboard home (lib/home.js): status line, goal box, Needs you (approve /
@@ -264,15 +264,15 @@ Projects (2026-09-30): fully separated repositories sharing only the workers.
   Recently finished; the old panels live under a collapsed "Details".
   Project page tabs (#/projects/<id>[/files|/history|/settings]).
 - History/undo: services/project_history.py (published by services/apps as
-  sid:history:<id> when main moves; a job's commits are one change),
+  laika:history:<id> when main moves; a job's commits are one change),
   GET /api/projects/<id>/history, POST /api/projects/<id>/undo (operator
-  action project_revert -> sid-project.py revert --job|--commit: one
-  "Undo ..." commit via change_main; refuses on conflicts; not for SID).
-- Delete: sid-project.py delete ID --confirm ID (operator action
+  action project_revert -> laika-project.py revert --job|--commit: one
+  "Undo ..." commit via change_main; refuses on conflicts; not for LAIka).
+- Delete: laika-project.py delete ID --confirm ID (operator action
   delete_project, POST /api/projects/<id>/delete, web "Delete project").
-  Refuses SID and projects with running work; removes queued work,
-  job/goal records, project keys and, only if SID created it
-  (<SID_PROJECTS_BASE>/<id>, not a symlink), the directory.
+  Refuses LAIka and projects with running work; removes queued work,
+  job/goal records, project keys and, only if LAIka created it
+  (<LAIKA_PROJECTS_BASE>/<id>, not a symlink), the directory.
 - The claude CLI self-updates (shared with interactive sessions); a missing
   or half-installed executable is a 2-minute outage with Codex fallback.
 
@@ -289,7 +289,7 @@ Parallelism (2026-09-30):
   in parallel inside one reviewer job; all must pass.
 - Best-of: from `BEST_OF_FROM_ATTEMPT` (2) a retry builds twice in parallel
   (job-<id>-alt worktree), both on Codex by default (`BEST_OF_ALT_PROVIDER`);
-  smaller passing change wins. SID's intent: Claude never builds by default.
+  smaller passing change wins. LAIka's intent: Claude never builds by default.
 - Cheap re-reviews: a passing review records the change's `git patch-id`; a
   merge-queue re-integration with the identical patch gets one Haiku
   "rebase check" instead of the full specialist review.
@@ -306,17 +306,17 @@ Project types and builds (2026-10-01):
   output; xcode/unity/unreal/tauri marked unsupported). resolve_recipe():
   project fields build_command/build_image/build_output override the stack.
 - services/project_detect.py reads main (git ls-tree + a few manifests);
-  the apps service stores the result in sid:project-type:<id> (JSON incl.
+  the apps service stores the result in laika:project-type:<id> (JSON incl.
   head), re-detects when main moves, hourly while "unknown", and when the
   key is deleted (POST /api/projects/<id>/recheck). Owner's `type` /
   `type_description` (PATCH) win over detection.
-- Builds: POST /api/projects/<id>/builds sets sid:build-request:<id>; the
-  apps service starts scripts/sid-build.py as unit sid-build-<id>-<bid>
+- Builds: POST /api/projects/<id>/builds sets laika:build-request:<id>; the
+  apps service starts scripts/laika-build.py as unit laika-build-<id>-<bid>
   (one per project, RuntimeMaxSec 45 min): detached checkout of main in
-  /opt/sid-projects/<id>/builds/work-<bid>, `docker run --rm` with only that
-  checkout + volume sid-build-cache-<id> mounted (4g/2cpu/2048 pids),
+  /var/lib/laika/projects/<id>/builds/work-<bid>, `docker run --rm` with only that
+  checkout + volume laika-build-cache-<id> mounted (4g/2cpu/2048 pids),
   output zipped (symlinks skipped) to builds/<bid>.zip + .log, status in
-  sid:build:<id>:<bid>, list sid:builds:<id>, newest 5 kept. The checkout
+  laika:build:<id>:<bid>, list laika:builds:<id>, newest 5 kept. The checkout
   is deleted as plain files (never git inside it). Deleting a project stops
   its builds and removes those keys and the cache volume.
 - Web: lib/project-kinds.js (type card + template chips on Overview, Builds
@@ -324,27 +324,27 @@ Project types and builds (2026-10-01):
 
 Goal assistant (2026-10-01): the goal boxes (home + project Overview,
 web lib/goal-assistant.js) offer "Plan it with me" and "Send as written".
-- POST /api/projects/<id>/assistant {idea} creates sid:assist:<16 hex>
+- POST /api/projects/<id>/assistant {idea} creates laika:assist:<16 hex>
   (hash, 24 h; turns/questions/brief JSON; apps/api/goal_assist.py, shared
-  with the host) and RPUSHes the id on sid:assist-queue; GET
-  /api/assistant/<sid>, POST .../reply {answers|feedback}, .../cancel,
+  with the host) and RPUSHes the id on laika:assist-queue; GET
+  /api/assistant/<laika>, POST .../reply {answers|feedback}, .../cancel,
   .../submit {goal, atomic, request_id} (an ordinary project goal; the
   session records goal_id). At most 6 sessions queued/thinking.
 - The apps service BLPOPs the queue between loops and starts
-  scripts/sid-assist.py <sid> as unit sid-assist-<sid>-<ts>: Claude
+  scripts/laika-assist.py <laika> as unit laika-assist-<laika>-<ts>: Claude
   ASSIST_MODEL (Haiku 4.5), --tools Read,Grep,Glob, its own system prompt,
   $0.30 cap, 150 s, inside the project's sandbox (kind agent, read-only),
-  own concurrency slots sid:assist-slots (ASSIST_MAX_CONCURRENT 2, not the
+  own concurrency slots laika:assist-slots (ASSIST_MAX_CONCURRENT 2, not the
   pipeline's Claude slots); honours the Claude cooldown. One round of up to
   3 questions, then a brief (title/summary/goal markdown/atomic); a reply
   that asks again is retried once with "write the brief now". It never
-  submits or changes anything; logs in /var/log/sid-ai/assist/.
+  submits or changes anything; logs in /var/log/laika/assist/.
 
 Internet access (2026-10-01):
-- Builds (scripts/sid-build.py) run on Docker network sid-build-net
-  (bridge sid-build0). ensure_build_network() creates it and the iptables
-  chains SID-BUILD-FWD (from DOCKER-USER: DNS allowed, private/LAN/VPN/
-  Docker ranges dropped) and SID-BUILD-IN (from INPUT: everything to this
+- Builds (scripts/laika-build.py) run on Docker network laika-build-net
+  (bridge laika-build0). ensure_build_network() creates it and the iptables
+  chains LAIKA-BUILD-FWD (from DOCKER-USER: DNS allowed, private/LAN/VPN/
+  Docker ranges dropped) and LAIKA-BUILD-IN (from INPUT: everything to this
   server dropped) before every build, only ever adding rules (never
   flushing); a build fails rather than run without them. Project field
   build_network "none" = --network none.
@@ -358,15 +358,15 @@ Internet access (2026-10-01):
   internet") sets network_allowed=1 (this change), project gate_network=
   always, or network_denied=1 (rebuild prompt says: work offline), then
   grants one more rebuild/repair. Allowed gates share the host network
-  (like SID_SANDBOX_GATE_NETWORK).
+  (like LAIKA_SANDBOX_GATE_NETWORK).
 
-Project groups (2026-10-01; phases 1-2 of SID's plan): a project may have
-a `parent` (registry field; one level, one parent, SID never in a group
-until SID decides how SID-as-parent works). sid_projects.inherit(): a
+Project groups (2026-10-01; phases 1-2 of LAIka's plan): a project may have
+a `parent` (registry field; one level, one parent, LAIka never in a group
+until the operator decided how LAIka-as-parent works). laika_projects.inherit(): a
 child follows the parent's importance and gate_network, and is archived
 with it (API: PATCH of those on a child = 409, item has parent/
 parent_name/children/managed). POST /api/projects/<id>/parent {parent}
-attaches/detaches (rules mirror sid_projects.check_parent). Deleting a
+attaches/detaches (rules mirror laika_projects.check_parent). Deleting a
 parent with children is refused; a restored child whose parent is gone
 loses the link. A goal on a parent: the planner sees every active member
 (group_planner_prompt) and each job names its "project"; jobs are created
@@ -378,22 +378,22 @@ Claude via --add-dir, agent_cli.EXTRA_DIRS) and a prompt note naming them.
 Web: lib/project-groups.js (Part of, Child projects, New child project via
 the wizard, Settings "Part of"/detach), children nested in project lists.
 
-SID app groundwork (2026-10-01; SID's decisions in memory "sid-app"):
-- SID may be a PARENT (never a child): its children read SID's committed
-  code as a read-only copy; SID's own copies of its children live in
-  /var/lib/sid-ai/reference (hidden from every project sandbox). When
-  "approve all of a goal" is built (Phase 3), SID's own changes must stay
+LAIka app groundwork (2026-10-01; the operator's decisions in memory "sid-app"):
+- LAIka may be a PARENT (never a child): its children read LAIka's committed
+  code as a read-only copy; LAIka's own copies of its children live in
+  /var/lib/laika/reference (hidden from every project sandbox). When
+  "approve all of a goal" is built (Phase 3), LAIka's own changes must stay
   individually approved.
 - Phones (apps/api/device_routes.py, web lib/devices.js, Settings →
-  Phones & apps): per-device keys `sidk_…`, shown once as a QR pairing code
-  {"v":1,"name","url","key"} (segno SVG), stored as SHA-256 (sid:devices:<id>,
-  sid:device-key:<sha256>). `Authorization: Bearer` keys may only make
+  Phones & apps): per-device keys `laika_…`, shown once as a QR pairing code
+  {"v":1,"name","url","key"} (segno SVG), stored as SHA-256 (laika:devices:<id>,
+  laika:device-key:<sha256>). `Authorization: Bearer` keys may only make
   DEVICE_WRITES (goals, assistant, builds, job actions limited to
   extend/reject/network_*); approvals, settings and devices stay with the
   operator token. The app talks to the API on :8000 (nginx on :8080 grants
   LAN/VPN clients the operator token). /api/app/info (api_version 1) and
   /api/app/summary (home screen in one call).
-- Toolchains: services/project_sandbox.TOOLCHAINS (SID_TOOLCHAINS, default
+- Toolchains: services/project_sandbox.TOOLCHAINS (LAIKA_TOOLCHAINS, default
   /opt/flutter, installed by scripts/install-flutter.sh with the SDK's own
   pub cache inside the SDK) get a throwaway --tmp-overlay in every sandbox
   and go on PATH for agents and gates. PUB_CACHE=<project>/cache/.pub-cache
@@ -403,51 +403,51 @@ SID app groundwork (2026-10-01; SID's decisions in memory "sid-app"):
   (setup_fingerprint), not only when its command changes.
 
 Product boundaries (v1.0, 2026-10-01; memory "v1-product-decisions"):
-the built-in project ("sid") and any project with registry field
-view_only="1" (the app, sid-app) are built from the host by the system
+the built-in project ("laika") and any project with registry field
+view_only="1" (the app, laika-app) are built from the host by the system
 builder (Claude: scripts/submit-goal.py, job-review.py), never from inside:
 apps/api/managed.py refuses every API write that targets them (goals,
 assistant, settings, files, builds, env, undo, delete, job actions,
 previews, legacy /api/goals), for the dashboard and phones alike; their
 pages are view-only (overview/activity/builds/history, notice, no
 controls) and the home page never offers their approvals or stuck jobs.
-SID_BUILTIN_PROJECT=0 (production) removes the built-in project from the
+LAIKA_BUILTIN_PROJECT=0 (production) removes the built-in project from the
 API entirely.
 
 Operations (host timers, units in deploy/systemd/):
-- `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
-  /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg
+- `laika-backup.timer` daily 03:30: scripts/laika-backup.py ->
+  /var/backups/laika/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg
   dump, config tar incl. secrets, root-only), newest 14 kept; set
   BACKUP_REMOTE for an off-host copy (none configured yet). Hand-made
-  backups in /var/backups/sid-ai are never touched (12 were lost once).
-- `sid-ai-watchdog.timer` every 2 min: scripts/sid-watchdog.py -> sid:health.
-- `sid-ai-prune.timer` weekly: scripts/prune-sid-data.py --days 30 --apply.
-- `sid-ai-notify.timer` every minute: scripts/sid-notify.py sends each new
+  backups in /var/backups/laika are never touched (12 were lost once).
+- `laika-watchdog.timer` every 2 min: scripts/laika-watchdog.py -> laika:health.
+- `laika-prune.timer` weekly: scripts/laika-prune.py --days 30 --apply.
+- `laika-notify.timer` every minute: scripts/laika-notify.py sends each new
   event once (types in apps/api/notify_core.EVENTS: approval, needs_human,
   goal_done/failed, app_problem, backup_failed, health_red) per the
   dashboard Settings page (#/settings): ping / post / off per type, quiet
   hours (urgent types still go out). Targets in root-only
-  /etc/sid-ai/notify/notify.env (DISCORD_WEBHOOK, DISCORD_MENTION, NTFY_URL,
+  /etc/laika/notify/notify.env (DISCORD_WEBHOOK, DISCORD_MENTION, NTFY_URL,
   DASHBOARD_URL; mounted rw into the api at /notify, write-only there);
-  settings in sid:notify:settings. Off / unconfigured events are still
+  settings in laika:notify:settings. Off / unconfigured events are still
   marked, so turning things on never floods. `--test` sends a test.
-- `sid-ai-digest.timer` hourly: scripts/sid-digest.py posts the weekly
+- `laika-digest.timer` hourly: scripts/laika-digest.py posts the weekly
   digest (apps/api/digest.py) once per ISO week at the settings' day/time
   (default Sun 18:00); `--print` / `--now`. Preview on the Settings page.
-- Activity: sid_projects.record_event() writes sid:events:<id> (capped 500)
-  from sid-project.py (code changes, undos, restores) and services/apps
+- Activity: laika_projects.record_event() writes laika:events:<id> (capped 500)
+  from laika-project.py (code changes, undos, restores) and services/apps
   (deploys, crashes, previews); GET /api/projects/<id>/activity merges it
   with goals and jobs (project tab "Activity").
-- `sid-ai-restore-check.timer` monthly (1st, 04:30):
+- `laika-restore-check.timer` monthly (1st, 04:30):
   scripts/backup-restore-check.py restores the newest snapshot into
   throwaway places (git clone + fsck of every bundle, temporary Redis and
   Postgres containers without published ports, archives opened) and writes
-  sid:backup:restore-check; the watchdog's restore_check turns red on a
+  laika:backup:restore-check; the watchdog's restore_check turns red on a
   failure (so notifications ping) and warns after 40 days.
-- Deploying: scripts/sid-restart.sh TARGET... (operator, orchestrator,
+- Deploying: scripts/laika-restart.sh TARGET... (operator, orchestrator,
   apps, workers, worker@NN, all) pauses each worker, waits until idle,
   restarts and verifies; use it instead of systemctl restart.
-- Deleted projects: /opt/sid-trash for 24 h (sid-project.py trash /
+- Deleted projects: /var/lib/laika/trash for 24 h (laika-project.py trash /
   restore / purge-trash; the apps service purges every 10 min).
 - Claude runs on the operator's claude.ai plan, shared with interactive
   sessions; a limit makes the pipeline fall back to Codex for 30 min.
@@ -511,7 +511,7 @@ Web v2 was supposed to be a 4-job goal (`a9bb98ee`). Only its backend job
 merged. The UI, stale-recovery, and tests jobs never ran: `a70c8fdc`,
 `1fa04294`, `4a616f01` sit in `blocked_failed_dependency`. `a70c8fdc` depends
 only on merged `358966df`, so `reopen` would accept it, but that revives the old
-plan that Plan B replaces; SID decides. The later single
+plan that Plan B replaces; the operator decides. The later single
 job `17b11696` was hand-salvaged. What exists vs missing:
 
 - Working: goal submit (normal/atomic, request_id idempotency), approval-ready
@@ -531,25 +531,25 @@ job `17b11696` was hand-salvaged. What exists vs missing:
 
 ## Plan (in order)
 
-**A. Host-side action service. IMPLEMENTED on `dev/claude`, pending SID's
+**A. Host-side action service. IMPLEMENTED on `dev/claude`, pending LAIka's
 merge + unit install (see "Web operator actions" above).** A small service
 on the host (NOT in Docker) that executes operator actions requested from the
 Web by calling the same functions as `scripts/job-review.py`. Suggested shape:
 the API writes validated requests to a Redis stream/list
-(`sid:operator-requests`) with job id, action, the exact candidate commit the
+(`laika:operator-requests`) with job id, action, the exact candidate commit the
 human saw, and a request id. The host service validates and executes each
-request, records the result (`sid:operator-results:<request_id>`), and is
+request, records the result (`laika:operator-results:<request_id>`), and is
 idempotent per request id. Approval MUST re-check everything
 `_approve_unlocked` checks and refuse if the candidate the human confirmed
 ≠ `integrated_candidate_commit`. New systemd unit (e.g.
-`sid-ai-operator.service`). Full tests for every action and every refusal
+`laika-operator.service`). Full tests for every action and every refusal
 path. Don't break the CLI.
 
 **B. Web v2 UI features.** Approval UI with exact-candidate confirmation,
 needs_human actions, drill-down views (job lineage, candidates, integration +
 review state, findings, tests, tokens, runtime), persisted dismiss/archive
 (audit-preserving), un-truncated history with paging, redaction fix. Prefer
-submitting these to SID itself as small `--atomic` goals once A is merged;
+submitting these to LAIka itself as small `--atomic` goals once A is merged;
 that exercises the pipeline. Write the goals narrowly.
 
 **C. Claude CLI provider.** Install `@anthropic-ai/claude-code` if missing.
@@ -569,7 +569,7 @@ provider). Keep the UI provider-agnostic.
 
 **Deferred by the owner until fully operational (do not do unasked):** secret
 rotation, binding :8000/:8080 to localhost, API auth. Mention it when
-relevant, but it's SID's decision.
+relevant, but it's the operator's decision.
 
 ## Style
 

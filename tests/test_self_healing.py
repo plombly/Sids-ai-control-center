@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from sid_testing import GitResult, MemoryRedis, ROOT, load_module
+from laika_testing import GitResult, MemoryRedis, ROOT, load_module
 
 T0 = 1_800_000_000.0
-QUEUE = "sid:jobs"
+QUEUE = "laika:jobs"
 
 
 @pytest.fixture
@@ -21,16 +21,16 @@ def orch():
 
 
 def put(orch, job_id, **fields):
-    orch.r.records[f"sid:jobs:{job_id}"] = {"id": job_id, **fields}
-    return orch.r.records[f"sid:jobs:{job_id}"]
+    orch.r.records[f"laika:jobs:{job_id}"] = {"id": job_id, **fields}
+    return orch.r.records[f"laika:jobs:{job_id}"]
 
 
 def job(orch, job_id):
-    return orch.r.records[f"sid:jobs:{job_id}"]
+    return orch.r.records[f"laika:jobs:{job_id}"]
 
 
 def worker(orch, name, holds=""):
-    orch.r.records[f"sid:workers:{name}"] = {"id": name, "status": "idle", "job_id": holds}
+    orch.r.records[f"laika:workers:{name}"] = {"id": name, "status": "idle", "job_id": holds}
 
 
 def queued_ids(orch):
@@ -91,7 +91,7 @@ def test_test_failure_reason_includes_gate_output(orch, tmp_path):
     failed_builder(orch, "test_failed", test_log=str(log))
     orch.retry_failed_builds()
     assert "FAILED test_thing" in job(orch, "b1")["prompt"]
-    assert "SID test gate failed" in job(orch, "b1")["retry_reason"]
+    assert "LAIka test gate failed" in job(orch, "b1")["retry_reason"]
 
 
 def test_integration_conflict_is_rebuilt_on_current_main(orch):
@@ -136,7 +136,7 @@ def test_only_builders_are_rebuilt(orch, role):
 
 def test_new_builders_are_retry_eligible(orch):
     orch.create_job("g1", {"title": "t", "task": "do it"}, {})
-    [record] = [v for k, v in orch.r.records.items() if k.startswith("sid:jobs:")]
+    [record] = [v for k, v in orch.r.records.items() if k.startswith("laika:jobs:")]
     assert record["build_attempt"] == "1"
 
 
@@ -166,12 +166,12 @@ def test_terminal_failure_still_cascades(orch):
 
 def test_goal_stays_open_while_retry_is_pending(orch):
     failed_builder(orch)
-    orch.r.records["sid:goals:g1"] = {"id": "g1", "status": "running", "jobs": '["b1"]'}
+    orch.r.records["laika:goals:g1"] = {"id": "g1", "status": "running", "jobs": '["b1"]'}
     orch.update_goals()
-    assert orch.r.records["sid:goals:g1"]["status"] == "running"
+    assert orch.r.records["laika:goals:g1"]["status"] == "running"
     job(orch, "b1").pop("build_attempt")  # legacy: terminal
     orch.update_goals()
-    assert orch.r.records["sid:goals:g1"]["status"] == "failed"
+    assert orch.r.records["laika:goals:g1"]["status"] == "failed"
 
 
 # --- jobs whose worker died are declared lost ---------------------------------------
@@ -213,7 +213,7 @@ def test_suspicion_resets_when_job_is_seen_alive(orch):
 
 
 def test_no_recovery_while_an_old_worker_cannot_report_its_job(orch):
-    orch.r.records["sid:workers:w1"] = {"id": "w1", "status": "working"}  # no job_id field
+    orch.r.records["laika:workers:w1"] = {"id": "w1", "status": "working"}  # no job_id field
     put(orch, "j1", status="running", worker_id="w1")
     put(orch, "b1", role="builder", status="awaiting_review", review_status="failed")
     for t in (T0, T0 + 1000):
@@ -253,7 +253,7 @@ def run_stall_recovery(orch):
 def test_failed_review_is_reintegrated_and_rereviewed(orch):
     worker(orch, "w1")
     stalled_builder(orch)
-    orch.r.values["sid:integration-lock:b1"] = "w1:dead"
+    orch.r.values["laika:integration-lock:b1"] = "w1:dead"
     run_stall_recovery(orch)
     b = job(orch, "b1")
     integrate_id = b["last_integrate_job_id"]
@@ -265,7 +265,7 @@ def test_failed_review_is_reintegrated_and_rereviewed(orch):
     assert b["source_candidate_commits"] == '["s1"]'
     assert b["review_recoveries"] == "1"
     assert "exited with status 1" in b["review_recovery_reason"]
-    assert "sid:integration-lock:b1" not in orch.r.values, "stale lock released"
+    assert "laika:integration-lock:b1" not in orch.r.values, "stale lock released"
 
 
 def test_review_recovery_waits_for_confirmation(orch):
@@ -379,7 +379,7 @@ def test_heartbeat_names_the_held_job_and_clears_it(worker_module):
 def test_create_worktree_replaces_its_own_stale_worktree(worker_module, tmp_path):
     stale = tmp_path / "job-b1"
     stale.mkdir()
-    worker_module.git_fake.branches.add("sid/job-b1")
+    worker_module.git_fake.branches.add("laika/job-b1")
     original = worker_module.git_fake.__call__
 
     def git(*args, cwd=None, check=True):
@@ -391,8 +391,8 @@ def test_create_worktree_replaces_its_own_stale_worktree(worker_module, tmp_path
     worker_module.create_worktree("b1")
     calls = worker_module.git_fake.calls
     assert ("worktree", "remove", "--force", str(stale)) in calls
-    assert ("branch", "-D", "sid/job-b1") in calls
-    assert calls[-1] == ("worktree", "add", "-b", "sid/job-b1", str(stale), "main")
+    assert ("branch", "-D", "laika/job-b1") in calls
+    assert calls[-1] == ("worktree", "add", "-b", "laika/job-b1", str(stale), "main")
 
 
 def test_create_worktree_refuses_if_stale_worktree_cannot_be_removed(worker_module, tmp_path):
@@ -430,12 +430,12 @@ def test_restore_refuses_unrelated_history(worker_module, tmp_path):
 
 def repair_setup(worker_module, tmp_path):
     (tmp_path / "job-b1").mkdir()
-    worker_module.redis.records["sid:jobs:b1"] = {
+    worker_module.redis.records["laika:jobs:b1"] = {
         "id": "b1", "status": "awaiting_review", "review_verdict": "changes_required",
         "worktree": str(tmp_path / "job-b1"), "candidate_commit": CANDIDATE,
     }
     job = {"id": "rp1", "target_builder_id": "b1", "prompt": "fix"}
-    return job, "sid:jobs:rp1", tmp_path / "rp1.jsonl", tmp_path / "rp1-tests.log"
+    return job, "laika:jobs:rp1", tmp_path / "rp1.jsonl", tmp_path / "rp1-tests.log"
 
 
 def test_repair_starts_from_clean_candidate_after_an_earlier_failure(worker_module, tmp_path):
@@ -476,7 +476,7 @@ def test_repair_gate_failure_restores_candidate(worker_module, tmp_path):
     worker_module.run_tests = lambda worktree, network=False: (False, "FAILED")
     worker_module.process_repair_job(job, key, log, test_log)
     assert worker_module.redis.records[key]["status"] == "test_failed"
-    assert worker_module.redis.records["sid:jobs:b1"]["repair_status"] == "test_failed"
+    assert worker_module.redis.records["laika:jobs:b1"]["repair_status"] == "test_failed"
     assert worker_module.git_fake.dirty is False
 
 
@@ -491,8 +491,8 @@ PYTEST_OUTPUT = """$ python -m pytest apps/api/tests -q
 ..F.
 =================================== FAILURES ===================================
 _____________________________ test_thing _____________________________
->       fake.hashes["sid:jobs:review-1"].update({})
-E       KeyError: 'sid:jobs:review-1'
+>       fake.hashes["laika:jobs:review-1"].update({})
+E       KeyError: 'laika:jobs:review-1'
 =============================== warnings summary ===============================
 """ + "DeprecationWarning: on_event is deprecated\n" * 200 + """
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
@@ -504,7 +504,7 @@ FAILED apps/api/tests/test_dashboard_api.py::test_thing
 
 def test_retry_reason_shows_the_failure_not_the_warnings(orch):
     excerpt = orch.test_output_excerpt(PYTEST_OUTPUT)
-    assert "KeyError: 'sid:jobs:review-1'" in excerpt
+    assert "KeyError: 'laika:jobs:review-1'" in excerpt
     assert "FAILED apps/api/tests/test_dashboard_api.py::test_thing" in excerpt
     assert "DeprecationWarning" not in excerpt
     assert len(excerpt) <= 3000
@@ -529,11 +529,11 @@ def test_integration_gate_failure_names_the_failing_check(orch):
 
 def test_next_repair_learns_why_the_last_one_was_discarded(orch, tmp_path):
     log = tmp_path / "r1-tests.log"
-    log.write_text("FAILED test/settings_screen_test.dart: expected 'SID Home'\n")
+    log.write_text("FAILED test/settings_screen_test.dart: expected 'LAIka Home'\n")
     put(orch, "r1", role="repair", status="test_failed", test_log=str(log))
     put(orch, "b1", role="builder", last_repair_job_id="r1")
     note = orch.previous_repair_note(job(orch, "b1"))
-    assert "previous repair attempt was discarded" in note and "expected 'SID Home'" in note
+    assert "previous repair attempt was discarded" in note and "expected 'LAIka Home'" in note
     job(orch, "r1")["status"] = "repair_complete"
     assert orch.previous_repair_note(job(orch, "b1")) == ""
     assert orch.previous_repair_note({"id": "b2"}) == ""

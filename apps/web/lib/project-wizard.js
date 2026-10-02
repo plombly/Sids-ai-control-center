@@ -84,7 +84,7 @@ export function stepMarkup(step, state = {}) {
   if (step === 3)
     return `${state.parent ? `<p class="subtle">This project will be a child of ${esc(state.parentName || state.parent)}; once it joins, it follows that project's importance.</p>` : ''}<div class="choice-grid">${choice('importance', 'high', 'High', 'Gets workers first', state.importance === 'high')}${choice('importance', 'medium', 'Medium', 'Normal priority', state.importance === 'medium')}${choice('importance', 'low', 'Low', 'Runs when there is spare capacity', state.importance === 'low')}</div>`;
   if (step === 4)
-    return `${field('Push merged work to GitHub', 'push_remote', state.push_remote || '')}<span class="field-hint">Leave blank to keep the project local only</span>${field('Test command', 'gate', state.gate || '')}<span class="field-hint">Leave blank and SID will detect it (npm test, pytest, cargo test, go test, make test)</span>`;
+    return `${field('Push merged work to GitHub', 'push_remote', state.push_remote || '')}<span class="field-hint">Leave blank to keep the project local only</span>${field('Test command', 'gate', state.gate || '')}<span class="field-hint">Leave blank and LAIka will detect it (npm test, pytest, cargo test, go test, make test)</span>`;
   const starting = state.source === 'clone' ? `Import from GitHub (${text(state.url)})` : 'Start empty';
   return `<div class="field">${esc(state.name)}<span class="field-hint">Project ID: ${esc(state.id)}</span><span>${esc(starting)}</span><span>${pill(state.importance)}</span><span>Push remote: ${esc(state.push_remote || 'local only')}</span><span>Test command: ${esc(state.gate || 'detect automatically')}</span>${state.parent ? `<span>Part of: ${esc(state.parentName || state.parent)}</span>` : ''}</div>`;
 }

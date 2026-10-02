@@ -1,12 +1,12 @@
-"""Notifications shared by the host notifier (scripts/sid-notify.py,
-scripts/sid-digest.py) and the API (settings page, "Send test"). Standard
+"""Notifications shared by the host notifier (scripts/laika-notify.py,
+scripts/laika-digest.py) and the API (settings page, "Send test"). Standard
 library only.
 
 Targets (secrets) live in a root-only env file, NOTIFY_DIR/notify.env:
 DISCORD_WEBHOOK, DISCORD_MENTION (user id to ping), NTFY_URL, DASHBOARD_URL.
 The API sees that directory mounted at /notify; values are write-only there.
 Everything else (what each event does, quiet hours, digest schedule) is
-plain settings in Redis sid:notify:settings.
+plain settings in Redis laika:notify:settings.
 """
 
 import datetime
@@ -16,9 +16,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-NOTIFY_DIR = Path(os.environ.get("SID_NOTIFY_DIR", "/etc/sid-ai/notify"))
-LEGACY_FILE = Path("/etc/sid-ai/notify.env")
-SETTINGS_KEY = "sid:notify:settings"
+NOTIFY_DIR = Path(os.environ.get("LAIKA_NOTIFY_DIR", "/etc/laika/notify"))
+LEGACY_FILE = Path("/etc/laika/notify.env")
+SETTINGS_KEY = "laika:notify:settings"
 TARGET_KEYS = ("DISCORD_WEBHOOK", "DISCORD_MENTION", "NTFY_URL", "DASHBOARD_URL")
 MODES = ("ping", "post", "off")
 
@@ -78,7 +78,7 @@ def save_targets(changes, base=None):
             current[key] = value
         else:
             current.pop(key, None)
-    body = "# SID notifications. Root-only; edited from the dashboard Settings page.\n"
+    body = "# LAIka notifications. Root-only; edited from the dashboard Settings page.\n"
     body += "".join(f"{key}={current[key]}\n" for key in TARGET_KEYS if key in current)
     handle = tempfile.NamedTemporaryFile("w", dir=folder, prefix=".notify-", delete=False)
     try:
@@ -186,7 +186,7 @@ def send(targets, title, message, link, mode="post", opener=urllib.request.urlop
         body = json.dumps({"content": content[:1990],
                            "allowed_mentions": {"parse": [], "users": [mention] if ping else []}}).encode()
         request = urllib.request.Request(targets["DISCORD_WEBHOOK"], data=body, method="POST",
-                                         headers={"Content-Type": "application/json", "User-Agent": "sid-notify"})
+                                         headers={"Content-Type": "application/json", "User-Agent": "laika-notify"})
         try:
             with opener(request, timeout=10):
                 delivered += 1

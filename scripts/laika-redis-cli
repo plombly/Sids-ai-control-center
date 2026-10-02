@@ -1,0 +1,7 @@
+#!/bin/sh
+# redis-cli against LAIka's Redis, authenticated with the container's own
+# REDIS_PASSWORD (so the password never appears on a command line).
+# Usage: scripts/laika-redis-cli hget laika:jobs:<id> status
+exec docker exec -i "${REDIS_CONTAINER:-laika-redis}" sh -c \
+  'if [ -n "$REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$REDIS_PASSWORD"; fi; exec redis-cli "$@"' \
+  redis-cli "$@"

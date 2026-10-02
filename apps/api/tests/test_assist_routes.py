@@ -18,11 +18,11 @@ class AssistRedis(FakeRedis):
 
 @pytest.fixture
 def api(monkeypatch):
-    fake = AssistRedis({"sid:projects:game": {"id": "game", "name": "Game", "status": "active"},
-                        "sid:projects:old": {"id": "old", "status": "archived"}}, members=["game", "old"])
+    fake = AssistRedis({"laika:projects:game": {"id": "game", "name": "Game", "status": "active"},
+                        "laika:projects:old": {"id": "old", "status": "archived"}}, members=["game", "old"])
     monkeypatch.setattr(main, "redis", fake)
     submitted = []
-    monkeypatch.setattr(main, "_submit_goal", lambda payload, project_id="sid": submitted.append((payload, project_id)) or {"id": "g1", "status": "accepted"})
+    monkeypatch.setattr(main, "_submit_goal", lambda payload, project_id="laika": submitted.append((payload, project_id)) or {"id": "g1", "status": "accepted"})
     return TestClient(main.app), fake, submitted
 
 
@@ -31,34 +31,34 @@ def test_a_session_runs_from_idea_to_submitted_goal(api):
     started = client.post("/api/projects/game/assistant", json={"idea": "  add a pause menu "})
     assert started.status_code == 202
     session = started.json()
-    sid = session["id"]
+    laika = session["id"]
     assert session["status"] == "queued" and session["turns"] == [{"from": "you", "idea": "add a pause menu"}]
-    assert fake.lrange(goal_assist.QUEUE_KEY, 0, -1) == [sid]
+    assert fake.lrange(goal_assist.QUEUE_KEY, 0, -1) == [laika]
     # Nothing to answer or revise yet.
-    assert client.post(f"/api/assistant/{sid}/reply", json={"answers": ["x"]}).status_code == 409
+    assert client.post(f"/api/assistant/{laika}/reply", json={"answers": ["x"]}).status_code == 409
     # The host turn asks a question.
-    goal_assist.save(fake, sid, status="questions", questions=[{"question": "Key?", "options": ["Esc"]}, {"question": "Sound?"}])
-    answered = client.post(f"/api/assistant/{sid}/reply", json={"answers": ["Esc"]}).json()
+    goal_assist.save(fake, laika, status="questions", questions=[{"question": "Key?", "options": ["Esc"]}, {"question": "Sound?"}])
+    answered = client.post(f"/api/assistant/{laika}/reply", json={"answers": ["Esc"]}).json()
     assert answered["status"] == "queued" and answered["questions"] == []
     assert answered["turns"][-1] == {"from": "you", "answers": [{"question": "Key?", "answer": "Esc"}, {"question": "Sound?", "answer": ""}]}
     # The host turn writes a brief; the operator asks for a change, then submits an edited version.
     brief = {"title": "Pause", "summary": "s", "goal": "Add a pause menu.", "atomic": True}
-    goal_assist.save(fake, sid, status="brief", brief=brief)
-    assert client.get(f"/api/assistant/{sid}").json()["brief"] == brief
-    assert client.post(f"/api/assistant/{sid}/reply", json={"feedback": "  "}).status_code == 422
-    assert client.post(f"/api/assistant/{sid}/reply", json={"feedback": "also P"}).json()["status"] == "queued"
-    assert client.post(f"/api/assistant/{sid}/submit", json={"goal": "x", "request_id": "req-12345678"}).status_code == 409
-    goal_assist.save(fake, sid, status="brief")
-    done = client.post(f"/api/assistant/{sid}/submit", json={"goal": "Add a pause menu (P too).", "atomic": True, "request_id": "req-12345678"})
+    goal_assist.save(fake, laika, status="brief", brief=brief)
+    assert client.get(f"/api/assistant/{laika}").json()["brief"] == brief
+    assert client.post(f"/api/assistant/{laika}/reply", json={"feedback": "  "}).status_code == 422
+    assert client.post(f"/api/assistant/{laika}/reply", json={"feedback": "also P"}).json()["status"] == "queued"
+    assert client.post(f"/api/assistant/{laika}/submit", json={"goal": "x", "request_id": "req-12345678"}).status_code == 409
+    goal_assist.save(fake, laika, status="brief")
+    done = client.post(f"/api/assistant/{laika}/submit", json={"goal": "Add a pause menu (P too).", "atomic": True, "request_id": "req-12345678"})
     assert done.status_code == 202 and done.json()["id"] == "g1"
     payload, project = submitted[0]
     assert project == "game" and payload.goal == "Add a pause menu (P too)." and payload.atomic
-    state = client.get(f"/api/assistant/{sid}").json()
+    state = client.get(f"/api/assistant/{laika}").json()
     assert (state["status"], state["goal_id"]) == ("submitted", "g1")
     # Submitting twice does not submit twice; cancelling a submitted session changes nothing.
-    client.post(f"/api/assistant/{sid}/submit", json={"goal": "y", "request_id": "req-87654321"})
+    client.post(f"/api/assistant/{laika}/submit", json={"goal": "y", "request_id": "req-87654321"})
     assert len(submitted) == 1
-    assert client.post(f"/api/assistant/{sid}/cancel").json()["status"] == "submitted"
+    assert client.post(f"/api/assistant/{laika}/cancel").json()["status"] == "submitted"
 
 
 def test_validation_and_limits(api):
@@ -72,5 +72,5 @@ def test_validation_and_limits(api):
     for _ in range(6):
         assert client.post("/api/projects/game/assistant", json={"idea": "x"}).status_code == 202
     assert client.post("/api/projects/game/assistant", json={"idea": "x"}).status_code == 429
-    sid = client.post("/api/projects/sid/assistant", json={"idea": "x"})
-    assert sid.status_code == 403  # the built-in project is view-only
+    laika = client.post("/api/projects/laika/assistant", json={"idea": "x"})
+    assert laika.status_code == 403  # the built-in project is view-only

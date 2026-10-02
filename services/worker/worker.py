@@ -17,15 +17,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import project_reference  # noqa: E402  (services/project_reference.py)
-import sid_projects  # noqa: E402  (services/sid_projects.py)
+import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
-QUEUE_NAME = os.environ.get("WORKER_QUEUE", "sid:jobs")
-REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/opt/sids-ai-command-center"))
-WORKTREE_ROOT = Path(os.environ.get("WORKTREE_ROOT", "/opt/sid-worktrees"))
-LOG_ROOT = Path(os.environ.get("LOG_ROOT", "/var/log/sid-ai/jobs"))
+QUEUE_NAME = os.environ.get("WORKER_QUEUE", "laika:jobs")
+REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/opt/laika"))
+WORKTREE_ROOT = Path(os.environ.get("WORKTREE_ROOT", "/var/lib/laika/worktrees"))
+LOG_ROOT = Path(os.environ.get("LOG_ROOT", "/var/log/laika/jobs"))
 
 WORKER_ID = os.environ.get("WORKER_ID", f"{socket.gethostname()}-{os.getpid()}")
 WORKER_ROLE = os.environ.get("WORKER_ROLE", "builder")
@@ -44,22 +44,22 @@ REVIEW_PRIOR_CHARS = int(os.environ.get("REVIEW_PRIOR_CHARS", "4000"))
 FINDINGS_CHARS = 6000
 
 
-def resolve_sid_python():
-    """Python used for SID test gates.
+def resolve_laika_python():
+    """Python used for LAIka test gates.
 
-    /tmp is cleared on reboot, so the durable default is /opt/sid-venv.
+    /tmp is cleared on reboot, so the durable default is /var/lib/laika/venv.
     The legacy /tmp location is only used when nothing else is configured.
     """
-    configured = os.environ.get("SID_PYTHON")
+    configured = os.environ.get("LAIKA_PYTHON")
     if configured:
         return configured
-    durable = Path("/opt/sid-venv/bin/python")
+    durable = Path("/var/lib/laika/venv/bin/python")
     if durable.exists():
         return str(durable)
-    return "/tmp/sid-agent-venv/bin/python"
+    return "/tmp/laika-agent-venv/bin/python"
 
 
-SID_PYTHON = resolve_sid_python()
+LAIKA_PYTHON = resolve_laika_python()
 
 
 def role_limit(role, kind, defaults):
@@ -68,18 +68,18 @@ def role_limit(role, kind, defaults):
 
 
 def efficiency_prefix(role):
-    return f"""SID execution contract ({role}):
+    return f"""LAIka execution contract ({role}):
 - Work narrowly on the requested task. Do not inventory or read the whole repository.
 - Start with git status/diff and targeted rg/sed reads of likely files only.
 - Expand scope only when a concrete dependency requires it.
-- Do not run broad test suites; SID runs deterministic gates after builders/repairs.
-- For focused Python tests, use {SID_PYTHON} -m pytest; do not probe python/pytest executables.
+- Do not run broad test suites; LAIka runs deterministic gates after builders/repairs.
+- For focused Python tests, use {LAIKA_PYTHON} -m pytest; do not probe python/pytest executables.
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
-{network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_sid else ""}{GROUP_NOTE}
+{network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_builtin else ""}{GROUP_NOTE}
 """
 
-redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
+redis = Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
 
 # The job this process is working on, published in every heartbeat. The
 # orchestrator treats work as in flight only while a live worker holds it
@@ -94,13 +94,13 @@ CURRENT_AGENT = {}
 
 
 def worker_key():
-    return f"sid:workers:{WORKER_ID}"
+    return f"laika:workers:{WORKER_ID}"
 
 
 def control_key(worker_id=None):
     # Operator control lives outside the heartbeat hash so that heartbeats
     # can never overwrite a stop request.
-    return f"sid:worker-control:{worker_id or WORKER_ID}"
+    return f"laika:worker-control:{worker_id or WORKER_ID}"
 
 
 def worker_disabled():
@@ -146,7 +146,7 @@ def keep_alive(status="working"):
             except Exception as exc:
                 print(f"[{WORKER_ID}] heartbeat warning: {exc}", flush=True)
 
-    thread = threading.Thread(target=beat, name="sid-heartbeat", daemon=True)
+    thread = threading.Thread(target=beat, name="laika-heartbeat", daemon=True)
     thread.start()
     try:
         yield
@@ -157,8 +157,8 @@ def keep_alive(status="working"):
 
 def check_worktree_pointer(cwd):
     """Refuse to run host git inside a project worktree whose .git pointer is
-    not the one git created (sid_projects.verify_worktree_pointer)."""
-    if PROJECT is None or PROJECT.is_sid or cwd is None:
+    not the one git created (laika_projects.verify_worktree_pointer)."""
+    if PROJECT is None or PROJECT.is_builtin or cwd is None:
         return
     root = Path(WORKTREE_ROOT).resolve()
     path = Path(cwd).resolve()
@@ -167,11 +167,11 @@ def check_worktree_pointer(cwd):
     top = root / path.relative_to(root).parts[0]
     if not os.path.lexists(top / ".git") and not top.exists():
         return
-    sid_projects.verify_worktree_pointer(top, REPO_ROOT)
+    laika_projects.verify_worktree_pointer(top, REPO_ROOT)
 
 
 def agent_sandbox(worktree):
-    """argv wrapper that runs an agent CLI in the project sandbox (SID: none)."""
+    """argv wrapper that runs an agent CLI in the project sandbox (LAIka: none)."""
     return lambda argv: project_sandbox.command(argv, PROJECT, worktree, kind="agent")
 
 
@@ -205,8 +205,8 @@ def prepare_group_context():
     if PROJECT is None:
         return
     try:
-        head = sid_projects.load(redis, PROJECT.parent) if PROJECT.parent else PROJECT
-        members = sid_projects.group(redis, head)
+        head = laika_projects.load(redis, PROJECT.parent) if PROJECT.parent else PROJECT
+        members = laika_projects.group(redis, head)
         if len(members) < 2:
             return
         copies = project_reference.prepare(PROJECT, members)
@@ -218,13 +218,13 @@ def prepare_group_context():
 
 
 def use_project(project):
-    """Point every path at this project (None: back to SID's defaults)."""
+    """Point every path at this project (None: back to LAIka's defaults)."""
     global PROJECT, REPO_ROOT, WORKTREE_ROOT, LOG_ROOT, GROUP_NOTE
     PROJECT = project
     GROUP_NOTE = ""
     agent_cli.EXTRA_DIRS = []
     if project is None:
-        defaults = sid_projects.sid_defaults()
+        defaults = laika_projects.builtin_defaults()
         REPO_ROOT, WORKTREE_ROOT, LOG_ROOT = (
             Path(defaults["repo"]), Path(defaults["worktrees"]), Path(defaults["logs"]))
     else:
@@ -233,10 +233,10 @@ def use_project(project):
 
 def gate_env(worktree=None):
     """Environment for project gates: the worktree's own .venv and
-    node_modules/.bin (from the setup step) first, then SID's venv, so
+    node_modules/.bin (from the setup step) first, then LAIka's venv, so
     'python3 -m pytest' finds test tooling; system tools still resolve."""
     env = os.environ.copy()
-    venv_bin = str(Path(SID_PYTHON).parent)
+    venv_bin = str(Path(LAIKA_PYTHON).parent)
     paths = [venv_bin, *project_sandbox.toolchain_paths()]
     if worktree is not None:
         for local in (Path(worktree) / "node_modules/.bin", Path(worktree) / ".venv/bin"):
@@ -255,8 +255,8 @@ def untracked_files(worktree):
     return {path for path in out.split("\0") if path}
 
 
-SETUP_MARKER = "sid-setup-done"
-SETUP_EXCLUDE_HEADER = "# sid: dependency files from each project's setup step (never committed)"
+SETUP_MARKER = "laika-setup-done"
+SETUP_EXCLUDE_HEADER = "# laika: dependency files from each project's setup step (never committed)"
 
 
 def _exclude_pattern(name):
@@ -281,14 +281,14 @@ def setup_fingerprint(worktree, command):
         if path.is_file() and not path.is_symlink():
             digest.update(name.encode() + b"\0" + path.read_bytes())
     return digest.hexdigest()
-STANDARD_EXCLUDE_HEADER = "# sid: caches and installed dependencies (never committed)"
+STANDARD_EXCLUDE_HEADER = "# laika: caches and installed dependencies (never committed)"
 
 
 def ensure_standard_excludes(worktree):
     """Keep caches and installed dependencies out of every commit of a
     project, whoever creates them (the builder now has network and may run
     npm install / pytest itself): the repository's shared info/exclude,
-    which only SID writes (sandboxes see .git read-only)."""
+    which only LAIka writes (sandboxes see .git read-only)."""
     common = run_git("rev-parse", "--git-common-dir", cwd=worktree).stdout.strip()
     exclude = (Path(worktree) / common).resolve() / "info" / "exclude"
     exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -303,7 +303,7 @@ def ensure_standard_excludes(worktree):
 def ignore_setup_output(worktree, created):
     """Keep what setup installed (node_modules, .venv, lock files it wrote)
     out of every commit: its top-level names go into the repository's shared
-    info/exclude, which only SID writes (sandboxes see .git read-only)."""
+    info/exclude, which only LAIka writes (sandboxes see .git read-only)."""
     names = sorted({path.split("/", 1)[0] for path in created if path and path.split("/", 1)[0] not in (".git", "")})
     if not names:
         return
@@ -321,7 +321,7 @@ def ignore_setup_output(worktree, created):
 def project_setup(worktree, timeout=900):
     """(ok, output). Installs a project's dependencies in a worktree once,
     with network, inside the project sandbox. Tests stay offline."""
-    command = (PROJECT.setup_command or sid_projects.detect_setup(worktree)) if PROJECT else ""
+    command = (PROJECT.setup_command or laika_projects.detect_setup(worktree)) if PROJECT else ""
     if not command:
         return True, ""
     gitdir = Path(run_git("rev-parse", "--absolute-git-dir", cwd=worktree).stdout.strip())
@@ -353,10 +353,10 @@ def project_setup(worktree, timeout=900):
 def gate_network(builder_id):
     """Tests of this builder's change may use the internet (the operator
     allowed it for the change or the project; services/network_access.py)."""
-    if PROJECT is None or PROJECT.is_sid or not builder_id:
+    if PROJECT is None or PROJECT.is_builtin or not builder_id:
         return False
-    return network_access.allowed(sid_projects.effective_fields(redis, PROJECT.id),
-                                  redis.hgetall(f"sid:jobs:{builder_id}"))
+    return network_access.allowed(laika_projects.effective_fields(redis, PROJECT.id),
+                                  redis.hgetall(f"laika:jobs:{builder_id}"))
 
 
 def agent_final_text(log_path):
@@ -373,23 +373,23 @@ def note_network_need(builder_id, gate_output, step, agent_text=""):
     """After failed tests: record an internet-access request on the builder
     when the failure points at the network (the orchestrator then asks the
     operator instead of retrying)."""
-    if PROJECT is None or PROJECT.is_sid or not builder_id:
+    if PROJECT is None or PROJECT.is_builtin or not builder_id:
         return
-    key = f"sid:jobs:{builder_id}"
+    key = f"laika:jobs:{builder_id}"
     fields = network_access.request(redis.hgetall(key), gate_output, step, agent_text,
-                                    sid_projects.effective_fields(redis, PROJECT.id))
+                                    laika_projects.effective_fields(redis, PROJECT.id))
     if fields:
         redis.hset(key, mapping={**fields, "network_request_at": str(time.time())})
 
 
 def project_gate(worktree, timeout=900, network=False):
-    """(ok, output) of a non-SID project's own gate command, run in worktree.
+    """(ok, output) of a non-LAIka project's own gate command, run in worktree.
     An empty gate command is detected from the worktree (detect_gate).
     network=True: the operator allowed internet access for these tests."""
     setup_ok, setup_output = project_setup(worktree)
     if not setup_ok:
         return False, setup_output + "\ndependency setup failed; tests were not run\n"
-    command = (PROJECT.gate_command or sid_projects.detect_gate(worktree)) if PROJECT else ""
+    command = (PROJECT.gate_command or laika_projects.detect_gate(worktree)) if PROJECT else ""
     if not command:
         return True, setup_output + f"no gate command configured or detected for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
     # A gate must leave the worktree as it found it: files it creates (caches,
@@ -417,9 +417,9 @@ def integration_worktree(job_id):
 
 
 def cleanup_integration(job_id, data=None):
-    data = data or redis.hgetall(f"sid:jobs:{job_id}")
+    data = data or redis.hgetall(f"laika:jobs:{job_id}")
     path = integration_worktree(job_id)
-    branch = f"sid/integration-{job_id}"
+    branch = f"laika/integration-{job_id}"
     recorded_value = data.get("integration_worktree", "")
     recorded = Path(recorded_value).resolve() if recorded_value else None
     if recorded is not None and recorded != path:
@@ -433,8 +433,8 @@ def cleanup_integration(job_id, data=None):
 
 def prepare_integration(job_id):
     """Integrate source candidates without touching main, then run the gate."""
-    key = f"sid:jobs:{job_id}"
-    lock_key = f"sid:integration-lock:{job_id}"
+    key = f"laika:jobs:{job_id}"
+    lock_key = f"laika:integration-lock:{job_id}"
     lock_owner = f"{WORKER_ID}:{uuid.uuid4().hex}"
     lock_ttl = max(MAX_RUNTIME + 300, 7200)
 
@@ -485,7 +485,7 @@ def _prepare_integration_locked(job_id, key):
             raise RuntimeError("missing ordered source candidate commits")
 
         path = integration_worktree(job_id)
-        branch = f"sid/integration-{job_id}"
+        branch = f"laika/integration-{job_id}"
         WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
         run_git("worktree", "add", "-b", branch, str(path), base)
         redis.hset(key, mapping={
@@ -503,7 +503,7 @@ def _prepare_integration_locked(job_id, key):
                 run_git("cherry-pick", "--abort", cwd=path, check=False)
                 raise RuntimeError(f"cannot apply source candidate {source}: {result.stderr.strip()}")
 
-        if PROJECT is not None and not PROJECT.is_sid:
+        if PROJECT is not None and not PROJECT.is_builtin:
             gate_ok, gate_output = project_gate(path, network=gate_network(job_id))
             if not gate_ok:
                 note_network_need(job_id, gate_output, "integration tests")
@@ -555,7 +555,7 @@ def _prepare_integration_locked(job_id, key):
 def create_worktree(job_id, suffix=""):
     WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
 
-    branch = f"sid/job-{job_id}{suffix}"
+    branch = f"laika/job-{job_id}{suffix}"
     path = WORKTREE_ROOT / f"job-{job_id}{suffix}"
 
     # A retried or orphaned build leaves this job's own worktree and branch
@@ -569,7 +569,7 @@ def create_worktree(job_id, suffix=""):
         run_git("branch", "-D", branch)
 
     run_git("worktree", "add", "-b", branch, str(path), PROJECT.default_branch if PROJECT else "main")
-    if PROJECT is not None and not PROJECT.is_sid:
+    if PROJECT is not None and not PROJECT.is_builtin:
         ensure_standard_excludes(path)
         # Dependencies before the builder starts, so it can run the tests.
         # A failure is reported again (and retried) by the gate.
@@ -766,10 +766,10 @@ def repair_allowed_bash():
         "Bash(git diff)", "Bash(git diff *)",
         "Bash(git log *)", "Bash(git show *)",
     )
-    if PROJECT is not None and not PROJECT.is_sid:
+    if PROJECT is not None and not PROJECT.is_builtin:
         # The project's own gate is its focused validation.
         return allowed + ((f"Bash({PROJECT.gate_command})",) if PROJECT.gate_command else ())
-    return (f"Bash({SID_PYTHON} -m pytest *)", "Bash(node apps/web/app.test.js)") + allowed
+    return (f"Bash({LAIKA_PYTHON} -m pytest *)", "Bash(node apps/web/app.test.js)") + allowed
 
 
 def run_review_aspects(job, worktree, log_path, timeout):
@@ -822,7 +822,7 @@ BEST_OF_FROM_ATTEMPT = int(os.environ.get("BEST_OF_FROM_ATTEMPT", "2"))
 def best_of_enabled(job):
     if BEST_OF_FROM_ATTEMPT <= 0 or job.get("role", "builder") != "builder":
         return False
-    attempt = redis.hget(f"sid:jobs:{job['id']}", "build_attempt") or job.get("build_attempt") or "1"
+    attempt = redis.hget(f"laika:jobs:{job['id']}", "build_attempt") or job.get("build_attempt") or "1"
     try:
         return int(attempt) >= BEST_OF_FROM_ATTEMPT
     except ValueError:
@@ -861,7 +861,7 @@ def run_best_of(job, worktree, log_path):
     """Build with both providers in parallel; keep the better passing change
     in `worktree`. Returns (returncode, duration) like run_agent."""
     job_id = str(job["id"])
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     primary_provider = agent_cli.role_provider("builder")
     # Heavy building stays on Codex: the second build is an independent Codex
     # attempt unless the operator opts in to another provider.
@@ -939,7 +939,7 @@ def run_best_of(job, worktree, log_path):
     finally:
         redis.hset(key, mapping={"best_of": json.dumps(report), "updated_at": str(time.time())})
         run_git("worktree", "remove", "--force", str(alt_worktree), check=False)
-        run_git("branch", "-D", f"sid/job-{job_id}-alt", check=False)
+        run_git("branch", "-D", f"laika/job-{job_id}-alt", check=False)
     print(f"[{WORKER_ID}] job={job_id} best-of: {json.dumps(report)}", flush=True)
 
     if chosen == "primary" and "primary" not in candidates:
@@ -957,7 +957,7 @@ def run_agent(job, worktree, log_path):
     jobs skip straight to Codex. Records the provider and model that ran.
     """
     role = job.get("role", "builder")
-    key = f"sid:jobs:{job['id']}"
+    key = f"laika:jobs:{job['id']}"
     provider = agent_cli.role_provider(role)
     fallback = ""
     if provider == "claude" and agent_cli.claude_cooling_down(redis):
@@ -1027,18 +1027,18 @@ def run_agent(job, worktree, log_path):
 
 
 def run_tests(worktree, network=False):
-    if PROJECT is not None and not PROJECT.is_sid:
+    if PROJECT is not None and not PROJECT.is_builtin:
         return project_gate(worktree, network=network)
     commands = [
         [
-            SID_PYTHON,
+            LAIKA_PYTHON,
             "-m",
             "pytest",
             "apps/api/tests",
             "-q",
         ],
         [
-            SID_PYTHON,
+            LAIKA_PYTHON,
             "-m",
             "compileall",
             "-q",
@@ -1102,7 +1102,7 @@ def review_diff_packet(builder, candidate_commit, worktree):
     diff = "".join(chunks) or "(empty diff)"
     if omitted:
         diff += (
-            "\n[SID: diff budget reached; these changed files were not "
+            "\n[LAIka: diff budget reached; these changed files were not "
             "inlined. Read them from the worktree if they matter: "
             + ", ".join(omitted) + "]"
         )
@@ -1220,7 +1220,7 @@ REBASE_CHECK_NOTE = (
 
 
 def queue_review_job(builder_job_id):
-    builder_key = f"sid:jobs:{builder_job_id}"
+    builder_key = f"laika:jobs:{builder_job_id}"
     builder = redis.hgetall(builder_key)
 
     if not builder:
@@ -1262,7 +1262,7 @@ def queue_review_job(builder_job_id):
     gate_summary = integration_gate_summary(builder)
     prior_findings = prior_findings_packet(builder)
 
-    prompt = f"""You are the review agent for SID's AI Command Center.
+    prompt = f"""You are the review agent for LAIka.
 
 Review builder job {builder_job_id}.
 Review immutable integrated candidate commit {candidate_commit}.
@@ -1274,17 +1274,17 @@ Original task:
 Files changed by this candidate (git diff --stat {review_base} {candidate_commit}):
 {diff_stat}
 
-SID candidate diff (the complete change under review; inspect this first):
+LAIka candidate diff (the complete change under review; inspect this first):
 {candidate_diff}
 
-SID deterministic integration gate result (already executed by SID on this exact candidate):
+LAIka deterministic integration gate result (already executed by LAIka on this exact candidate):
 {gate_summary}
 
 {prior_findings}
 You are operating inside the integrated candidate worktree.
 
 Do NOT run tests. Your sandbox is read-only and has no writable temporary
-directory, so pytest and similar tools will fail there. SID already ran the
+directory, so pytest and similar tools will fail there. LAIka already ran the
 deterministic gate on this exact candidate; its result is above.
 
 Decide the verdict using this bar:
@@ -1343,7 +1343,7 @@ are no material findings, explicitly say so.
 
     try:
         redis.hset(
-            f"sid:jobs:{review_job_id}",
+            f"laika:jobs:{review_job_id}",
             mapping={
                 "status": "queued",
                 "provider": review_job["provider"],
@@ -1375,7 +1375,7 @@ are no material findings, explicitly say so.
         current = redis.hget(builder_key, "review_job_id")
         if current == review_job_id:
             redis.hdel(builder_key, "review_job_id", "review_status")
-        redis.delete(f"sid:jobs:{review_job_id}")
+        redis.delete(f"laika:jobs:{review_job_id}")
         raise
 
     return review_job_id, True
@@ -1401,7 +1401,7 @@ def process_review_job(job, key, log_path):
     if not worktree.exists():
         raise RuntimeError(f"Builder worktree does not exist: {worktree}")
 
-    builder = redis.hgetall(f"sid:jobs:{builder_job_id}")
+    builder = redis.hgetall(f"laika:jobs:{builder_job_id}")
     if not builder:
         raise RuntimeError(f"Builder job not found: {builder_job_id}")
 
@@ -1478,7 +1478,7 @@ def process_review_job(job, key, log_path):
     if returncode != 0:
         redis.hset(key, mapping={"status": "failed", **common})
         redis.hset(
-            f"sid:jobs:{builder_job_id}",
+            f"laika:jobs:{builder_job_id}",
             mapping={
                 "review_job_id": job_id,
                 "review_status": "failed",
@@ -1520,7 +1520,7 @@ def process_review_job(job, key, log_path):
             "findings": findings[-3000:],
         })
         builder_update["review_findings_history"] = json.dumps(history[-5:])
-    redis.hset(f"sid:jobs:{builder_job_id}", mapping=builder_update)
+    redis.hset(f"laika:jobs:{builder_job_id}", mapping=builder_update)
 
 
 
@@ -1549,7 +1549,7 @@ def process_repair_job(job, key, log_path, test_log):
     if not builder_job_id:
         raise RuntimeError("Repair job missing target_builder_id")
 
-    builder_key = f"sid:jobs:{builder_job_id}"
+    builder_key = f"laika:jobs:{builder_job_id}"
     builder = redis.hgetall(builder_key)
 
     if not builder:
@@ -1693,7 +1693,7 @@ def process_repair_job(job, key, log_path, test_log):
         run_git(
             "commit",
             "-m",
-            f"Repair SID job {builder_job_id} via {job_id}",
+            f"Repair LAIka job {builder_job_id} via {job_id}",
             cwd=worktree,
         )
 
@@ -1830,13 +1830,13 @@ def process_integrate_job(job, key):
         "target_builder_id": builder_job_id,
         "updated_at": str(time.time()),
     })
-    builder = redis.hgetall(f"sid:jobs:{builder_job_id}")
+    builder = redis.hgetall(f"laika:jobs:{builder_job_id}")
     if builder.get("status") != "awaiting_review":
         raise RuntimeError(
             f"Integrate target status is {builder.get('status')!r}; expected 'awaiting_review'"
         )
     if not prepare_integration(builder_job_id):
-        current = redis.hgetall(f"sid:jobs:{builder_job_id}")
+        current = redis.hgetall(f"laika:jobs:{builder_job_id}")
         redis.hset(key, mapping={
             "status": "integration_failed",
             "error": current.get("integration_error", "integration did not pass or is already running"),
@@ -1863,7 +1863,7 @@ def process_integrate_job(job, key):
 #      Support workers (WORKER_CLASS=support): medium, low, then high, so low
 #      and medium work keeps moving while high work dominates the pool.
 #   2. work already in flight (review, repair, integrate) before new builds;
-#   3. least remaining effort of the project (sid:project-stats, published
+#   3. least remaining effort of the project (laika:project-stats, published
 #      by the orchestrator), minus an aging bonus so a big project that has
 #      waited long enough is not starved by a stream of small ones;
 #   4. oldest first.
@@ -1901,14 +1901,14 @@ def rank_key(payload, project_info, now, worker_class=None):
 
 def project_info_for(payload, cache):
     """(importance, remaining_effort) of a ready job's project, cached per pick."""
-    project_id = sid_projects.job_project_id(redis, payload)
+    project_id = laika_projects.job_project_id(redis, payload)
     if project_id not in cache:
         try:
-            importance = sid_projects.load(redis, project_id).importance
+            importance = laika_projects.load(redis, project_id).importance
         except Exception:
             importance = "medium"
         try:
-            remaining = float(redis.hget(f"sid:project-stats:{project_id}", "remaining_effort") or 0)
+            remaining = float(redis.hget(f"laika:project-stats:{project_id}", "remaining_effort") or 0)
         except (TypeError, ValueError):
             remaining = 0.0
         cache[project_id] = (importance, remaining)
@@ -1943,7 +1943,7 @@ def process_job(raw_job):
         parsed = json.loads(raw_job)
         CURRENT_JOB_ID = str(parsed.get("id", ""))
         CURRENT_JOB_ROLE = str(parsed.get("role") or "builder")
-        job_key = f"sid:jobs:{CURRENT_JOB_ID}"
+        job_key = f"laika:jobs:{CURRENT_JOB_ID}"
         if redis.exists(job_key):
             CURRENT_JOB_STARTED_AT = str(time.time())
             redis.hset(job_key, "started_at", CURRENT_JOB_STARTED_AT)
@@ -1960,7 +1960,7 @@ def process_job(raw_job):
             _process_job(raw_job)
     finally:
         if CURRENT_JOB_ID:
-            job_key = f"sid:jobs:{CURRENT_JOB_ID}"
+            job_key = f"laika:jobs:{CURRENT_JOB_ID}"
             if redis.exists(job_key):
                 redis.hset(job_key, "finished_at", str(time.time()))
         CURRENT_JOB_ID = CURRENT_JOB_ROLE = CURRENT_JOB_STARTED_AT = ""
@@ -1972,12 +1972,12 @@ def process_job(raw_job):
 def _process_job(raw_job):
     job = json.loads(raw_job)
     job_id = str(job["id"])
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
 
     # Every path below belongs to the job's project (unknown project: fail
     # the job rather than run it in the wrong repository).
     try:
-        project = sid_projects.load(redis, sid_projects.job_project_id(redis, job))
+        project = laika_projects.load(redis, laika_projects.job_project_id(redis, job))
     except Exception as exc:
         # A deleted project's records are gone: do not recreate them.
         if redis.exists(key):
@@ -1985,7 +1985,7 @@ def _process_job(raw_job):
                                      "updated_at": str(time.time())})
         return
     if project.status == "deleting":
-        # sid-project.py delete is removing this project; its queued work is
+        # laika-project.py delete is removing this project; its queued work is
         # being dropped, so never start it (or create its directories).
         return
     use_project(project)
@@ -2120,7 +2120,7 @@ def _process_job(raw_job):
         run_git(
             "commit",
             "-m",
-            f"Apply SID job {job_id}",
+            f"Apply LAIka job {job_id}",
             cwd=worktree,
         )
         candidate_commit = run_git(
@@ -2189,7 +2189,7 @@ def _process_job(raw_job):
             )
             if target_builder_id:
                 redis.hset(
-                    f"sid:jobs:{target_builder_id}",
+                    f"laika:jobs:{target_builder_id}",
                     mapping={
                         "repair_status": "failed",
                         "repair_error": str(exc),
@@ -2197,7 +2197,7 @@ def _process_job(raw_job):
                     },
                 )
                 redis.hdel(
-                    f"sid:jobs:{target_builder_id}",
+                    f"laika:jobs:{target_builder_id}",
                     "repair_job_id",
                 )
 
@@ -2205,7 +2205,7 @@ def _process_job(raw_job):
             builder_job_id = str(job.get("builder_job_id", ""))
             if builder_job_id:
                 redis.hset(
-                    f"sid:jobs:{builder_job_id}",
+                    f"laika:jobs:{builder_job_id}",
                     mapping={
                         "review_status": "failed",
                         "review_error": str(exc),
@@ -2227,7 +2227,7 @@ def main():
     if extra:
         os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")])
     print(
-        f"SID worker starting: {WORKER_ID} "
+        f"LAIka worker starting: {WORKER_ID} "
         f"role={WORKER_ROLE} "
         f"default={DEFAULT_PROVIDER}/{DEFAULT_MODEL}",
         flush=True,

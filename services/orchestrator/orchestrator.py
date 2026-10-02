@@ -14,22 +14,22 @@ import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
-import sid_projects  # noqa: E402  (services/sid_projects.py)
+import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
-GOAL_QUEUE = os.getenv("GOAL_QUEUE", "sid:goals")
-JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
+GOAL_QUEUE = os.getenv("GOAL_QUEUE", "laika:goals")
+JOB_QUEUE = os.getenv("WORKER_QUEUE", "laika:jobs")
 REPO_ROOT = Path(
-    os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")
+    os.getenv("REPO_ROOT", "/opt/laika")
 ).resolve()
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.6-luna")
-ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "sid-orchestrator-01")
+ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "laika-orchestrator-01")
 PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "180"))
-PLANNER_LOG_ROOT = Path(os.getenv("PLANNER_LOG_ROOT", "/var/log/sid-ai/planner"))
+PLANNER_LOG_ROOT = Path(os.getenv("PLANNER_LOG_ROOT", "/var/log/laika/planner"))
 MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
@@ -44,7 +44,7 @@ MAX_REVIEW_RECOVERIES = int(os.getenv("MAX_REVIEW_RECOVERIES", "2"))
 # (across loop passes) before it is declared lost.
 LOST_CONFIRM_SECONDS = int(os.getenv("LOST_JOB_CONFIRM_SECONDS", "60"))
 
-r = redis.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
+r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
 
 
 def now():
@@ -55,7 +55,7 @@ def heartbeat(status="idle", goal_id="", goal_ids=None):
     if goal_id and status == "idle":
         status = "active"
     r.hset(
-        f"sid:orchestrators:{ORCHESTRATOR_ID}",
+        f"laika:orchestrators:{ORCHESTRATOR_ID}",
         mapping={
             "id": ORCHESTRATOR_ID,
             "status": status,
@@ -68,7 +68,7 @@ def heartbeat(status="idle", goal_id="", goal_ids=None):
             "last_seen": now(),
         },
     )
-    r.expire(f"sid:orchestrators:{ORCHESTRATOR_ID}", 30)
+    r.expire(f"laika:orchestrators:{ORCHESTRATOR_ID}", 30)
 
 
 def extract_json(text):
@@ -103,10 +103,10 @@ def repository_manifest(repo=None):
 
 def project_type_label(project_id):
     try:
-        found = json.loads(r.get(f"sid:project-type:{project_id}") or "{}")
+        found = json.loads(r.get(f"laika:project-type:{project_id}") or "{}")
     except (TypeError, ValueError):
         found = {}
-    chosen = r.hget(f"sid:projects:{project_id}", "type") if project_id != sid_projects.SID_PROJECT else ""
+    chosen = r.hget(f"laika:projects:{project_id}", "type") if project_id != laika_projects.BUILTIN_PROJECT else ""
     kind = chosen or found.get("type") or "unknown"
     return kind + (f", stack {found['stack']}" if found.get("stack") else "")
 
@@ -129,21 +129,21 @@ Files being changed by in-flight jobs in {member.id}:
 
 
 def planner_prompt(goal, atomic=False, project=None):
-    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
-    members = sid_projects.group(r, project)
+    project = project or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
+    members = laika_projects.group(r, project)
     if len(members) > 1:
         return group_planner_prompt(goal, atomic, project, members)
     return single_planner_prompt(goal, atomic, project)
 
 
 def single_planner_prompt(goal, atomic, project):
-    sid_rules = """- Web UI features: put new dashboard behavior in its own module under
+    laika_rules = """- Web UI features: put new dashboard behavior in its own module under
   apps/web/lib/ that registers itself via apps/web/lib/registry.js
   (registerPanel / registerClick) plus one import line in
   apps/web/lib/features.js, instead of editing apps/web/app.js.
-""" if project.is_sid else ""
+""" if project.is_builtin else ""
     return f"""
-You are the planning agent for SID's AI software pipeline, planning work for
+You are the planning agent for LAIka's AI software pipeline, planning work for
 project "{project.name}" ({project.id}).
 
 Repository:
@@ -170,21 +170,21 @@ Rules:
 - Avoid microscopic jobs.
 - Minimize overlapping file ownership between parallel jobs.
 - "scope" must list every file the job will create or change (exact paths;
-  a directory only when the job adds new files inside it). SID schedules by
+  a directory only when the job adds new files inside it). LAIka schedules by
   scope: jobs whose scopes overlap never run at the same time, so an
   incomplete scope causes merge conflicts and an over-broad one serializes
   work needlessly.
-{sid_rules}- Files currently being changed by other in-flight jobs (work touching them
+{laika_rules}- Files currently being changed by other in-flight jobs (work touching them
   will wait until they finish):
 {busy_files_summary(project.id)}
 - "size" is your effort estimate for the job: S (a small, local change),
-  M (a normal feature or fix), L (large or cross-cutting). SID schedules by
+  M (a normal feature or fix), L (large or cross-cutting). LAIka schedules by
   remaining effort, so estimate honestly.
 - Dependencies must reference job numbers from this plan.
 - Every job must be independently testable.
-- Existing SID review and human approval gates will handle merging.
+- Existing LAIka review and human approval gates will handle merging.
 - Do not include deployment or Git merge jobs.
-- Do not include a reviewer job; SID creates reviews automatically.
+- Do not include a reviewer job; LAIka creates reviews automatically.
 - Be conservative about architecture changes.
 - Preserve existing functionality.
 
@@ -227,12 +227,12 @@ def planner_model(atomic):
     return agent_cli.claude_model("planner")
 
 
-def busy_files_summary(project_id=sid_projects.SID_PROJECT, limit=40):
+def busy_files_summary(project_id=laika_projects.BUILTIN_PROJECT, limit=40):
     held = sorted({
         path
-        for key in r.scan_iter("sid:jobs:*")
+        for key in r.scan_iter("laika:jobs:*")
         for job in [r.hgetall(key)]
-        if holds_scope(job) and (job.get("project_id") or sid_projects.SID_PROJECT) == project_id
+        if holds_scope(job) and (job.get("project_id") or laika_projects.BUILTIN_PROJECT) == project_id
         for path in job_scope(job)
     })
     if not held:
@@ -248,7 +248,7 @@ def run_planner(goal, atomic=False, info=None, project=None):
     falls back to Codex when it cannot serve the call. `info`, if given, is
     filled with the provider/model that produced the plan."""
     info = {} if info is None else info
-    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
+    project = project or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
     if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
         slot = f"planner:{log_path.stem}"
@@ -278,7 +278,7 @@ def run_planner(goal, atomic=False, info=None, project=None):
 
 
 def run_codex_planner(goal, atomic=False, project=None):
-    project = project or sid_projects.load(r, sid_projects.SID_PROJECT)
+    project = project or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
     cmd = [
         "codex",
         "exec",
@@ -452,7 +452,7 @@ def create_job(goal_id, planned_job, number_to_id):
         "updated_at": now(),
     }
 
-    r.hset(f"sid:jobs:{job_id}", mapping=record)
+    r.hset(f"laika:jobs:{job_id}", mapping=record)
 
     if not dependencies:
         dispatch_job_once(record, {
@@ -471,7 +471,7 @@ def create_job(goal_id, planned_job, number_to_id):
 
 def dispatch_job_once(job, payload):
     """Queue a job only once, including when scheduling is retried."""
-    key = f"sid:jobs:{job['id']}"
+    key = f"laika:jobs:{job['id']}"
     if not r.hsetnx(key, "dispatch_reserved_at", now()):
         return False
     try:
@@ -555,7 +555,7 @@ def scoped_builder_prompt(item, repo=None, goal="", jobs_in_plan=1):
 Likely scope (start here; expand only if required):
 {scope_text}
 
-SID context packet (bounded starting context; trust repository files over this snapshot if you edit them):
+LAIka context packet (bounded starting context; trust repository files over this snapshot if you edit them):
 {context}
 
 Efficiency requirements:
@@ -563,7 +563,7 @@ Efficiency requirements:
 - Do not inventory or read the whole repository.
 - Expand beyond likely scope only for a concrete dependency required by the task.
 - Make the smallest correct change.
-- Run only focused validation; SID runs the deterministic integration gate.
+- Run only focused validation; LAIka runs the deterministic integration gate.
 - Stop when the requested implementation and focused validation are complete.
 """.strip() + goal_section(goal, jobs_in_plan)
 
@@ -571,7 +571,7 @@ def process_goal(raw):
     data = json.loads(raw)
     goal_id = data["id"]
     goal = data["goal"]
-    key = f"sid:goals:{goal_id}"
+    key = f"laika:goals:{goal_id}"
 
     # Queue delivery is at-least-once. A short-lived claim prevents a retry or
     # a second orchestrator from creating a second plan for the same goal.
@@ -598,10 +598,10 @@ def process_goal(raw):
     )
 
     atomic = str(data.get("atomic", "")).lower() in {"1", "true", "yes"}
-    project = sid_projects.load(r, data.get("project_id") or r.hget(key, "project_id"))
+    project = laika_projects.load(r, data.get("project_id") or r.hget(key, "project_id"))
     planner = {}
     plan = run_planner(goal, atomic=atomic, info=planner, project=project)
-    members = {member.id: member for member in sid_projects.group(r, project)}
+    members = {member.id: member for member in laika_projects.group(r, project)}
     jobs = validate_plan(plan, atomic=atomic, members=list(members) if len(members) > 1 else None)
 
     number_to_id = {}
@@ -649,7 +649,7 @@ def process_goal(raw):
             record["status"] = "blocked"
             record["blocked_reason"] = holder[1]
 
-        r.hset(f"sid:jobs:{job_id}", mapping=record)
+        r.hset(f"laika:jobs:{job_id}", mapping=record)
 
         if not dependencies and not holder:
             dispatch_job_once(record, {
@@ -710,7 +710,7 @@ def review_findings(review):
 
 
 def queue_repairs():
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         builder = r.hgetall(key)
 
         if builder.get("status") != "awaiting_review":
@@ -739,7 +739,7 @@ def queue_repairs():
         # while that repair is still in flight.
         existing = builder.get("repair_job_id")
         if existing:
-            repair = r.hgetall(f"sid:jobs:{existing}")
+            repair = r.hgetall(f"laika:jobs:{existing}")
             if repair.get("status") in {
                 "queued",
                 "claimed",
@@ -789,7 +789,7 @@ def queue_repairs():
         if not review_job_id:
             continue
 
-        review = r.hgetall(f"sid:jobs:{review_job_id}")
+        review = r.hgetall(f"laika:jobs:{review_job_id}")
 
         if not review:
             continue
@@ -804,7 +804,7 @@ def queue_repairs():
         if not r.hsetnx(key, "repair_job_id", repair_job_id):
             continue
 
-        prompt = f"""You are a focused repair agent for SID's AI Command Center.
+        prompt = f"""You are a focused repair agent for LAIka.
 
 Builder job:
 {builder.get("id", "")}
@@ -825,7 +825,7 @@ task. Preserve correct existing work. Do not broaden the scope, redesign
 unrelated code, merge branches, or commit changes yourself.
 
 Inspect the existing candidate first. Make the smallest correct repair.
-Validate the affected behavior. SID will run its deterministic test gate
+Validate the affected behavior. LAIka will run its deterministic test gate
 after you finish.
 """
 
@@ -850,7 +850,7 @@ after you finish.
 
         try:
             r.hset(
-                f"sid:jobs:{repair_job_id}",
+                f"laika:jobs:{repair_job_id}",
                 mapping={
                     "id": repair_job_id,
                     "status": "queued",
@@ -892,13 +892,13 @@ after you finish.
             if current == repair_job_id:
                 r.hdel(key, "repair_job_id", "repair_status")
 
-            r.delete(f"sid:jobs:{repair_job_id}")
+            r.delete(f"laika:jobs:{repair_job_id}")
             raise
 
 def release_dependencies():
     # Oldest first, so a job waiting for files is not overtaken forever.
     blocked = sorted(
-        ((key, r.hgetall(key)) for key in r.scan_iter("sid:jobs:*")),
+        ((key, r.hgetall(key)) for key in r.scan_iter("laika:jobs:*")),
         key=lambda item: _int(float(item[1].get("created_at") or 0) * 1000),
     )
     for key, job in blocked:
@@ -910,7 +910,7 @@ def release_dependencies():
         except ValueError:
             deps = []
 
-        dep_jobs = [r.hgetall(f"sid:jobs:{dep}") for dep in deps]
+        dep_jobs = [r.hgetall(f"laika:jobs:{dep}") for dep in deps]
         dep_states = [dep.get("status") for dep in dep_jobs]
 
         # blocked_failed_dependency is itself a failure for grandchildren;
@@ -1038,7 +1038,7 @@ def live_work():
     """(ids held by live workers, queued ids), or None if any live worker
     runs code too old to report the job it holds."""
     held = set()
-    for key in r.scan_iter("sid:workers:*"):
+    for key in r.scan_iter("laika:workers:*"):
         beat = r.hgetall(key)
         if not beat:
             continue
@@ -1065,7 +1065,7 @@ def confirmed_lost(suspect, seen, now_ts):
 def release_stale_integration_lock(builder_id):
     """Drop a builder's integration lock whose holder is gone. Only called
     when no live worker holds any job for this builder."""
-    lock_key = f"sid:integration-lock:{builder_id}"
+    lock_key = f"laika:integration-lock:{builder_id}"
     owner = r.get(lock_key)
     if owner:
         r.eval(
@@ -1076,7 +1076,7 @@ def release_stale_integration_lock(builder_id):
 
 
 def test_output_excerpt(output, limit=3000):
-    """The part of SID test output that explains a failure.
+    """The part of LAIka test output that explains a failure.
 
     pytest -q prints failure details first and the warnings summary last, so
     the tail of the log is usually only deprecation warnings. Prefer the
@@ -1116,7 +1116,7 @@ def previous_repair_note(builder):
     last_id = builder.get("last_repair_job_id") or ""
     if not last_id:
         return ""
-    last = r.hgetall(f"sid:jobs:{last_id}") or {}
+    last = r.hgetall(f"laika:jobs:{last_id}") or {}
     if last.get("status") not in ("test_failed", "failed"):
         return ""
     return (
@@ -1134,7 +1134,7 @@ def failure_reason(job):
             output = Path(job.get("test_log", "")).read_text()
         except OSError:
             pass
-        return "SID test gate failed:\n" + (test_output_excerpt(output) or "(no test log)")
+        return "LAIka test gate failed:\n" + (test_output_excerpt(output) or "(no test log)")
     if status == "integration_failed":
         reason = "integration onto main failed: " + (job.get("integration_error") or "unknown")
         try:
@@ -1158,7 +1158,7 @@ def recover_lost_jobs(now_ts=None):
     held, queued = work
     now_ts = time.time() if now_ts is None else now_ts
     seen = set()
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         job = r.hgetall(key)
         job_id = job.get("id") or key.rsplit(":", 1)[-1]
         if job.get("status") not in IN_FLIGHT_STATES:
@@ -1183,7 +1183,7 @@ def recover_lost_jobs(now_ts=None):
 
 
 def retry_failed_builds():
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         job = r.hgetall(key)
         if not (is_builder(job) and job.get("status") in BUILD_FAILED_STATES):
             continue
@@ -1265,7 +1265,7 @@ def queue_reintegration(key, builder, fields):
     created = now()
     r.hdel(key, *DERIVED_REVIEW_FIELDS)
     r.hset(key, mapping={"last_integrate_job_id": integrate_id, "updated_at": created, **fields})
-    r.hset(f"sid:jobs:{integrate_id}", mapping={
+    r.hset(f"laika:jobs:{integrate_id}", mapping={
         "id": integrate_id, "status": "queued", "role": "integrate",
         "target_builder_id": builder_id, "goal_id": builder.get("goal_id", ""),
         "created_at": created, "updated_at": created,
@@ -1277,7 +1277,7 @@ def queue_reintegration(key, builder, fields):
     return integrate_id
 
 
-MERGE_QUEUE = "sid:merge-queue"
+MERGE_QUEUE = "laika:merge-queue"
 
 
 def main_head(repo=None):
@@ -1290,8 +1290,8 @@ def refresh_queued_candidates(head=None):
     """Re-integrate queued approvals whose candidate went stale because their
     project's main moved. Once per main commit per job; only queued jobs, so
     candidates no one approved do not burn reviews on every merge."""
-    for project in sid_projects.all_projects(r):
-        refresh_project_queue(project, head if project.is_sid else None)
+    for project in laika_projects.all_projects(r):
+        refresh_project_queue(project, head if project.is_builtin else None)
 
 
 def refresh_project_queue(project, head=None):
@@ -1304,7 +1304,7 @@ def refresh_project_queue(project, head=None):
         return
     busy = work[0] | work[1]
     for builder_id in ids:
-        key = f"sid:jobs:{builder_id}"
+        key = f"laika:jobs:{builder_id}"
         builder = r.hgetall(key)
         if not (builder.get("status") == "awaiting_review"
                 and builder.get("integration_status") == "passed"
@@ -1334,7 +1334,7 @@ def recover_stalled_reviews(now_ts=None):
     busy = work[0] | work[1]
     now_ts = time.time() if now_ts is None else now_ts
     seen = set()
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         builder = r.hgetall(key)
         if not is_builder(builder) or builder.get("status") != "awaiting_review":
             continue
@@ -1414,12 +1414,12 @@ def scope_conflict(job):
     mine = job_scope(job)
     if not mine:
         return None
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         other = r.hgetall(key)
         other_id = other.get("id") or key.rsplit(":", 1)[-1]
         if other_id == job.get("id") or not holds_scope(other):
             continue
-        if (other.get("project_id") or sid_projects.SID_PROJECT) != (job.get("project_id") or sid_projects.SID_PROJECT):
+        if (other.get("project_id") or laika_projects.BUILTIN_PROJECT) != (job.get("project_id") or laika_projects.BUILTIN_PROJECT):
             continue
         shared = sorted({a for a in mine for b in job_scope(other) if paths_overlap(a, b)})
         if shared:
@@ -1444,10 +1444,10 @@ def publish_project_stats(now_ts=None):
     stats = {}
 
     def bucket(project_id):
-        return stats.setdefault(project_id or sid_projects.SID_PROJECT,
+        return stats.setdefault(project_id or laika_projects.BUILTIN_PROJECT,
                                 {"remaining_effort": 0, "waiting_jobs": 0, "running_jobs": 0})
 
-    for key in r.scan_iter("sid:jobs:*"):
+    for key in r.scan_iter("laika:jobs:*"):
         job = r.hgetall(key)
         if not is_builder(job):
             continue
@@ -1460,24 +1460,24 @@ def publish_project_stats(now_ts=None):
             entry["waiting_jobs"] += 1
         elif status in ("claimed", "running", "testing"):
             entry["running_jobs"] += 1
-    for key in r.scan_iter("sid:goals:*"):
+    for key in r.scan_iter("laika:goals:*"):
         if key.endswith(":planning"):
             continue
         goal = r.hgetall(key)
         if goal.get("status") in ("queued", "planning") and not goal.get("jobs"):
             bucket(goal.get("project_id"))["remaining_effort"] += UNPLANNED_GOAL_POINTS
-    for project in sid_projects.all_projects(r):
+    for project in laika_projects.all_projects(r):
         bucket(project.id)
     stamp = str(time.time() if now_ts is None else now_ts)
     for project_id, entry in stats.items():
-        r.hset(f"sid:project-stats:{project_id}",
+        r.hset(f"laika:project-stats:{project_id}",
                mapping={**{k: str(v) for k, v in entry.items()}, "updated_at": stamp})
     return stats
 
 
 def update_goals():
-    for key in r.scan_iter("sid:goals:*"):
-        # Planning reservations share the sid:goals:* namespace but are
+    for key in r.scan_iter("laika:goals:*"):
+        # Planning reservations share the laika:goals:* namespace but are
         # string keys, not goal hashes. Never issue hash commands against
         # those transient lock keys.
         if key.endswith(":planning"):
@@ -1498,7 +1498,7 @@ def update_goals():
         if not job_ids:
             continue
 
-        jobs = [r.hgetall(f"sid:jobs:{job_id}") for job_id in job_ids]
+        jobs = [r.hgetall(f"laika:jobs:{job_id}") for job_id in job_ids]
         states = [job.get("status") for job in jobs]
 
         if any(is_terminal_failure(job) for job in jobs):
@@ -1544,7 +1544,7 @@ def active_goal_id():
 def active_goal_ids():
     return [
         key.rsplit(":", 1)[-1]
-        for key in sorted(r.scan_iter("sid:goals:*"))
+        for key in sorted(r.scan_iter("laika:goals:*"))
         if ":planning" not in key
         and r.hget(key, "status") in {"planning", "running"}
     ]
@@ -1565,14 +1565,14 @@ def process_goal_safe(raw):
             goal = json.loads(raw)
             goal_id = goal.get("id", "unknown")
             r.hset(
-                f"sid:goals:{goal_id}",
+                f"laika:goals:{goal_id}",
                 mapping={
                     "status": "planning_failed",
                     "error": str(exc),
                     "updated_at": now(),
                 },
             )
-            r.delete(f"sid:goals:{goal_id}:planning")
+            r.delete(f"laika:goals:{goal_id}:planning")
         except Exception:
             pass
         raise

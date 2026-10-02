@@ -2,7 +2,7 @@ import { requestJSON } from './api.js';
 import { esc, pill, text } from './format.js';
 import { registerPanel } from './registry.js';
 
-const reportEmpty = '<div class="empty">No watchdog report yet (is sid-ai-watchdog.timer running?)</div>';
+const reportEmpty = '<div class="empty">No watchdog report yet (is laika-watchdog.timer running?)</div>';
 
 function backupTime(value) {
   const match = typeof value === 'string' && value.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);

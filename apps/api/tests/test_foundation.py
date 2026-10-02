@@ -184,8 +184,8 @@ def test_health_reports_pipeline_heartbeats_without_changing_status(client, monk
     from unittest.mock import MagicMock
     import main
     monkeypatch.setattr(main, 'engine', MagicMock())
-    fake = _HeartbeatRedis(['sid:orchestrators:o1', 'sid:operator-service:op', 'sid:workers:w1', 'sid:workers:w2'],
-                           {'sid:workers:w1': 'working', 'sid:workers:w2': 'idle'})
+    fake = _HeartbeatRedis(['laika:orchestrators:o1', 'laika:operator-service:op', 'laika:workers:w1', 'laika:workers:w2'],
+                           {'laika:workers:w1': 'working', 'laika:workers:w2': 'idle'})
     fake.ping = lambda: True
     monkeypatch.setattr(main, 'redis', fake)
     body = client.get('/health').json()

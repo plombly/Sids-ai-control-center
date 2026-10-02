@@ -14,45 +14,45 @@ import redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 REPO_ROOT = Path(
-    os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")
+    os.getenv("REPO_ROOT", "/opt/laika")
 ).resolve()
 WORKTREE_ROOT = Path(
-    os.getenv("WORKTREE_ROOT", "/opt/sid-worktrees")
+    os.getenv("WORKTREE_ROOT", "/var/lib/laika/worktrees")
 ).resolve()
 
-JOB_QUEUE = os.getenv("WORKER_QUEUE", "sid:jobs")
+JOB_QUEUE = os.getenv("WORKER_QUEUE", "laika:jobs")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
-import sid_projects  # noqa: E402  (services/sid_projects.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
+import laika_projects  # noqa: E402  (services/laika_projects.py)
 
-r = redis.Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_responses=True)
+r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
 
-# The project the current action works on. SID's paths are the module
+# The project the current action works on. LAIka's paths are the module
 # settings above; any other project's repository and worktrees are swapped
 # in for the duration of one action (see in_job_project).
 PROJECT = None
 
 
 def current_project():
-    return PROJECT or sid_projects.load(r, sid_projects.SID_PROJECT)
+    return PROJECT or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
 
 
 class project_context:
     """Point REPO_ROOT/WORKTREE_ROOT at a project for one action, then restore."""
 
     def __init__(self, project_id):
-        self.project_id = project_id or sid_projects.SID_PROJECT
+        self.project_id = project_id or laika_projects.BUILTIN_PROJECT
 
     def __enter__(self):
         global PROJECT, REPO_ROOT, WORKTREE_ROOT
         self.saved = (PROJECT, REPO_ROOT, WORKTREE_ROOT)
         try:
-            project = sid_projects.load(r, self.project_id)
+            project = laika_projects.load(r, self.project_id)
         except LookupError as exc:
             fail(str(exc))
         PROJECT = project
-        if not project.is_sid:
+        if not project.is_builtin:
             REPO_ROOT, WORKTREE_ROOT = project.repo.resolve(), project.worktrees.resolve()
         return project
 
@@ -67,7 +67,7 @@ def in_job_project(action):
     @functools.wraps(action)
     def wrapper(job_id, *args, **kwargs):
         try:
-            project_id = r.hget(f"sid:jobs:{job_id}", "project_id")
+            project_id = r.hget(f"laika:jobs:{job_id}", "project_id")
         except Exception:
             project_id = None
         with project_context(project_id):
@@ -106,7 +106,7 @@ def git(*args, cwd=None, check=True):
 
 
 def job_record(job_id):
-    data = r.hgetall(f"sid:jobs:{job_id}")
+    data = r.hgetall(f"laika:jobs:{job_id}")
     if not data:
         fail(f"job not found: {job_id}")
     return data
@@ -126,7 +126,7 @@ def safe_worktree(job_id, data):
 
 
 def safe_branch(job_id, data):
-    expected = f"sid/job-{job_id}"
+    expected = f"laika/job-{job_id}"
     actual = data.get("branch")
 
     if actual != expected:
@@ -146,7 +146,7 @@ def safe_integration_worktree(job_id, data):
 
 
 def safe_integration_branch(job_id, data):
-    expected = f"sid/integration-{job_id}"
+    expected = f"laika/integration-{job_id}"
     actual = data.get("integration_branch")
     if actual != expected:
         fail(f"unexpected integration branch: {actual}")
@@ -174,7 +174,7 @@ def approve(job_id, expected_candidate=None):
     # Approval advances the project's main branch, so this lock must be
     # repository-wide rather than per job. Holding it across validation
     # and merge makes the integration-base check and main advancement
-    # one serialized operation. (SID's key: sid:approval-lock:main.)
+    # one serialized operation. (LAIka's key: laika:approval-lock:main.)
     lock_key = current_project().approval_lock_key
     token = uuid.uuid4().hex
     if not r.set(lock_key, token, nx=True, ex=300):
@@ -186,7 +186,7 @@ def approve(job_id, expected_candidate=None):
 
 
 def _approve_unlocked(job_id, expected_candidate=None):
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
 
     if data.get("status") != "awaiting_review":
@@ -303,7 +303,7 @@ def _approve_unlocked(job_id, expected_candidate=None):
     )
 
     cleanup_after_merge(job_id, data, worktree, branch)
-    warning = sid_projects.push_main(current_project())
+    warning = laika_projects.push_main(current_project())
     if warning:
         print(f"WARNING: {warning} (the merge is recorded; push again later)", file=sys.stderr)
 
@@ -350,8 +350,8 @@ def cleanup_after_merge(job_id, data, worktree, branch):
 # rebuild) or the fresh review requires changes, the approval is void and a
 # human must approve again. `approve --candidate` remains exact.
 
-MERGE_QUEUE = "sid:merge-queue"
-MAIN_HEAD_KEY = "sid:main-head"
+MERGE_QUEUE = "laika:merge-queue"
+MAIN_HEAD_KEY = "laika:main-head"
 
 
 def _sources(value):
@@ -365,7 +365,7 @@ def _sources(value):
 @in_job_project
 def queue_approval(job_id, expected_candidate):
     """Approve the change the human saw, to merge as soon as it is fresh."""
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
     if data.get("status") != "awaiting_review":
         fail(f"job status is {data.get('status')!r}; expected 'awaiting_review'")
@@ -401,7 +401,7 @@ def queue_approval(job_id, expected_candidate):
 
 @in_job_project
 def dequeue_approval(job_id, reason="removed by operator"):
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     removed = r.lrem(current_project().merge_queue_key, 0, job_id)
     if r.hgetall(key):
         r.hdel(key, "approval_intent_candidate", "approval_intent_sources", "approval_intent_at")
@@ -434,7 +434,7 @@ def process_merge_queue():
     project per call: each merge moves that project's main and makes the rest
     of its queue stale). Returns the merged job ids."""
     merged = []
-    for project in sid_projects.all_projects(r):
+    for project in laika_projects.all_projects(r):
         with project_context(project.id):
             job_id = _process_project_queue(project)
         if job_id:
@@ -448,7 +448,7 @@ def _process_project_queue(project):
     main_head = git("rev-parse", "HEAD").stdout.strip()
     r.set(project.main_head_key, main_head)
     for job_id in ids:
-        key = f"sid:jobs:{job_id}"
+        key = f"laika:jobs:{job_id}"
         data = r.hgetall(key)
         state, reason = merge_readiness(data, main_head)
         if state == "invalid":
@@ -483,7 +483,7 @@ REJECTABLE = {"awaiting_review", "needs_human", "repair_exhausted", "integration
 
 @in_job_project
 def reject(job_id):
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
 
     if data.get("status") not in REJECTABLE:
@@ -511,7 +511,7 @@ def reject(job_id):
             fail(f"unexpected integration worktree: {data['integration_worktree']}")
         if integration_worktree.exists():
             git("worktree", "remove", "--force", str(integration_worktree))
-        integration_branch = f"sid/integration-{job_id}"
+        integration_branch = f"laika/integration-{job_id}"
         if git("show-ref", "--verify", f"refs/heads/{integration_branch}",
                check=False).returncode == 0:
             git("branch", "-D", integration_branch)
@@ -549,7 +549,7 @@ DERIVED_REVIEW_FIELDS = (
 @in_job_project
 def extend(job_id, extra=1):
     """Grant more repair attempts to a job that exhausted them."""
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
     if data.get("status") not in EXHAUSTED:
         fail(f"job status is {data.get('status')!r}; expected one of {sorted(EXHAUSTED)}")
@@ -597,15 +597,15 @@ def network(job_id, choice):
     and resume the step it stopped: a rebuild from main or another repair.
     once: tests of this change may use the internet; always: tests of the
     whole project may; deny: tests stay offline and the builder is told so."""
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
     if data.get("status") != "needs_human" or data.get("needs_human_kind") != "network":
         fail(f"job {job_id} is not waiting for an internet-access decision")
     if choice not in NETWORK_CHOICES:
         fail(f"choice must be one of {', '.join(NETWORK_CHOICES)}")
     project = current_project()
-    if project.is_sid:
-        fail("SID's own tests do not run in the project sandbox")
+    if project.is_builtin:
+        fail("LAIka's own tests do not run in the project sandbox")
     fields = {"network_request": f"answered:{choice}", "needs_human_reason": "", "needs_human_kind": "",
               "updated_at": str(time.time())}
     if choice == "once":
@@ -613,7 +613,7 @@ def network(job_id, choice):
     elif choice == "deny":
         fields["network_denied"] = "1"
     else:
-        r.hset(f"sid:projects:{project.id}", mapping={"gate_network": "always", "updated_at": str(time.time())})
+        r.hset(f"laika:projects:{project.id}", mapping={"gate_network": "always", "updated_at": str(time.time())})
     resume = data.get("network_resume") or "build"
     if resume == "repair":
         # Another repair of the same review findings, now with (or without) internet.
@@ -629,7 +629,7 @@ def network(job_id, choice):
     words = {"once": "allowed internet for this change's tests", "always": "allowed internet for all of this project's tests",
              "deny": "kept tests offline"}[choice]
     try:
-        sid_projects.record_event(r, project.id, "network", f"Internet access: {words}",
+        laika_projects.record_event(r, project.id, "network", f"Internet access: {words}",
                                   detail=(data.get("network_request_reason") or "")[:500], ref=job_id)
     except Exception:
         pass
@@ -655,7 +655,7 @@ def reintegrate(job_id):
     For stale candidates (main moved) and for exhausted jobs whose latest
     candidate should be reviewed again. Never touches main.
     """
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
     allowed = {"awaiting_review"} | EXHAUSTED
     if data.get("status") not in allowed:
@@ -694,7 +694,7 @@ def reintegrate(job_id):
     # Repair attempts are preserved, so an exhausted job whose fresh review
     # still requires changes returns to needs_human instead of re-repairing.
     r.hset(key, mapping=update)
-    r.hset(f"sid:jobs:{integrate_id}", mapping={
+    r.hset(f"laika:jobs:{integrate_id}", mapping={
         "id": integrate_id,
         "status": "queued",
         "role": "integrate",
@@ -723,7 +723,7 @@ FAILED_DEPENDENCY_STATES = {
 @in_job_project
 def reopen(job_id):
     """Re-open a job blocked by a dependency that has since recovered."""
-    key = f"sid:jobs:{job_id}"
+    key = f"laika:jobs:{job_id}"
     data = job_record(job_id)
     if data.get("status") != "blocked_failed_dependency":
         fail(f"job status is {data.get('status')!r}; expected 'blocked_failed_dependency'")
@@ -732,15 +732,15 @@ def reopen(job_id):
     except ValueError:
         fail("job has unreadable dependencies")
     still_failed = [
-        f"{dep} ({r.hget(f'sid:jobs:{dep}', 'status')})" for dep in deps
-        if r.hget(f"sid:jobs:{dep}", "status") in FAILED_DEPENDENCY_STATES
+        f"{dep} ({r.hget(f'laika:jobs:{dep}', 'status')})" for dep in deps
+        if r.hget(f"laika:jobs:{dep}", "status") in FAILED_DEPENDENCY_STATES
     ]
     if still_failed:
         fail("dependencies are still failed: " + ", ".join(still_failed))
     r.hset(key, mapping={"status": "blocked", "updated_at": str(time.time())})
     goal_id = data.get("goal_id")
-    if goal_id and r.hget(f"sid:goals:{goal_id}", "status") == "failed":
-        r.hset(f"sid:goals:{goal_id}", mapping={
+    if goal_id and r.hget(f"laika:goals:{goal_id}", "status") == "failed":
+        r.hset(f"laika:goals:{goal_id}", mapping={
             "status": "running", "error": "", "updated_at": str(time.time()),
         })
     print(f"REOPENED: {job_id}; the orchestrator dispatches it once all "

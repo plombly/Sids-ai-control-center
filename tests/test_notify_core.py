@@ -4,7 +4,7 @@ import datetime
 import stat
 import sys
 
-from sid_testing import ROOT, MemoryRedis
+from laika_testing import ROOT, MemoryRedis
 
 sys.path.insert(0, str(ROOT / "apps/api"))
 import notify_core  # noqa: E402

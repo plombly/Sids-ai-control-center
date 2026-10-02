@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from sid_testing import ROOT, load_module
+from laika_testing import ROOT, load_module
 
 sys.path.insert(0, str(ROOT / "services"))
 import project_sandbox  # noqa: E402
-import sid_projects  # noqa: E402
+import laika_projects  # noqa: E402
 
 
 def make_project(tmp_path, pid="shop"):
@@ -24,14 +24,14 @@ def make_project(tmp_path, pid="shop"):
     wt = worktrees / "job-1"
     subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True)
     (root / "deploy_key").write_text("PRIVATE")
-    project = sid_projects.Project({"id": pid, "root": str(root), "repo": str(repo),
+    project = laika_projects.Project({"id": pid, "root": str(root), "repo": str(repo),
                                     "worktrees": str(worktrees), "logs": str(root / "logs")})
     return project, wt
 
 
 @pytest.fixture
 def hidden(monkeypatch, tmp_path):
-    secret_dir = tmp_path / "sid-secrets"
+    secret_dir = tmp_path / "laika-secrets"
     secret_dir.mkdir()
     (secret_dir / "operator.env").write_text("TOKEN")
     state = tmp_path / "agent-state"
@@ -41,9 +41,9 @@ def hidden(monkeypatch, tmp_path):
     return secret_dir, state
 
 
-def test_sid_itself_is_never_wrapped(tmp_path):
-    sid = sid_projects.Project(sid_projects.sid_defaults())
-    assert project_sandbox.command(["echo", "x"], sid, tmp_path, kind="gate") == ["echo", "x"]
+def test_laika_itself_is_never_wrapped(tmp_path):
+    laika = laika_projects.Project(laika_projects.builtin_defaults())
+    assert project_sandbox.command(["echo", "x"], laika, tmp_path, kind="gate") == ["echo", "x"]
     assert project_sandbox.command(["echo", "x"], None, tmp_path, kind="agent") == ["echo", "x"]
 
 
@@ -186,13 +186,13 @@ def test_failed_setup_fails_the_gate_without_running_tests(worker):
 
 def test_commands_are_detected_when_not_configured(tmp_path):
     (tmp_path / "package.json").write_text('{"scripts": {"test": "node test.js"}}')
-    assert sid_projects.detect_gate(tmp_path) == "npm test"
-    assert sid_projects.detect_setup(tmp_path).startswith("npm install")
+    assert laika_projects.detect_gate(tmp_path) == "npm test"
+    assert laika_projects.detect_setup(tmp_path).startswith("npm install")
     (tmp_path / "package-lock.json").write_text("{}")
     (tmp_path / "requirements.txt").write_text("flask\n")
-    setup = sid_projects.detect_setup(tmp_path)
+    setup = laika_projects.detect_setup(tmp_path)
     assert setup.startswith("npm ci") and ".venv/bin/pip install -q pytest -r requirements.txt" in setup
-    assert sid_projects.detect_setup(tmp_path / "missing") == ""
+    assert laika_projects.detect_setup(tmp_path / "missing") == ""
 
 
 def test_codex_runs_inside_the_project_sandbox_with_its_own_sandbox_off(tmp_path, hidden):
@@ -204,8 +204,8 @@ def test_codex_runs_inside_the_project_sandbox_with_its_own_sandbox_off(tmp_path
     assert f"--bind {wt} {wt}" in " ".join(argv)
     reviewer = project_sandbox.codex_command(codex, project, wt, writable=False)
     assert f"--bind {wt} {wt}" not in " ".join(reviewer)
-    sid = sid_projects.Project(sid_projects.sid_defaults())
-    assert project_sandbox.codex_command(codex, sid, wt) == codex  # SID keeps Codex's own sandbox
+    laika = laika_projects.Project(laika_projects.builtin_defaults())
+    assert project_sandbox.codex_command(codex, laika, wt) == codex  # LAIka keeps Codex's own sandbox
 
 
 def test_worker_wraps_codex_for_projects(worker, monkeypatch):

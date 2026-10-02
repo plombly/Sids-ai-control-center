@@ -1,7 +1,7 @@
 """File operations for the project file browser, confined to one root.
 
 Used by the API for a project's app data (apps/api/file_routes.py) and by
-the host for its code (scripts/sid-project.py code-change, which commits the
+the host for its code (scripts/laika-project.py code-change, which commits the
 result to main). Standard library only, so both can import it.
 
 Every path is relative to the root; nothing may climb out ("..", absolute
@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 OPS = ("mkdir", "rename", "move", "copy", "delete", "zip", "unzip")
-MAX_UNZIP_BYTES = int(os.environ.get("SID_MAX_UNZIP_BYTES", str(2 * 1024 ** 3)))
+MAX_UNZIP_BYTES = int(os.environ.get("LAIKA_MAX_UNZIP_BYTES", str(2 * 1024 ** 3)))
 MAX_UNZIP_FILES = 20000
 
 
@@ -170,7 +170,7 @@ def make_zip(root, path, forbid_git=False):
         raise FileOpError("Links cannot be zipped")
     folder = source.parent
     target = folder / free_name(folder, f"{source.name}.zip")
-    tmp = folder / f".sid-zip-{os.getpid()}.tmp"
+    tmp = folder / f".laika-zip-{os.getpid()}.tmp"
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as archive:
             if source.is_dir():
@@ -418,7 +418,7 @@ def zip_many(root, paths, dest, name, forbid_git=False, resolution=None):
             target = folder / free_name(folder, name)
         elif any(_inside(source, target) for source, _ in sources):
             raise FileOpError(f"Cannot overwrite {name}: it is one of the selected items")
-    tmp = folder / f".sid-zip-{os.getpid()}.tmp"
+    tmp = folder / f".laika-zip-{os.getpid()}.tmp"
     try:
         write_zip(tmp, [(source, source.name) for source, _ in sources], forbid_git)
         if os.path.lexists(target):

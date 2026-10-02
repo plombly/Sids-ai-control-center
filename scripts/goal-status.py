@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 def main():
@@ -17,10 +17,10 @@ def main():
 
     r = redis.Redis.from_url(
         "redis://127.0.0.1:6379/0",
-        password=sid_redis.password(), decode_responses=True,
+        password=laika_redis.password(), decode_responses=True,
     )
 
-    goal = r.hgetall(f"sid:goals:{args.goal_id}")
+    goal = r.hgetall(f"laika:goals:{args.goal_id}")
 
     if not goal:
         raise SystemExit("Goal not found")
@@ -42,7 +42,7 @@ def main():
         print("JOBS")
 
         for job_id in jobs:
-            job = r.hgetall(f"sid:jobs:{job_id}")
+            job = r.hgetall(f"laika:jobs:{job_id}")
             print(
                 f"{job_id}  "
                 f"{job.get('status', '-'):26}  "

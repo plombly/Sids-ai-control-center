@@ -14,7 +14,7 @@ from test_project_routes import FakeRedis
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     monkeypatch.setattr(env_routes, "ENV_DIR", tmp_path / "project-env")
-    fake = FakeRedis({"sid:projects:shop": {"id": "shop", "status": "active"}}, members={"shop"})
+    fake = FakeRedis({"laika:projects:shop": {"id": "shop", "status": "active"}}, members={"shop"})
     monkeypatch.setattr(main, "redis", fake)
     with TestClient(main.app) as client:
         yield client, fake, tmp_path / "project-env"
@@ -31,7 +31,7 @@ def test_values_are_stored_but_never_returned(env):
     assert env_routes.read_env("shop") == {"API_KEY": secret}
     path = folder / "shop.env"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600 and stat.S_IMODE(folder.stat().st_mode) == 0o700
-    assert "restart_at" in fake.hashes["sid:projects:shop"]  # the app restarts with it
+    assert "restart_at" in fake.hashes["laika:projects:shop"]  # the app restarts with it
     assert client.delete("/api/projects/shop/env/API_KEY").json()["deleted"]
     assert env_routes.read_env("shop") == {}
 
@@ -45,8 +45,8 @@ def test_bad_names_and_values_are_refused(env, body, code):
     assert client.put("/api/projects/shop/env", json=body).status_code == code
 
 
-def test_sid_and_unknown_projects_have_no_env(env):
+def test_laika_and_unknown_projects_have_no_env(env):
     client, *_ = env
-    assert client.get("/api/projects/sid/env").status_code == 404
+    assert client.get("/api/projects/laika/env").status_code == 404
     assert client.put("/api/projects/ghost/env", json={"name": "A", "value": "b"}).status_code == 404
     assert client.delete("/api/projects/shop/env/NOPE").status_code == 404

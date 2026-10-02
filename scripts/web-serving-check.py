@@ -32,7 +32,7 @@ def main():
     require("ports" not in services["postgres"], "postgres must not be exposed")
     require(
         services["redis"].get("ports") == ["127.0.0.1:6379:6379"],
-        "redis must remain available to host-side SID tools only",
+        "redis must remain available to host-side LAIka tools only",
     )
 
     dockerfile = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
@@ -49,15 +49,15 @@ def main():
     require("proxy_pass http://127.0.0.1:8000;" in nginx, "API traffic must go to the api's host port")
     require("location = /health" in nginx, "nginx must provide a health endpoint")
     require(
-        "proxy_set_header X-SID-Token $sid_operator_token;" in nginx
-        and 'default "${SID_OPERATOR_TOKEN}";' in nginx,
+        "proxy_set_header X-Laika-Token $laika_operator_token;" in nginx
+        and 'default "${LAIKA_OPERATOR_TOKEN}";' in nginx,
         "API route must inject the operator token from the environment",
     )
     require(
-        "include /etc/nginx/sid-local-addrs.conf;" in nginx and "127.0.0.0/8    1;" in nginx,
+        "include /etc/nginx/laika-local-addrs.conf;" in nginx and "127.0.0.0/8    1;" in nginx,
         "requests from this server itself must not get the operator token",
     )
-    require("docker-entrypoint.d/15-sid-local-addrs.sh" in dockerfile,
+    require("docker-entrypoint.d/15-laika-local-addrs.sh" in dockerfile,
             "the web image must list this server's addresses at start")
 
 

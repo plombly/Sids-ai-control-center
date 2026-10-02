@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from sid_testing import ROOT
+from laika_testing import ROOT
 
 sys.path.insert(0, str(ROOT / "apps/api"))
 import file_ops  # noqa: E402

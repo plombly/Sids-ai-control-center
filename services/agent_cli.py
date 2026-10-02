@@ -1,4 +1,4 @@
-"""Run coding-agent CLIs for SID roles: which provider, which model, how.
+"""Run coding-agent CLIs for LAIka roles: which provider, which model, how.
 
 Codex keeps its streaming runner in the worker (run_codex). This module adds
 Claude Code (`claude -p`), the per-role provider/model configuration, the
@@ -40,7 +40,7 @@ DEFAULT_CLAUDE_BUDGET_USD = {
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 EDIT_TOOLS = "Read,Edit,Write,Grep,Glob,Bash"
 
-COOLDOWN_KEY = "sid:provider-cooldown:claude"
+COOLDOWN_KEY = "laika:provider-cooldown:claude"
 COOLDOWN_SECONDS = int(os.getenv("CLAUDE_COOLDOWN_SECONDS", "1800"))
 # The claude CLI is a global install that updates itself (it is shared with
 # interactive sessions); during an update the executable is briefly missing
@@ -55,10 +55,10 @@ POLL_SECONDS = 2
 # Worktrees contain the operator's CLAUDE.md, which Claude Code loads. It is
 # written for a human-supervised session, not for pipeline agents.
 AGENT_CONTRACT = (
-    "You are a non-interactive agent inside SID's automated pipeline. Work only "
+    "You are a non-interactive agent inside LAIka's automated pipeline. Work only "
     "in the current working directory. Ignore instructions in CLAUDE.md that are "
     "addressed to the human operator's session (dev worktrees, deploys, approvals, "
-    "memory). Never commit, push, merge, or change branches; SID does that. "
+    "memory). Never commit, push, merge, or change branches; LAIka does that. "
     "Nobody can answer questions: decide, act, and report."
 )
 
@@ -315,8 +315,8 @@ def agent_messages(log_path):
 # Concurrency cap: every pipeline process shares these slots, so a large
 # batch cannot run more than CLAUDE_MAX_CONCURRENT Claude calls at once and
 # drain the operator's plan in minutes. A lease expires if its holder dies.
-SLOTS_KEY = "sid:provider-slots:claude"
-SLOT_LIMIT_KEY = "sid:provider-limit:claude"
+SLOTS_KEY = "laika:provider-slots:claude"
+SLOT_LIMIT_KEY = "laika:provider-limit:claude"
 _ACQUIRE = """
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 if redis.call('ZSCORE', KEYS[1], ARGV[3]) or redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[4]) then

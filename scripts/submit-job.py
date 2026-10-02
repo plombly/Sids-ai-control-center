@@ -10,11 +10,11 @@ import sys
 from pathlib import Path
 import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Queue a job for the SID worker")
+    parser = argparse.ArgumentParser(description="Queue a job for the LAIka worker")
     parser.add_argument("task", help="Task description")
     parser.add_argument(
         "--model",
@@ -42,7 +42,7 @@ def main():
 
     r = redis.Redis.from_url(
         "redis://127.0.0.1:6379/0",
-        password=sid_redis.password(), decode_responses=True,
+        password=laika_redis.password(), decode_responses=True,
     )
 
     job_id = uuid.uuid4().hex[:8]
@@ -58,7 +58,7 @@ def main():
     }
 
     r.hset(
-        f"sid:jobs:{job_id}",
+        f"laika:jobs:{job_id}",
         mapping={
             "status": "queued",
             "provider": job["provider"],
@@ -69,7 +69,7 @@ def main():
         },
     )
 
-    r.rpush("sid:jobs", json.dumps(job))
+    r.rpush("laika:jobs", json.dumps(job))
 
     print(job_id)
 

@@ -45,7 +45,7 @@ let dialogElement = null;
 function dialog() {
   if (dialogElement && document.body.contains(dialogElement)) return dialogElement;
   dialogElement = document.createElement('dialog');
-  dialogElement.className = 'sid-dialog';
+  dialogElement.className = 'laika-dialog';
   document.body.appendChild(dialogElement);
   return dialogElement;
 }
@@ -57,7 +57,7 @@ function open(bodyHtml, buttons, { onReady, collect } = {}) {
   const actions = buttons
     .map(([value, label, kind]) => `<button type="button" data-dialog-value="${escValue(value)}" class="${kind || ''}">${esc(label)}</button>`)
     .join('');
-  element.innerHTML = `<div class="sid-dialog-body">${bodyHtml}</div><div class="sid-dialog-actions">${actions}</div>`;
+  element.innerHTML = `<div class="laika-dialog-body">${bodyHtml}</div><div class="laika-dialog-actions">${actions}</div>`;
   return new Promise(resolve => {
     let done = false;
     const finish = value => {

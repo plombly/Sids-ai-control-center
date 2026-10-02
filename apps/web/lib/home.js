@@ -1,5 +1,5 @@
-// The dashboard's home view: what needs you, what SID is doing, your
-// projects and what finished recently, plus a box to give SID new work.
+// The dashboard's home view: what needs you, what LAIka is doing, your
+// projects and what finished recently, plus a box to give LAIka new work.
 // Built from the data app.js already polls (renderPanels(state)) plus the
 // project list and system health. The detailed panels stay available under
 // "Details" (index.html).
@@ -29,7 +29,7 @@ const firstLine = value => {
   const line = text(value, '').split('\n').map(item => item.trim()).find(Boolean) || '';
   return line.length > 120 ? `${line.slice(0, 117)}…` : line;
 };
-const projectChip = (id, names = {}) => `<span class="chip">${esc(names[id] || id || 'sid')}</span>`;
+const projectChip = (id, names = {}) => `<span class="chip">${esc(names[id] || id || 'laika')}</span>`;
 
 // --- status line -----------------------------------------------------------------------
 
@@ -50,11 +50,11 @@ export function statusMarkup({ health, workers = [], jobs = [], projects = [] })
 
 // Projects the LAIka builder manages (LAIka itself, its app): nothing to
 // approve or answer for them here.
-export const viewOnlyIds = (projects = []) => new Set(['sid', ...projects.filter(project => project.view_only).map(project => project.id)]);
-const workable = (projects = []) => projects.filter(project => !project.view_only && project.id !== 'sid');
+export const viewOnlyIds = (projects = []) => new Set(['laika', ...projects.filter(project => project.view_only).map(project => project.id)]);
+const workable = (projects = []) => projects.filter(project => !project.view_only && project.id !== 'laika');
 
-export function needsYou({ approvals = [], jobs = [], dismissed = new Set(), viewOnly = new Set(['sid']) }) {
-  const mine = job => !viewOnly.has(job.project_id || 'sid');
+export function needsYou({ approvals = [], jobs = [], dismissed = new Set(), viewOnly = new Set(['laika']) }) {
+  const mine = job => !viewOnly.has(job.project_id || 'laika');
   const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass' && mine(job));
   const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id) && mine(job));
   return { ready, stuck };
@@ -64,7 +64,7 @@ export function needsYouMarkup(items, names = {}) {
   const { ready, stuck } = items;
   if (!ready.length && !stuck.length) return '<div class="home-empty">Nothing needs you right now.</div>';
   const approval = job => `<article class="home-card attention"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state ok">Ready to approve</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Tests and review passed. Approving puts it into main.</p><div class="card-actions"><button type="button" class="approve-button" data-op="approve" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}" data-candidate="${escValue(job.integrated_candidate_commit)}">Approve</button>${previewMarkup(job)}<button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}">Reject</button></div></article>`;
-  const stuckCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Stuck</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">SID gave up after several tries${job.error ? `: ${esc(firstLine(job.error))}` : ''}.</p><div class="card-actions"><button type="button" data-op="extend" data-job="${escValue(job.id)}" data-status="needs_human">Try again</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="needs_human">Give up</button></div></article>`;
+  const stuckCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Stuck</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">LAIka gave up after several tries${job.error ? `: ${esc(firstLine(job.error))}` : ''}.</p><div class="card-actions"><button type="button" data-op="extend" data-job="${escValue(job.id)}" data-status="needs_human">Try again</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="needs_human">Give up</button></div></article>`;
   // Tests that need the internet ask first (services/network_access.py).
   const networkCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Wants internet</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Its ${esc(job.network_request_step || 'tests')} seem to need internet access, which tests don't have by default.</p>${job.network_request_reason ? `<pre class="network-reason">${esc(job.network_request_reason)}</pre>` : ''}<div class="card-actions"><button type="button" data-op="network_once" data-job="${escValue(job.id)}" data-status="needs_human">Allow for this change</button><button type="button" data-op="network_always" data-job="${escValue(job.id)}" data-status="needs_human">Always allow in this project</button><button type="button" data-op="network_deny" data-job="${escValue(job.id)}" data-status="needs_human">Keep tests offline</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button></div></article>`;
   const card = job => (job.needs_human_kind === 'network' ? networkCard(job) : stuckCard(job));
@@ -75,7 +75,7 @@ export function needsYouMarkup(items, names = {}) {
 
 export function inProgressMarkup({ goals = [], jobs = [] }, names = {}, now = Date.now() / 1000) {
   const active = goals.filter(goal => ACTIVE_GOAL.test(text(goal.status, '')));
-  if (!active.length) return '<div class="home-empty">SID is idle. Give it something to do above.</div>';
+  if (!active.length) return '<div class="home-empty">LAIka is idle. Give it something to do above.</div>';
   return `<div class="home-cards">${active
     .map(goal => {
       const progress = goal.progress || {};
@@ -146,7 +146,7 @@ export function projectSelectMarkup(projects = [], chosen = '') {
 // The goal box is the goal assistant (lib/goal-assistant.js) with a project picker.
 export function composerMarkup(projects = []) {
   return assistantMarkup('home', {
-    label: 'What should SID work on?',
+    label: 'What should LAIka work on?',
     placeholder: 'e.g. Add a contact page with a form that emails me',
     extra: () => projectSelectMarkup(projects.length ? projects : currentProjects(), typeof document === 'undefined' ? '' : document.getElementById('home-goal-project')?.value || '')
   });
@@ -170,7 +170,7 @@ function paint(id, html) {
 function draw(state) {
   if (typeof document === 'undefined' || !document.getElementById('home')) return;
   const get = key => (Array.isArray(state?.[key]?.data) ? state[key].data : []);
-  const names = Object.fromEntries(projects.map(project => [project.id, project.id === 'sid' ? 'SID' : project.name || project.id]));
+  const names = Object.fromEntries(projects.map(project => [project.id, project.id === 'laika' ? 'LAIka' : project.name || project.id]));
   const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set(), viewOnly: viewOnlyIds(projects) });
   const count = items.ready.length + items.stuck.length;
   paint('home-status', statusMarkup({ health, workers: get('workers'), jobs: get('jobs'), projects }));

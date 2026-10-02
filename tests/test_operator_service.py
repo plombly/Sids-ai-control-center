@@ -1,13 +1,13 @@
-"""Behavior of services/operator/sid_operator.py, the Web action executor."""
+"""Behavior of services/operator/laika_operator.py, the Web action executor."""
 
 import json
 
 import pytest
 
-from sid_testing import BASE, INTEGRATED, JOB, ROOT, load_module, make_builder
+from laika_testing import BASE, INTEGRATED, JOB, ROOT, load_module, make_builder
 
-STREAM = "sid:operator-requests"
-GROUP = "sid-operator"
+STREAM = "laika:operator-requests"
+GROUP = "laika-operator"
 NOW = 1_800_000_000.0
 
 
@@ -28,7 +28,7 @@ def clock(memory_redis):
 
 @pytest.fixture
 def op(memory_redis, job_review, clock):
-    module = load_module(ROOT / "services/operator/sid_operator.py")
+    module = load_module(ROOT / "services/operator/laika_operator.py")
     module.redis = memory_redis
     module.job_review = job_review
     module.ALLOWED_ACTIONS = frozenset(module.ACTIONS)
@@ -63,7 +63,7 @@ def deliver(op, now=None):
 
 
 def result(op, request_id="req-00000001"):
-    return op.redis.hgetall(f"sid:operator-results:{request_id}")
+    return op.redis.hgetall(f"laika:operator-results:{request_id}")
 
 
 def job(op, status="awaiting_review", **fields):
@@ -98,8 +98,8 @@ def test_approve_end_to_end_merges_the_confirmed_candidate(op, fake_git, approva
     submit(op, action="approve", expected_candidate=INTEGRATED)
     deliver(op)
     assert result(op)["status"] == "succeeded"
-    assert fake_git.ran("merge") == [("merge", "--ff-only", f"sid/integration-{JOB}")]
-    assert op.redis.hget(f"sid:jobs:{JOB}", "status") == "merged"
+    assert fake_git.ran("merge") == [("merge", "--ff-only", f"laika/integration-{JOB}")]
+    assert op.redis.hget(f"laika:jobs:{JOB}", "status") == "merged"
 
 
 def test_approve_end_to_end_refuses_a_candidate_the_human_did_not_see(
@@ -111,7 +111,7 @@ def test_approve_end_to_end_refuses_a_candidate_the_human_did_not_see(
     assert "is not the integrated candidate" in done["message"]
     assert "ERROR:" in done["output"]
     assert fake_git.ran("merge") == []
-    assert op.redis.hget(f"sid:jobs:{JOB}", "status") == "awaiting_review"
+    assert op.redis.hget(f"laika:jobs:{JOB}", "status") == "awaiting_review"
 
 
 def test_approve_end_to_end_reports_stale_main(op, fake_git, approvable):
@@ -129,7 +129,7 @@ def test_reject_end_to_end(op, fake_git):
     deliver(op)
     assert result(op)["status"] == "succeeded"
     assert result(op)["message"] == f"REJECTED: {JOB}"
-    assert op.redis.hget(f"sid:jobs:{JOB}", "status") == "rejected"
+    assert op.redis.hget(f"laika:jobs:{JOB}", "status") == "rejected"
 
 
 def test_job_review_refusal_is_recorded_with_its_reason(op, fake_git):
@@ -199,7 +199,7 @@ def test_unkeyable_request_is_dropped_without_a_result(op, calls, request_id):
     submit(op, request_id=request_id)
     deliver(op)
     assert calls == []
-    assert not [k for k in op.redis.records if k.startswith("sid:operator-results:")]
+    assert not [k for k in op.redis.records if k.startswith("laika:operator-results:")]
     assert op.redis.pending(STREAM, GROUP) == {}
 
 
@@ -259,7 +259,7 @@ def test_second_entry_with_same_request_id_is_skipped(op, calls):
 
 def test_api_recorded_request_fields_are_kept(op, calls):
     job(op)
-    op.redis.hset("sid:operator-results:req-00000001", mapping={
+    op.redis.hset("laika:operator-results:req-00000001", mapping={
         "request_id": "req-00000001", "status": "pending",
         "requested_from": "10.0.0.5", "created_at": "1",
     })
@@ -330,7 +330,7 @@ def test_request_running_at_crash_is_interrupted_not_rerun(op, calls):
     job(op)
     submit(op)
     read_without_processing(op)
-    op.redis.hset("sid:operator-results:req-00000001",
+    op.redis.hset("laika:operator-results:req-00000001",
                   mapping={"started_at": str(NOW), "status": "running"})
     op.recover(now=NOW)
     assert calls == []
@@ -342,7 +342,7 @@ def test_claimed_but_not_yet_running_is_interrupted(op, calls):
     job(op)
     submit(op)
     read_without_processing(op)
-    op.redis.hset("sid:operator-results:req-00000001",
+    op.redis.hset("laika:operator-results:req-00000001",
                   mapping={"started_at": str(NOW), "status": "pending"})
     op.recover(now=NOW)
     assert calls == []
@@ -363,7 +363,7 @@ def test_finished_but_unacked_request_is_acked_without_rerun(op, calls):
     job(op)
     submit(op)
     read_without_processing(op)
-    op.redis.hset("sid:operator-results:req-00000001",
+    op.redis.hset("laika:operator-results:req-00000001",
                   mapping={"started_at": str(NOW), "status": "succeeded"})
     op.recover(now=NOW)
     assert calls == []
@@ -385,7 +385,7 @@ def test_unclaimed_request_that_expired_during_downtime_is_expired(op, calls):
 def test_heartbeat_advertises_allowed_actions_with_ttl(op):
     op.ALLOWED_ACTIONS = frozenset({"reject", "reopen"})
     op.heartbeat()
-    key = f"sid:operator-service:{op.OPERATOR_ID}"
+    key = f"laika:operator-service:{op.OPERATOR_ID}"
     beat = op.redis.hgetall(key)
     assert beat["allowed_actions"] == "reject,reopen"
     assert beat["status"] == "idle"
@@ -398,7 +398,7 @@ def test_ensure_group_is_idempotent(op):
 
 
 def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
-    source = (ROOT / "services/operator/sid_operator.py").read_text()
+    source = (ROOT / "services/operator/laika_operator.py").read_text()
     assert 'ROOT / "scripts/job-review.py"' in source
     assert 'job_review.approve(job_id, expected_candidate=request["expected_candidate"])' in source
     for forbidden in ('"git"', '"merge"', "hdel(", "rpush("):
@@ -423,7 +423,7 @@ def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
     ({"action": "project_push_setup", "project_id": "web", "url": "../../x"}, "git@"),
     ({"action": "delete_project", "project_id": "web"}, "confirm"),
     ({"action": "delete_project", "project_id": "web", "confirm": "web2"}, "confirm"),
-    ({"action": "delete_project", "project_id": "sid", "confirm": "sid"}, "SID itself"),
+    ({"action": "delete_project", "project_id": "laika", "confirm": "laika"}, "LAIka itself"),
 ])
 def test_project_requests_are_validated(op, fields, reason):
     with pytest.raises(op.Invalid, match=reason):
@@ -461,7 +461,7 @@ def test_project_request_runs_the_cli_and_reports_the_deploy_key(op):
         returncode=0, stdout=json.dumps({"id": "web", "status": "pending_key", "public_key": "ssh-ed25519 AAA"}), stderr="")
     status, message, output = op.execute_project({"action": "project_retry_clone", "project_id": "web"}, runner)
     assert status == "succeeded" and "deploy key created" in message and "ssh-ed25519" in output
-    assert seen[0][1].endswith("scripts/sid-project.py") and seen[0][2:] == ["retry-clone", "web"]
+    assert seen[0][1].endswith("scripts/laika-project.py") and seen[0][2:] == ["retry-clone", "web"]
     fail = lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="ERROR: project id already registered\n")
     assert op.execute_project({"action": "project_retry_clone", "project_id": "web"}, fail)[:2] == (
         "refused", "project id already registered")
@@ -492,8 +492,8 @@ def test_commit_upload_request(op):
                 {"path": "a\nb", "upload": "upload-0001"}):
         with pytest.raises(op.Invalid):
             op.validate({"action": "project_commit_upload", "project_id": "web", **bad}, f"{int(NOW * 1000)}-0", NOW)
-    with pytest.raises(op.Invalid, match="SID"):
-        op.validate({"action": "project_commit_upload", "project_id": "sid", "path": "a", "upload": "upload-0001"},
+    with pytest.raises(op.Invalid, match="LAIka"):
+        op.validate({"action": "project_commit_upload", "project_id": "laika", "path": "a", "upload": "upload-0001"},
                     f"{int(NOW * 1000)}-0", NOW)
 
 
@@ -509,9 +509,9 @@ def test_code_change_request(op):
                     f"{int(NOW * 1000)}-0", NOW)
 
 
-def test_push_setup_is_refused_for_sid(op):
+def test_push_setup_is_refused_for_laika(op):
     with pytest.raises(op.Invalid, match="managed on the host"):
-        op.validate({"action": "project_push_setup", "project_id": "sid", "url": "git@github.com:me/x.git"},
+        op.validate({"action": "project_push_setup", "project_id": "laika", "url": "git@github.com:me/x.git"},
                     f"{int(NOW * 1000)}-0", NOW)
 
 
@@ -551,4 +551,4 @@ def test_undo_requests(op):
         with pytest.raises(op.Invalid):
             op.validate({"action": "project_revert", "project_id": "shop", **bad}, stamp, NOW)
     with pytest.raises(op.Invalid):
-        op.validate({"action": "project_revert", "project_id": "sid", "undo_job": "j1"}, stamp, NOW)
+        op.validate({"action": "project_revert", "project_id": "laika", "undo_job": "j1"}, stamp, NOW)

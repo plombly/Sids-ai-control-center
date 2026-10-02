@@ -1,0 +1,24 @@
+[Unit]
+Description=LAIka worker %i
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+Environment=WORKER_QUEUE=laika:jobs
+Environment=WORKER_ID=laika-worker-%i
+Environment=WORKER_ROLE=builder
+Environment=LAIKA_PYTHON=/var/lib/laika/venv/bin/python
+Environment=BUILDER_TIMEOUT_SECONDS=900
+Environment=REPAIR_TIMEOUT_SECONDS=600
+EnvironmentFile=-/etc/laika/laika.env
+ExecStart=/usr/bin/python3 /opt/laika/services/worker/worker.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

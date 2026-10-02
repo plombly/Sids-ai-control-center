@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from sid_testing import ROOT, load_module
+from laika_testing import ROOT, load_module
 
 
 @pytest.fixture
 def bk(tmp_path, monkeypatch):
-    module = load_module(ROOT / "scripts/backup-sid.py")
+    module = load_module(ROOT / "scripts/laika-backup.py")
     module.BACKUP_ROOT = tmp_path / "backups"
     recorded = []
     module.record_status = recorded.append
@@ -59,7 +59,7 @@ def test_rotation_keeps_newest(bk, tmp_path):
 
 
 def test_config_archive_includes_only_existing_paths(bk, tmp_path):
-    present = tmp_path / "etc-sid"
+    present = tmp_path / "etc-laika"
     present.mkdir()
     (present / "operator.env").write_text("SECRET=1")
     bk.CONFIG_PATHS = [present, tmp_path / "missing.service"]
@@ -70,14 +70,14 @@ def test_config_archive_includes_only_existing_paths(bk, tmp_path):
 
 def test_remote_copy_failure_fails_the_run(bk, monkeypatch):
     fake_steps(bk)
-    bk.BACKUP_REMOTE = "backup@offsite:/sid"
+    bk.BACKUP_REMOTE = "backup@offsite:/laika"
     monkeypatch.setattr(bk, "run", lambda cmd, **k: SimpleNamespace(returncode=23, stderr="rsync: denied", stdout=""))
     assert bk.main() == 1
     assert bk.recorded[-1]["ok"] is False
 
 
 def test_secrets_are_copied_not_read():
-    source = (ROOT / "scripts/backup-sid.py").read_text()
+    source = (ROOT / "scripts/laika-backup.py").read_text()
     assert "read_text" not in source.split("def backup_config")[1].split("def rotate")[0]
 
 
@@ -99,8 +99,8 @@ def test_rotation_never_touches_directories_it_did_not_create(bk, tmp_path):
 
 
 def test_default_location_is_a_dedicated_directory(bk):
-    module = load_module(ROOT / "scripts/backup-sid.py")
-    assert str(module.BACKUP_ROOT).endswith("/sid-ai/snapshots")
+    module = load_module(ROOT / "scripts/laika-backup.py")
+    assert str(module.BACKUP_ROOT).endswith("/laika/snapshots")
 
 
 def test_git_remote_push_is_part_of_the_backup(bk, monkeypatch):

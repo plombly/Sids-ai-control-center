@@ -1,12 +1,12 @@
-"""scripts/sid-digest.py: posts once in the scheduled hour of the scheduled day."""
+"""scripts/laika-digest.py: posts once in the scheduled hour of the scheduled day."""
 
 import datetime
 
-from sid_testing import ROOT, load_module
+from laika_testing import ROOT, load_module
 
 
 def test_due_once_per_week_in_the_scheduled_hour():
-    module = load_module(ROOT / "scripts/sid-digest.py")
+    module = load_module(ROOT / "scripts/laika-digest.py")
     settings = module.notify_core.clean_settings({"digest": {"day": "sun", "time": "18:00"}})
     sunday_six = datetime.datetime(2026, 10, 4, 18, 20)  # a Sunday
     due, week = module.due(settings, sunday_six, None)

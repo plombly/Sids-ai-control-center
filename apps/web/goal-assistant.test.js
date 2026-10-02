@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applySession, assistantInner, assistantMarkup, boxState, projectOf } from './lib/goal-assistant.js';
 
-const opts = { label: 'What should SID do in <G>?', placeholder: 'Describe it' };
+const opts = { label: 'What should LAIka do in <G>?', placeholder: 'Describe it' };
 
 test('idle box: typed text survives redraws; both ways to send', () => {
   const state = boxState('project:g');
   state.draft = 'add <a> pause menu';
   const html = assistantMarkup('project:g', opts);
   assert.match(html, /id="assist-project-g"/);
-  assert.match(html, /What should SID do in &lt;G&gt;\?/);
+  assert.match(html, /What should LAIka do in &lt;G&gt;\?/);
   assert.match(html, />add &lt;a&gt; pause menu<\/textarea>/);
   assert.match(html, /data-assist-plain="project:g">Send as written/);
   assert.match(html, /data-assist-start="project:g">Plan it with me/);

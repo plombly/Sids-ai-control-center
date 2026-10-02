@@ -2,7 +2,7 @@
 
 Targets are write-only: the page shows whether a Discord webhook / ntfy
 topic is set (and its last 4 characters), never the value. The target file
-is the host's /etc/sid-ai/notify/notify.env, mounted here at /notify.
+is the host's /etc/laika/notify/notify.env, mounted here at /notify.
 """
 
 import json
@@ -83,8 +83,8 @@ def send_test():
     targets = notify_core.load_targets()
     if not (targets.get("DISCORD_WEBHOOK") or targets.get("NTFY_URL")):
         raise HTTPException(status_code=409, detail="Add a Discord webhook or an ntfy topic first")
-    delivered = notify_core.send(targets, "SID test notification",
-                                 "This is how SID reaches you. Events set to 'post + ping' mention you like this.",
+    delivered = notify_core.send(targets, "LAIka test notification",
+                                 "This is how LAIka reaches you. Events set to 'post + ping' mention you like this.",
                                  targets.get("DASHBOARD_URL", ""), "ping")
     if not delivered:
         raise HTTPException(status_code=502, detail="Discord / ntfy did not accept the message; check the address")
@@ -95,18 +95,18 @@ def _digest_data():
     import main
     hashes = lambda pattern: {key.split(":", 2)[2]: data for key, data in main._hashes(pattern)}
     redis = main.redis
-    ids = ["sid", *sorted(i for i in projects._members(main) if i != "sid")]
+    ids = ["laika", *sorted(i for i in projects._members(main) if i != "laika")]
     project_list = []
     for project_id in ids:
         data = projects._project_data(project_id)
-        if project_id != "sid" and (data.get("status") or "active") != "active":
+        if project_id != "laika" and (data.get("status") or "active") != "active":
             continue
-        project_list.append((project_id, "SID" if project_id == "sid" else data.get("name") or project_id))
+        project_list.append((project_id, "LAIka" if project_id == "laika" else data.get("name") or project_id))
     load = lambda key: json.loads(redis.get(key) or "null")
-    return {"projects": project_list, "goals": hashes("sid:goals:*"), "jobs": hashes("sid:jobs:*"),
-            "events": {pid: redis.lrange(f"sid:events:{pid}", 0, 499) or [] for pid, _ in project_list},
-            "apps": {pid: redis.hgetall(f"sid:app-status:{pid}") or {} for pid, _ in project_list},
-            "backup": load("sid:backup:last"), "restore": load("sid:backup:restore-check")}
+    return {"projects": project_list, "goals": hashes("laika:goals:*"), "jobs": hashes("laika:jobs:*"),
+            "events": {pid: redis.lrange(f"laika:events:{pid}", 0, 499) or [] for pid, _ in project_list},
+            "apps": {pid: redis.hgetall(f"laika:app-status:{pid}") or {} for pid, _ in project_list},
+            "backup": load("laika:backup:last"), "restore": load("laika:backup:restore-check")}
 
 
 @router.get("/api/notifications/digest-preview")

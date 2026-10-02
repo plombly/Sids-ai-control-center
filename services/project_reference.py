@@ -6,8 +6,8 @@ latest main, e.g. an app's builder reading the API it talks to. The copy is
 a `git archive` of main (tracked files only: no history, no .git, nothing
 untracked such as secrets) under <consumer root>/reference/<member id>,
 which the sandbox shows read-only with the rest of the consumer's project
-directory. SID itself (a parent, never sandboxed) keeps its copies under
-SID_REFERENCE_DIR, which every project sandbox hides. It is refreshed when
+directory. LAIka itself (a parent, never sandboxed) keeps its copies under
+LAIKA_REFERENCE_DIR, which every project sandbox hides. It is refreshed when
 the member's main moves.
 """
 
@@ -16,12 +16,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-MARKER = ".sid-reference-head"
-SID_REFERENCE_DIR = Path(os.environ.get("SID_REFERENCE_DIR", "/var/lib/sid-ai/reference"))
+MARKER = ".laika-reference-head"
+LAIKA_REFERENCE_DIR = Path(os.environ.get("LAIKA_REFERENCE_DIR", "/var/lib/laika/reference"))
 
 
 def base_dir(consumer):
-    return SID_REFERENCE_DIR if consumer.is_sid else Path(consumer.root) / "reference"
+    return LAIKA_REFERENCE_DIR if consumer.is_builtin else Path(consumer.root) / "reference"
 
 
 def _head(project):

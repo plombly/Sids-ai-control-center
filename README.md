@@ -1,4 +1,4 @@
-# SID's AI Command Center
+# LAIka
 
 FastAPI service backed by PostgreSQL and Redis. Projects and Tasks retain their
 existing APIs and relationships. This foundation adds provider-neutral execution
@@ -132,9 +132,9 @@ Tests use isolated in-memory SQLite and fake CLI executables. They do not read
 `.env`, call a paid model, or connect to PostgreSQL/Redis:
 
 ```sh
-python3 -m venv /opt/sid-venv
-/opt/sid-venv/bin/pip install -r apps/api/requirements-dev.txt
-/opt/sid-venv/bin/python -m pytest apps/api/tests -q
+python3 -m venv /var/lib/laika/venv
+/var/lib/laika/venv/bin/pip install -r apps/api/requirements-dev.txt
+/var/lib/laika/venv/bin/python -m pytest apps/api/tests -q
 python3 -m compileall -q apps/api
 ```
 
@@ -168,6 +168,6 @@ python3 scripts/job-review.py reopen JOB_ID        # un-block a job whose failed
 `reintegrate` is also the recovery path for stale candidates (main moved after
 integration). It preserves the ordered source commits and never touches main.
 
-Workers honor `sid:worker-control:<WORKER_ID> = disabled` (set by the Web/API
+Workers honor `laika:worker-control:<WORKER_ID> = disabled` (set by the Web/API
 Stop button): the current job finishes, then no new jobs are claimed until
-Start clears it. Test gates use `SID_PYTHON`, defaulting to `/opt/sid-venv`.
+Start clears it. Test gates use `LAIKA_PYTHON`, defaulting to `/var/lib/laika/venv`.

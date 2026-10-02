@@ -1,7 +1,7 @@
 // What a project is (detected type, or the owner's choice / description),
 // goal templates for that type, and its Builds tab. Markup is pure; the
 // handlers at the bottom ask lib/projects.js to redraw through a
-// 'sid:project-refresh' event.
+// 'laika:project-refresh' event.
 import { requestJSON } from './api.js';
 import { esc, escValue, pill, text } from './format.js';
 import { registerClick } from './registry.js';
@@ -35,7 +35,7 @@ export function agoText(seconds, now = Date.now() / 1000) {
   return `${Math.round(age / 86400)} days ago`;
 }
 
-// The card at the top of Overview: type, why SID thinks so, templates and
+// The card at the top of Overview: type, why LAIka thinks so, templates and
 // the type's main action (games and apps get Build, services get their app).
 export function kindCardMarkup(project, catalog) {
   const id = text(project?.id, '');
@@ -48,19 +48,19 @@ export function kindCardMarkup(project, catalog) {
   let head;
   if (key === 'checking') head = '<span class="kind-icon" aria-hidden="true">⏳</span><span><b>Looking at the project…</b></span>';
   else if (!info) {
-    head = `<span class="kind-icon" aria-hidden="true">❔</span><span><b>Not recognised yet</b><span class="subtle"> SID checks again every hour and whenever main changes.</span></span>`;
+    head = `<span class="kind-icon" aria-hidden="true">❔</span><span><b>Not recognised yet</b><span class="subtle"> LAIka checks again every hour and whenever main changes.</span></span>`;
   } else head = `<span class="kind-icon" aria-hidden="true">${esc(info.icon)}</span><span><b>${esc(info.label)}</b>${stack}${source ? `<span class="subtle"> · ${esc(source)}</span>` : ''}</span>`;
   const evidence = (kind.evidence || []).length
     ? `<details class="kind-why"><summary>Why?</summary><ul>${kind.evidence.map(item => `<li>${esc(item)}</li>`).join('')}</ul></details>`
     : '';
-  const unknownHelp = !info && key !== 'checking' && id !== 'sid'
-    ? `<p class="subtle">Tell SID what it is: <a href="#/projects/${encodeURIComponent(id)}/settings">describe it or pick a type in Settings</a>.</p>`
+  const unknownHelp = !info && key !== 'checking' && id !== 'laika'
+    ? `<p class="subtle">Tell LAIka what it is: <a href="#/projects/${encodeURIComponent(id)}/settings">describe it or pick a type in Settings</a>.</p>`
     : '';
-  const canBuild = id !== 'sid' && recipe && !recipe.unsupported && (BUILT.test(key) || !info?.runs);
+  const canBuild = id !== 'laika' && recipe && !recipe.unsupported && (BUILT.test(key) || !info?.runs);
   const action = canBuild
     ? `<button type="button" class="primary" data-build-start="${esc(id)}">Build</button><a class="button" href="#/projects/${encodeURIComponent(id)}/builds">Builds</a>`
     : '';
-  const recheck = id !== 'sid' ? `<button type="button" class="detail-button" data-kind-recheck="${esc(id)}">Recheck</button>` : '';
+  const recheck = id !== 'laika' ? `<button type="button" class="detail-button" data-kind-recheck="${esc(id)}">Recheck</button>` : '';
   const templates = (info || typeOf(catalog, 'other'))?.templates || [];
   const chips = templates.length && project?.status !== 'archived'
     ? `<div class="template-chips" role="group" aria-label="Goal ideas">${templates
@@ -79,11 +79,11 @@ export function kindSettingsMarkup(project, catalog) {
     .map(([key, value]) => `<option value="${escValue(key)}"${kind.chosen === key ? ' selected' : ''}>${esc(value.icon)} ${esc(value.label)}</option>`)
     .join('');
   const auto = `Automatic (${detected ? esc(detected.label) : 'not recognised'})`;
-  const buildFields = id === 'sid' ? '' : `<h4>Build</h4><p class="subtle">Empty fields use the recipe for the detected stack. The command runs in a Docker container that only sees a copy of main.</p><label class="field">Build command<input name="build_command" value="${escValue(project.build_command)}" placeholder="From the detected stack" autocomplete="off"></label><label class="field">Docker image<input name="build_image" value="${escValue(project.build_image)}" placeholder="e.g. node:22-bookworm" autocomplete="off"></label><label class="field">Output folder<input name="build_output" value="${escValue(project.build_output)}" placeholder="e.g. dist" autocomplete="off"></label>${networkFieldsMarkup(project)}`;
-  return `<form id="project-type-form" class="goal-form kind-settings"><h3>Project type</h3><label class="field">Type<select name="type"><option value="">${auto}</option>${options}</select></label><label class="field">Describe it<textarea name="type_description" rows="2" maxlength="500" placeholder="e.g. a Discord bot that posts server stats, or a 2D platformer in Godot">${opt(kind.description)}</textarea></label><span class="field-hint">Used when SID cannot tell what the project is, and to pick goal ideas.</span>${buildFields}<div class="form-row"><button type="submit">Save</button>${id === 'sid' ? '' : `<button type="button" data-kind-recheck="${esc(id)}">Recheck now</button>`}<span id="project-type-status" class="form-status" role="status"></span></div></form>`;
+  const buildFields = id === 'laika' ? '' : `<h4>Build</h4><p class="subtle">Empty fields use the recipe for the detected stack. The command runs in a Docker container that only sees a copy of main.</p><label class="field">Build command<input name="build_command" value="${escValue(project.build_command)}" placeholder="From the detected stack" autocomplete="off"></label><label class="field">Docker image<input name="build_image" value="${escValue(project.build_image)}" placeholder="e.g. node:22-bookworm" autocomplete="off"></label><label class="field">Output folder<input name="build_output" value="${escValue(project.build_output)}" placeholder="e.g. dist" autocomplete="off"></label>${networkFieldsMarkup(project)}`;
+  return `<form id="project-type-form" class="goal-form kind-settings"><h3>Project type</h3><label class="field">Type<select name="type"><option value="">${auto}</option>${options}</select></label><label class="field">Describe it<textarea name="type_description" rows="2" maxlength="500" placeholder="e.g. a Discord bot that posts server stats, or a 2D platformer in Godot">${opt(kind.description)}</textarea></label><span class="field-hint">Used when LAIka cannot tell what the project is, and to pick goal ideas.</span>${buildFields}<div class="form-row"><button type="submit">Save</button>${id === 'laika' ? '' : `<button type="button" data-kind-recheck="${esc(id)}">Recheck now</button>`}<span id="project-type-status" class="form-status" role="status"></span></div></form>`;
 }
 
-// Internet access for tests and builds (services/network_access.py, scripts/sid-build.py).
+// Internet access for tests and builds (services/network_access.py, scripts/laika-build.py).
 export function networkFieldsMarkup(project) {
   const option = (value, label, current) => `<option value="${escValue(value)}"${current === value ? ' selected' : ''}>${esc(label)}</option>`;
   const gate = project?.gate_network === 'always' ? 'always' : '';
@@ -128,7 +128,7 @@ export function buildsMarkup(id, data, now = Date.now() / 1000, viewOnly = false
 }
 
 if (typeof document !== 'undefined') {
-  const refresh = () => window.dispatchEvent(new CustomEvent('sid:project-refresh'));
+  const refresh = () => window.dispatchEvent(new CustomEvent('laika:project-refresh'));
   const say = message => {
     for (const id of ['build-status', 'kind-status', 'project-type-status']) {
       const node = document.getElementById(id);

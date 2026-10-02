@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 FAKE_CLAUDE = textwrap.dedent('''\
     #!/usr/bin/env python3
@@ -253,7 +253,7 @@ def test_reviewer_runs_on_claude_and_records_provider_model_cost(worker, tmp_pat
     monkeypatch.setenv("FAKE_CLAUDE_RESULT", "Looks good.\nVERDICT: PASS")
     log = tmp_path / "rv.json"
     assert worker.run_agent(job("reviewer"), tmp_path, log)[0] == 0
-    record = worker.redis.records["sid:jobs:reviewer1"]
+    record = worker.redis.records["laika:jobs:reviewer1"]
     assert (record["provider"], record["model"], record["cost_usd"]) == ("claude", "sonnet", "0.0421")
     assert worker.codex_calls == []
     assert worker.parse_review_verdict(worker.agent_cli.agent_messages(log))[0] == "pass"
@@ -265,21 +265,21 @@ def test_builder_stays_on_codex(worker, tmp_path, fake_claude):
     worker.run_agent(job("builder", model="gpt-5.6-luna"), tmp_path, tmp_path / "b.jsonl")
     assert worker.codex_calls == ["builder1"]
     assert fake_claude() == []
-    assert worker.redis.records["sid:jobs:builder1"]["provider"] == "codex"
+    assert worker.redis.records["laika:jobs:builder1"]["provider"] == "codex"
 
 
 def test_repair_gets_the_allowlisted_shell(worker, tmp_path, fake_claude):
     worker.run_agent(job("repair"), tmp_path, tmp_path / "r.json")
     argv = fake_claude()[0]["argv"]
     allowed = argv[argv.index("--allowedTools") + 1:]
-    assert f"Bash({worker.SID_PYTHON} -m pytest *)" in allowed
+    assert f"Bash({worker.LAIKA_PYTHON} -m pytest *)" in allowed
     assert all(a.startswith("Bash(") for a in allowed)
 
 
 def test_plan_limit_falls_back_to_codex_and_cools_down(worker, tmp_path, monkeypatch, fake_claude):
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "limit")
     worker.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
-    record = worker.redis.records["sid:jobs:reviewer1"]
+    record = worker.redis.records["laika:jobs:reviewer1"]
     assert worker.codex_calls == ["reviewer1"]
     assert record["provider"] == "codex"
     assert "session limit" in record["provider_fallback"]
@@ -288,7 +288,7 @@ def test_plan_limit_falls_back_to_codex_and_cools_down(worker, tmp_path, monkeyp
     worker.run_agent(job("repair"), tmp_path, tmp_path / "r.json")
     assert len(fake_claude()) == 1
     assert worker.codex_calls == ["reviewer1", "repair1"]
-    assert "cooling down" in worker.redis.records["sid:jobs:repair1"]["provider_fallback"]
+    assert "cooling down" in worker.redis.records["laika:jobs:repair1"]["provider_fallback"]
 
 
 @pytest.mark.parametrize("mode,match", [("budget", "error_max_budget_usd"), ("crash", "status 3")])
@@ -377,7 +377,7 @@ def test_worker_heartbeat_shows_the_running_jobs_provider_and_model(worker, tmp_
 
 def test_orchestrator_heartbeat_and_goal_record_the_planner(orch, fake_claude, monkeypatch):
     orch.heartbeat()
-    beat = orch.r.records[f"sid:orchestrators:{orch.ORCHESTRATOR_ID}"]
+    beat = orch.r.records[f"laika:orchestrators:{orch.ORCHESTRATOR_ID}"]
     assert (beat["provider"], beat["model"]) == ("claude", "opus")
     monkeypatch.setenv("FAKE_CLAUDE_RESULT", '{"jobs": []}')
     info = {}
@@ -430,7 +430,7 @@ def test_job_waits_for_a_slot_then_runs_on_claude_and_frees_it(worker, tmp_path,
     worker.heartbeat = lambda status="idle": free_after_first_tick()
     worker.agent_cli.POLL_SECONDS = 0.01
     worker.run_agent(job("reviewer"), tmp_path, tmp_path / "rv.json")
-    assert worker.redis.records["sid:jobs:reviewer1"]["provider"] == "claude"
+    assert worker.redis.records["laika:jobs:reviewer1"]["provider"] == "claude"
     assert worker.redis.zsets[worker.agent_cli.SLOTS_KEY] == {}, "slot released after the run"
 
 
@@ -439,7 +439,7 @@ def test_job_falls_back_to_codex_when_claude_stays_at_capacity(worker, tmp_path,
     monkeypatch.setenv("CLAUDE_SLOT_WAIT_SECONDS", "0")
     worker.agent_cli.acquire_claude_slot(worker.redis, "job:other", 1000)
     worker.run_agent(job("repair"), tmp_path, tmp_path / "r.json")
-    record = worker.redis.records["sid:jobs:repair1"]
+    record = worker.redis.records["laika:jobs:repair1"]
     assert record["provider"] == "codex" and "at capacity" in record["provider_fallback"]
     assert fake_claude() == []
 
@@ -482,7 +482,7 @@ def test_specialist_reviews_run_in_parallel_and_all_must_pass(aspects, tmp_path,
     verdict, findings = aspects.parse_review_verdict(aspects.agent_cli.agent_messages(log))
     assert verdict == "pass"
     assert "## spec review (sonnet)" in findings and "## safety review" in findings
-    assert aspects.redis.records["sid:jobs:reviewer1"]["cost_usd"] == "0.0842", "costs summed"
+    assert aspects.redis.records["laika:jobs:reviewer1"]["cost_usd"] == "0.0842", "costs summed"
     assert aspects.parse_codex_log(log)[1]["effective_tokens"] == "520", "usage summed"
 
 
@@ -543,7 +543,7 @@ def test_rebase_check_is_one_cheap_fresh_review(worker, tmp_path, monkeypatch, f
     assert flag(call["argv"], "--model") == "claude-haiku-4-5-20251001"
     assert flag(call["argv"], "--tools") == "", "no tools: one turn, no exploration"
     assert "REBASE CHECK" in call["prompt"]
-    assert worker.redis.records["sid:jobs:reviewer1"]["review_kind"] == "rebase_check"
+    assert worker.redis.records["laika:jobs:reviewer1"]["review_kind"] == "rebase_check"
 
 
 def test_changed_patch_gets_the_full_specialist_review(worker, tmp_path, monkeypatch, fake_claude):

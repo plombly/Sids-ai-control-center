@@ -9,15 +9,15 @@ import time
 from pathlib import Path
 
 
-REPO = Path(os.getenv("REPO_ROOT", "/opt/sids-ai-command-center")).resolve()
+REPO = Path(os.getenv("REPO_ROOT", "/opt/laika")).resolve()
 def _default_python():
-    durable = Path("/opt/sid-venv/bin/python")
-    return str(durable) if durable.exists() else "/tmp/sid-agent-venv/bin/python"
+    durable = Path("/var/lib/laika/venv/bin/python")
+    return str(durable) if durable.exists() else "/tmp/laika-agent-venv/bin/python"
 
 
-PYTHON = Path(os.getenv("SID_PYTHON") or _default_python())
+PYTHON = Path(os.getenv("LAIKA_PYTHON") or _default_python())
 NODE = shutil.which("node")
-RESULT_DIR = Path(os.getenv("INTEGRATION_RESULT_DIR", "/var/log/sid-ai/integration"))
+RESULT_DIR = Path(os.getenv("INTEGRATION_RESULT_DIR", "/var/log/laika/integration"))
 
 
 CHECKS = [
@@ -31,7 +31,7 @@ CHECKS = [
     ),
     (
         "tui-syntax",
-        [str(PYTHON), "-m", "py_compile", "apps/tui/sid-tui.py"],
+        [str(PYTHON), "-m", "py_compile", "apps/tui/laika-tui.py"],
     ),
     (
         "worker-syntax",
@@ -120,7 +120,7 @@ def main():
     started = time.time()
     results = []
 
-    print(f"SID integration check: {branch} @ {commit[:12]}")
+    print(f"LAIka integration check: {branch} @ {commit[:12]}")
     print()
 
     for name, command in CHECKS:

@@ -1,43 +1,43 @@
 """Filesystem sandbox (bubblewrap) for everything that runs inside a project.
 
-Projects other than SID are untrusted code: their gate runs the project's own
+Projects other than LAIka are untrusted code: their gate runs the project's own
 test command, and their agents (Codex builder, Claude reviewer/repair) run
 shell commands chosen by a model. Without a sandbox all of it runs as root on
-the host and could read SID's secrets or rewrite another project.
+the host and could read LAIka's secrets or rewrite another project.
 
 Inside the sandbox a process sees:
-  - the host filesystem read-only, with SID's own trees, secrets, backups,
+  - the host filesystem read-only, with LAIka's own trees, secrets, backups,
     logs, /root and every other project hidden (empty tmpfs);
   - its own project directory read-only (deploy key masked);
   - the job's worktree read-write (its .git pointer file read-only, and the
     repository's .git read-only, so nothing can plant hooks or config that
-    SID's own git commands on the host would later execute);
+    LAIka's own git commands on the host would later execute);
   - a private, empty /tmp;
   - for agents only, their own CLI state (~/.codex, ~/.claude) read-write;
   - for gates, no network at all (a private loopback): tests cannot reach
     the internet or anything on this server. network=True (the operator
     allowed it for the job or the project, see services/network_access.py)
-    or SID_SANDBOX_GATE_NETWORK=1 shares the host network instead;
+    or LAIKA_SANDBOX_GATE_NETWORK=1 shares the host network instead;
   - for the setup step (dependency install), the host network and a
     persistent per-project package cache (<project>/cache as HOME), because
     npm/pip must download. It is otherwise confined like a gate;
-  - for a running app (services/apps/sid_apps.py), the host network (so your
+  - for a running app (services/apps/laika_apps.py), the host network (so your
     PC can reach its port), its live checkout writable and its persistent
-    data directory /opt/sid-project-data/<id> (HOME and DATA_DIR).
+    data directory /var/lib/laika/project-data/<id> (HOME and DATA_DIR).
 
-The SID project itself is the control plane and is never sandboxed here.
+The LAIka project itself is the control plane and is never sandboxed here.
 """
 
 import os
 from pathlib import Path
 
-BWRAP = os.environ.get("SID_BWRAP", "/usr/bin/bwrap")
+BWRAP = os.environ.get("LAIKA_BWRAP", "/usr/bin/bwrap")
 
 # Hidden from every sandbox (replaced by an empty tmpfs when present).
 HIDDEN = (
-    "/opt/sids-ai-command-center", "/opt/sid-dev", "/opt/sid-worktrees",
-    "/opt/sid-projects", "/opt/sid-project-data", "/opt/sid-uploads", "/opt/sid-trash", "/etc/sid-ai",
-    "/var/backups", "/var/log/sid-ai", "/var/lib/sid-ai",
+    "/opt/laika", "/opt/sid-dev", "/var/lib/laika/worktrees",
+    "/var/lib/laika/projects", "/var/lib/laika/project-data", "/var/lib/laika/uploads", "/var/lib/laika/trash", "/etc/laika",
+    "/var/backups", "/var/log/laika", "/var/lib/laika",
     "/root", "/home", "/srv", "/mnt", "/media",
 )
 # Sockets that grant root on the host.
@@ -47,7 +47,7 @@ AGENT_STATE = ("/root/.codex", "/root/.claude", "/root/.claude.json")
 # Shared SDKs installed on the host (e.g. Flutter at /opt/flutter). Inside a
 # sandbox each gets a throwaway writable overlay: the SDK writes lock files
 # and caches into its own directory, and no project can change the real one.
-TOOLCHAINS = tuple(p for p in os.environ.get("SID_TOOLCHAINS", "/opt/flutter").split(":") if p)
+TOOLCHAINS = tuple(p for p in os.environ.get("LAIKA_TOOLCHAINS", "/opt/flutter").split(":") if p)
 
 
 def toolchain_paths():
@@ -56,7 +56,7 @@ def toolchain_paths():
 
 
 def enabled():
-    return os.environ.get("SID_PROJECT_SANDBOX", "1") != "0"
+    return os.environ.get("LAIKA_PROJECT_SANDBOX", "1") != "0"
 
 
 def _exists(path):
@@ -64,12 +64,12 @@ def _exists(path):
 
 
 def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None, network=False):
-    """argv wrapped in bubblewrap for this project (unchanged for SID).
+    """argv wrapped in bubblewrap for this project (unchanged for LAIka).
 
     kind: "gate" (no network, no agent state), "setup" (network, package
     cache) or "agent" (network, CLI state). writable=False
     (the planner) leaves workdir read-only like the rest of the project."""
-    if project is None or project.is_sid or not enabled():
+    if project is None or project.is_builtin or not enabled():
         return list(argv)
     if kind not in ("gate", "setup", "agent", "app"):
         raise ValueError(f"unknown sandbox kind: {kind}")
@@ -79,7 +79,7 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
     args = [BWRAP, "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc",
             "--unshare-uts", "--unshare-cgroup-try", "--cap-drop", "ALL",
             "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
-    if kind == "gate" and not network and os.environ.get("SID_SANDBOX_GATE_NETWORK") != "1":
+    if kind == "gate" and not network and os.environ.get("LAIKA_SANDBOX_GATE_NETWORK") != "1":
         args.append("--unshare-net")
     for path in HIDDEN:
         if os.path.isdir(path) and not os.path.islink(path):
@@ -109,9 +109,9 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
             if _exists(path):
                 args += ["--bind", path, path]
     if kind == "app":
-        import sid_projects
+        import laika_projects
         # A preview gets its own empty data folder, never the app's real data.
-        data = Path(data_dir) if data_dir else sid_projects.data_dir(project.id)
+        data = Path(data_dir) if data_dir else laika_projects.data_dir(project.id)
         data.mkdir(parents=True, exist_ok=True)
         args += ["--bind", str(data), str(data), "--setenv", "HOME", str(data), "--setenv", "DATA_DIR", str(data)]
     for path in TOOLCHAINS:
@@ -143,13 +143,13 @@ def codex_command(argv, project, workdir, writable=True):
     allowing it would mean handing the outer sandbox real privileges). For
     projects, Codex therefore runs inside this sandbox with its own turned
     off (--dangerously-bypass-approvals-and-sandbox, meant for "externally
-    sandboxed" use): its commands get no capabilities (NoNewPrivs), see SID's
+    sandboxed" use): its commands get no capabilities (NoNewPrivs), see LAIka's
     trees, secrets and other projects hidden, and can write only workdir
     (writable=False: nothing). They do get network access (Codex itself needs
-    it), and can read Codex's own login in ~/.codex. SID itself runs Codex
+    it), and can read Codex's own login in ~/.codex. LAIka itself runs Codex
     with Codex's sandbox as before."""
     argv = list(argv)
-    if project is None or project.is_sid or not enabled():
+    if project is None or project.is_builtin or not enabled():
         return argv
     if "--sandbox" in argv:
         index = argv.index("--sandbox")

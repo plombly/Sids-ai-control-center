@@ -9,25 +9,25 @@ import sys
 from pathlib import Path
 import redis
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
-import sid_redis  # noqa: E402  (services/sid_redis.py)
+import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Submit a high-level goal to SID"
+        description="Submit a high-level goal to LAIka"
     )
     parser.add_argument("goal")
     parser.add_argument("--atomic", action="store_true", help="Require exactly one implementation job")
-    parser.add_argument("--project", default="", help="Project id (default: SID itself)")
+    parser.add_argument("--project", default="", help="Project id (default: LAIka itself)")
     args = parser.parse_args()
 
     r = redis.Redis.from_url(
         "redis://127.0.0.1:6379/0",
-        password=sid_redis.password(), decode_responses=True,
+        password=laika_redis.password(), decode_responses=True,
     )
 
     project_id = args.project.strip()
-    if project_id and project_id != "sid" and not r.sismember("sid:projects", project_id):
+    if project_id and project_id != "laika" and not r.sismember("laika:projects", project_id):
         parser.error(f"unknown project: {project_id}")
     goal_id = uuid.uuid4().hex[:8]
     created = str(time.time())
@@ -44,8 +44,8 @@ def main():
     if project_id:
         record["project_id"] = queued["project_id"] = project_id
 
-    r.hset(f"sid:goals:{goal_id}", mapping=record)
-    r.rpush("sid:goals", json.dumps(queued))
+    r.hset(f"laika:goals:{goal_id}", mapping=record)
+    r.rpush("laika:goals", json.dumps(queued))
 
     print(f"Goal queued: {goal_id}")
     print(f"Goal: {args.goal}")

@@ -1,0 +1,11 @@
+[Unit]
+Description=LAIka: weekly digest (posts when due)
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-digest.py

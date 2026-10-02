@@ -49,7 +49,7 @@ test('in progress: progress bar and what is happening now', () => {
   assert.match(html, /1 of 4 steps done · Building: Add cart/);
   assert.match(html, /data-elapsed-since="1799999940"/);
   assert.doesNotMatch(html, /g2/);
-  assert.match(inProgressMarkup({ goals: [] }), /SID is idle/);
+  assert.match(inProgressMarkup({ goals: [] }), /LAIka is idle/);
 });
 
 test('projects and recent work', () => {
@@ -70,7 +70,7 @@ test('projects and recent work', () => {
 });
 
 test('composer lists projects', () => {
-  const html = composerMarkup([{ id: 'sid', name: 'SID' }, { id: 'shop', name: '<Shop>' }]);
+  const html = composerMarkup([{ id: 'laika', name: 'LAIka' }, { id: 'shop', name: '<Shop>' }]);
   assert.match(html, /id="assist-home"/);
   assert.match(html, /<option value="shop">&lt;Shop&gt;<\/option>/);
 });
@@ -87,15 +87,15 @@ test('a job asking for internet access gets its own card', () => {
 
 test('managed projects never ask anything on the home page', async () => {
   const { needsYou, viewOnlyIds, projectSelectMarkup } = await import('./lib/home.js');
-  const projects = [{ id: 'sid' }, { id: 'app', view_only: true }, { id: 'shop', name: 'Shop' }];
+  const projects = [{ id: 'laika' }, { id: 'app', view_only: true }, { id: 'shop', name: 'Shop' }];
   const jobs = [{ id: 'a', status: 'needs_human', project_id: 'app' }, { id: 'b', status: 'needs_human' },
     { id: 'c', status: 'needs_human', project_id: 'shop' }];
-  const approvals = [{ id: 'd', status: 'awaiting_review', review_verdict: 'pass', project_id: 'sid' }];
+  const approvals = [{ id: 'd', status: 'awaiting_review', review_verdict: 'pass', project_id: 'laika' }];
   const items = needsYou({ approvals, jobs, viewOnly: viewOnlyIds(projects) });
   assert.deepEqual(items.stuck.map(job => job.id), ['c']);
   assert.deepEqual(items.ready, []);
   const select = projectSelectMarkup(projects);
   assert.match(select, /value="shop"/);
-  assert.doesNotMatch(select, /value="sid"|value="app"/);
-  assert.match(projectSelectMarkup([{ id: 'sid' }]), /Create a project first/);
+  assert.doesNotMatch(select, /value="laika"|value="app"/);
+  assert.match(projectSelectMarkup([{ id: 'laika' }]), /Create a project first/);
 });

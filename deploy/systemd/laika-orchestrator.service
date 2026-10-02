@@ -1,0 +1,22 @@
+[Unit]
+Description=LAIka orchestrator
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+Environment=GOAL_QUEUE=laika:goals
+Environment=WORKER_QUEUE=laika:jobs
+Environment=ORCHESTRATOR_ID=laika-orchestrator-01
+Environment=LAIKA_PYTHON=/var/lib/laika/venv/bin/python
+EnvironmentFile=-/etc/laika/laika.env
+ExecStart=/usr/bin/python3 /opt/laika/services/orchestrator/orchestrator.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,9 +1,9 @@
-"""Fixtures for host-side tests; helpers live in sid_testing.py, which has
+"""Fixtures for host-side tests; helpers live in laika_testing.py, which has
 a unique module name (both tests/ and apps/api/tests have a conftest)."""
 
 import pytest
 
-from sid_testing import (  # noqa: F401  (re-exported for fixtures below)
+from laika_testing import (  # noqa: F401  (re-exported for fixtures below)
     BASE, INTEGRATED, JOB, ROOT, FakeGit, MemoryRedis, load_module, make_builder,
 )
 
@@ -43,15 +43,15 @@ def approvable(job_review, fake_git):
         integration_status="passed", integration_base_commit=BASE,
         integrated_candidate_commit=INTEGRATED, reviewed_commit=INTEGRATED,
         integration_worktree=str(integration),
-        integration_branch=f"sid/integration-{JOB}",
+        integration_branch=f"laika/integration-{JOB}",
     )
     reviewer = {
         "id": "rv1", "role": "reviewer", "builder_job_id": JOB,
         "status": "review_complete", "review_verdict": "pass",
         "candidate_commit": INTEGRATED, "reviewed_commit": INTEGRATED,
     }
-    job_review.r.records["sid:jobs:rv1"] = reviewer
+    job_review.r.records["laika:jobs:rv1"] = reviewer
     fake_git.main_head = BASE
     fake_git.integrated_head = INTEGRATED
-    fake_git.branch_heads[f"sid/integration-{JOB}"] = INTEGRATED
+    fake_git.branch_heads[f"laika/integration-{JOB}"] = INTEGRATED
     return record, reviewer, integration

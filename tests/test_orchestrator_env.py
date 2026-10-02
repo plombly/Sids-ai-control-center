@@ -3,7 +3,7 @@ import types
 
 import pytest
 
-from sid_testing import MemoryRedis, ROOT, load_module
+from laika_testing import MemoryRedis, ROOT, load_module
 
 
 @pytest.fixture
@@ -35,12 +35,12 @@ def orchestrator(tmp_path, monkeypatch):
 def test_planner_passes_home_and_other_environment(orchestrator, tmp_path, monkeypatch):
     module, captured = orchestrator
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("SID_TEST_MARKER", "x")
+    monkeypatch.setenv("LAIKA_TEST_MARKER", "x")
 
     module.run_codex_planner("goal")
 
     assert captured["env"]["HOME"] == str(tmp_path / "home")
-    assert captured["env"]["SID_TEST_MARKER"] == "x"
+    assert captured["env"]["LAIKA_TEST_MARKER"] == "x"
 
 
 def test_planner_uses_root_when_home_is_unset(orchestrator, monkeypatch):

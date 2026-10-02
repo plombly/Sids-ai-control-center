@@ -15,7 +15,7 @@ from agent_routes import get_agent_db
 from models import Base
 
 CANDIDATE = "c" * 40
-JOB_KEY = "sid:jobs:b1"
+JOB_KEY = "laika:jobs:b1"
 
 
 @pytest.fixture
@@ -70,14 +70,14 @@ class OperatorFakeRedis:
 
 
 def heartbeat(allowed="approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen"):
-    return {"id": "sid-operator-01", "status": "idle", "allowed_actions": allowed,
+    return {"id": "laika-operator-01", "status": "idle", "allowed_actions": allowed,
             "request_ttl": "600", "last_seen": "1"}
 
 
 @pytest.fixture
 def fake(monkeypatch):
     fake = OperatorFakeRedis({
-        "sid:operator-service:sid-operator-01": heartbeat(),
+        "laika:operator-service:laika-operator-01": heartbeat(),
         JOB_KEY: {"id": "b1", "status": "awaiting_review", "project_id": "shop",
                   "integrated_candidate_commit": CANDIDATE},
     })
@@ -87,7 +87,7 @@ def fake(monkeypatch):
 
 
 TOKEN = "operator-test-token"
-AUTH = {"X-SID-Token": TOKEN}
+AUTH = {"X-Laika-Token": TOKEN}
 
 
 def body(**fields):
@@ -112,12 +112,12 @@ def test_valid_request_is_recorded_pending_and_queued(client, fake, fields, extr
     assert response.status_code == 202, response.text
     assert response.json()["status"] == "pending"
     [(name, queued, maxlen)] = fake.stream
-    assert name == "sid:operator-requests"
+    assert name == "laika:operator-requests"
     assert maxlen == main.OPERATOR_STREAM_MAXLEN
     assert queued["job_id"] == "b1"
     assert queued["action"] == body(**fields)["action"]
     assert queued["extra"] == extra
-    result = fake.hashes["sid:operator-results:req-00000001"]
+    result = fake.hashes["laika:operator-results:req-00000001"]
     assert result["status"] == "pending"
     assert result["expected_candidate"] == (CANDIDATE if "action" not in fields else "")
 
@@ -158,16 +158,16 @@ def test_invalid_job_id_is_rejected(client, fake, job_id):
 
 
 def test_offline_operator_service_queues_nothing(client, fake):
-    del fake.hashes["sid:operator-service:sid-operator-01"]
+    del fake.hashes["laika:operator-service:laika-operator-01"]
     response = post(client)
     assert response.status_code == 503
     assert "job-review.py" in response.json()["detail"]
     assert fake.stream == []
-    assert "sid:operator-results:req-00000001" not in fake.hashes
+    assert "laika:operator-results:req-00000001" not in fake.hashes
 
 
 def test_action_disabled_on_host_is_forbidden(client, fake):
-    fake.hashes["sid:operator-service:sid-operator-01"] = heartbeat("reject,reopen")
+    fake.hashes["laika:operator-service:laika-operator-01"] = heartbeat("reject,reopen")
     assert post(client).status_code == 403
     assert fake.stream == []
 
@@ -187,10 +187,10 @@ def test_stale_view_of_job_status_is_409(client, fake):
 
 def test_retry_with_same_request_returns_existing_result_without_requeue(client, fake):
     assert post(client).status_code == 202
-    fake.hashes["sid:operator-results:req-00000001"]["status"] = "succeeded"
+    fake.hashes["laika:operator-results:req-00000001"]["status"] = "succeeded"
     # Even after the job changed and the service went offline.
     fake.hashes[JOB_KEY]["status"] = "merged"
-    del fake.hashes["sid:operator-service:sid-operator-01"]
+    del fake.hashes["laika:operator-service:laika-operator-01"]
     response = post(client)
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
@@ -207,12 +207,12 @@ def test_same_request_id_for_different_request_is_409(client, fake):
 def test_stream_failure_marks_request_queue_failed(client, fake):
     fake.fail_xadd = True
     assert post(client).status_code == 503
-    assert fake.hashes["sid:operator-results:req-00000001"]["status"] == "queue_failed"
+    assert fake.hashes["laika:operator-results:req-00000001"]["status"] == "queue_failed"
 
 
 def test_requested_from_is_recorded_for_audit(client, fake):
     client.post("/api/jobs/b1/actions", json=body(), headers={**AUTH, "X-Real-IP": "192.0.2.7"})
-    assert fake.hashes["sid:operator-results:req-00000001"]["requested_from"] == "192.0.2.7"
+    assert fake.hashes["laika:operator-results:req-00000001"]["requested_from"] == "192.0.2.7"
     assert fake.stream[0][1]["requested_from"] == "192.0.2.7"
 
 
@@ -220,7 +220,7 @@ def test_get_operator_request(client, fake):
     assert client.get("/api/operator-requests/req-00000001").status_code == 404
     assert client.get("/api/operator-requests/bad!id").status_code == 422
     post(client)
-    fake.hashes["sid:operator-results:req-00000001"].update(
+    fake.hashes["laika:operator-results:req-00000001"].update(
         status="refused", message="stale main: reintegrate")
     result = client.get("/api/operator-requests/req-00000001").json()
     assert result["status"] == "refused"
@@ -232,7 +232,7 @@ def test_operator_status(client, fake):
     status = client.get("/api/operator/status").json()
     assert status["online"] is True
     assert "approve" in status["allowed_actions"]
-    del fake.hashes["sid:operator-service:sid-operator-01"]
+    del fake.hashes["laika:operator-service:laika-operator-01"]
     assert client.get("/api/operator/status").json() == {"online": False, "allowed_actions": []}
 
 
@@ -249,7 +249,7 @@ def test_operator_endpoints_have_no_repository_authority():
     start = source.index("# Operator actions.")
     end = source.index("def _redact(")
     section = source[start:end]
-    for forbidden in ("subprocess", '"git"', "rpush(", "sid:jobs:{"):
+    for forbidden in ("subprocess", '"git"', "rpush(", "laika:jobs:{"):
         assert forbidden not in section, forbidden
 
 
@@ -257,7 +257,7 @@ def test_operator_endpoints_have_no_repository_authority():
 
 def test_writes_need_the_operator_token(client, fake):
     assert post(client, headers={}).status_code == 401
-    assert post(client, headers={"X-SID-Token": "wrong"}).status_code == 401
+    assert post(client, headers={"X-Laika-Token": "wrong"}).status_code == 401
     assert fake.stream == []
     assert post(client).status_code == 202
 
@@ -291,7 +291,7 @@ def test_web_approval_is_refused_without_a_configured_token(client, fake, monkey
     monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
     response = post(client, headers={})
     assert response.status_code == 403
-    assert "SID_OPERATOR_TOKEN" in response.json()["detail"]
+    assert "LAIKA_OPERATOR_TOKEN" in response.json()["detail"]
     assert fake.stream == []
     # Other actions keep working without a token (unchanged behavior).
     assert post(client, headers={}, action="reject", expected_candidate=None).status_code == 202
@@ -305,7 +305,7 @@ def test_queue_approve_needs_candidate_and_token(client, fake, monkeypatch):
     assert fake.stream[-1][1]["action"] == "queue_approve"
     monkeypatch.setattr(main, "OPERATOR_TOKEN", "")
     response = post(client, headers={}, request_id="req-00000009", action="queue_approve")
-    assert response.status_code == 403 and "SID_OPERATOR_TOKEN" in response.json()["detail"]
+    assert response.status_code == 403 and "LAIKA_OPERATOR_TOKEN" in response.json()["detail"]
 
 
 def test_dequeue_needs_no_candidate(client, fake):
@@ -316,13 +316,13 @@ def test_dequeue_needs_no_candidate(client, fake):
 def test_merge_queue_read_model(client, fake, monkeypatch):
     class Lists(OperatorFakeRedis):
         def lrange(self, key, start, end):
-            return ["b1", "gone"] if key == "sid:merge-queue" else []
+            return ["b1", "gone"] if key == "laika:merge-queue" else []
 
         def get(self, key):
-            return "h" * 40 if key == "sid:main-head" else None
+            return "h" * 40 if key == "laika:main-head" else None
 
     queue = Lists(fake.hashes)
-    fake.hashes["sid:jobs:b1"].update({
+    fake.hashes["laika:jobs:b1"].update({
         "title": "Add x", "merge_queue_state": "waiting", "merge_queue_reason": "stale: waiting",
         "approval_intent_candidate": "a" * 40, "integration_base_commit": "h" * 40,
         "approval_intent_at": "12"})
@@ -338,7 +338,7 @@ def test_merge_queue_read_model(client, fake, monkeypatch):
 # --- parallel-pipeline read models ------------------------------------------------------
 
 def test_job_exposes_pipeline_state(client, fake, monkeypatch):
-    fake.hashes["sid:jobs:b1"].update({
+    fake.hashes["laika:jobs:b1"].update({
         "blocked_reason": "waiting for apps/web/app.js held by job x (running)",
         "build_attempt": "2", "provider_fallback": "claude at capacity", "cost_usd": "0.0421",
         "best_of": '{"chosen": "alt"}', "review_aspects": '{"spec": "pass", "safety": "changes_required"}',
@@ -355,7 +355,7 @@ def test_job_exposes_pipeline_state(client, fake, monkeypatch):
     assert job["best_of"] == {"chosen": "alt"}
     assert job["review_aspects"] == {"spec": "pass", "safety": "changes_required"}
     assert (job["merge_queue_state"], job["provider_fallback"]) == ("waiting", "claude at capacity")
-    fake.hashes["sid:jobs:b1"]["best_of"] = "not json"
+    fake.hashes["laika:jobs:b1"]["best_of"] = "not json"
     assert next(j for j in client.get("/api/jobs?limit=100").json() if j["id"] == "b1")["best_of"] is None
 
 
@@ -365,13 +365,13 @@ def test_providers_capacity(client, fake, monkeypatch):
             return [("job:rv1", 9999999999.0)]
 
         def get(self, key):
-            return {"sid:provider-limit:claude": "2",
-                    "sid:provider-cooldown:claude": "claude unavailable: limit"}.get(key)
+            return {"laika:provider-limit:claude": "2",
+                    "laika:provider-cooldown:claude": "claude unavailable: limit"}.get(key)
 
         def ttl(self, key):
             return 1200
 
-    fake.hashes["sid:workers:w1"] = {"id": "w1", "provider": "per role",
+    fake.hashes["laika:workers:w1"] = {"id": "w1", "provider": "per role",
                                      "model": "builder codex/gpt · reviewer claude/sonnet"}
     monkeypatch.setattr(main, "redis", Slots(fake.hashes))
     body = client.get("/api/providers").json()
@@ -400,11 +400,11 @@ def test_system_health_passes_through_the_watchdog_report(client, fake, monkeypa
     report = {"status": "warn", "checked_at": _time.time() - 30,
               "checks": [{"name": "backup", "level": "warn", "detail": "no backup recorded yet"}]}
     monkeypatch.setattr(main, "redis", Health(fake.hashes, {
-        "sid:health": json.dumps(report),
-        "sid:backup:last": json.dumps({"at": "20260930T192958Z", "ok": True})}))
+        "laika:health": json.dumps(report),
+        "laika:backup:last": json.dumps({"at": "20260930T192958Z", "ok": True})}))
     body = client.get("/api/system-health").json()
     assert body["report"]["status"] == "warn" and 25 <= body["report"]["age_seconds"] <= 40
     assert body["report"]["checks"][0]["name"] == "backup"
     assert body["backup"] == {"at": "20260930T192958Z", "ok": True}
-    monkeypatch.setattr(main, "redis", Health(fake.hashes, {"sid:health": "not json"}))
+    monkeypatch.setattr(main, "redis", Health(fake.hashes, {"laika:health": "not json"}))
     assert client.get("/api/system-health").json() == {"report": None, "backup": None}
