@@ -186,9 +186,9 @@ if [ "${node_major:-0}" -lt 20 ]; then
   ln -sfn /opt/laika-node/bin/npm /usr/local/bin/npm
   ln -sfn /opt/laika-node/bin/npx /usr/local/bin/npx
 fi
-want_cli() { # command package version
+want_cli() { # command package version: install when missing or older (never downgrade)
   local have; have=$("$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-  [ "$have" = "$3" ] && return 0
+  if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$3" "$have" | sort -V | head -1)" = "$3" ]; then return 0; fi
   say "$1 $3"
   # /usr/local: on everyone's PATH, whichever Node is installed.
   npm install -g --prefix /usr/local -s --no-fund --no-audit "$2@$3" >/dev/null
