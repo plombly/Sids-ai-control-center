@@ -3,6 +3,9 @@ Description=LAIka backup (repo, Redis, Postgres, config)
 After=docker.service
 
 [Service]
+User=root
+# Backups and restore checks hold secrets: readable by root only.
+UMask=0077
 Type=oneshot
 Environment=REPO_ROOT=/opt/laika
 Environment=BACKUP_ROOT=/var/backups/laika/snapshots
@@ -10,4 +13,4 @@ Environment=BACKUP_KEEP=14
 Environment=BACKUP_GIT_REMOTE=origin
 Environment=BACKUP_GIT_BRANCHES=main
 # Environment=BACKUP_REMOTE=user@host:/path   (off-host copy; recommended)
-ExecStart=/usr/bin/python3 /opt/laika/scripts/laika-backup.py
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-backup.py

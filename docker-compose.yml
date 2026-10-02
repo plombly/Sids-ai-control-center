@@ -11,7 +11,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ./data/postgres:/var/lib/postgresql
+      # Installs keep databases in /var/lib/laika/db (LAIKA_DB_DIR in .env).
+      - ${LAIKA_DB_DIR:-./data}/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -31,7 +32,7 @@ services:
         required: false
     command: ["sh", "-c", 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}']
     volumes:
-      - ./data/redis:/data
+      - ${LAIKA_DB_DIR:-./data}/redis:/data
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -57,6 +58,9 @@ services:
       - path: /etc/laika/operator.env
         required: false
       - path: /etc/laika/redis.env
+        required: false
+      # Install-wide switches (LAIKA_BUILTIN_PROJECT=0 in production).
+      - path: /etc/laika/laika.env
         required: false
     # Project file browser (apps/api/file_routes.py): code read-only, app
     # data and staged code uploads writable. Repositories are only ever

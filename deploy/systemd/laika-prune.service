@@ -2,6 +2,11 @@
 Description=LAIka log retention (30 days, final jobs only)
 
 [Service]
+User=root
+# Root for units, Docker and firewall rules; files it creates in LAIka's
+# shared data stay usable by the laika group (services/laika_user.py).
+UMask=0007
+Environment=GIT_CONFIG_GLOBAL=/etc/laika/gitconfig
 Type=oneshot
 Environment=REDIS_URL=redis://127.0.0.1:6379/0
-ExecStart=/usr/bin/python3 /opt/laika/scripts/laika-prune.py --apply
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-prune.py --apply

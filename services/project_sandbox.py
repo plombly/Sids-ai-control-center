@@ -29,6 +29,7 @@ The LAIka project itself is the control plane and is never sandboxed here.
 """
 
 import os
+import pwd
 from pathlib import Path
 
 BWRAP = os.environ.get("LAIKA_BWRAP", "/usr/bin/bwrap")
@@ -40,12 +41,24 @@ HIDDEN = (
     # /var/lib/laika itself stays visible for the shared venv (gates use its
     # pytest); everything per-project or private under it is hidden.
     "/var/backups", "/var/log/laika", "/var/lib/laika/reference",
+    # The laika user's home (agent CLI logins) and Redis/Postgres data.
+    "/var/lib/laika/home", "/var/lib/laika/db",
     "/root", "/home", "/srv", "/mnt", "/media",
 )
+# LAIka's own credentials never reach project code; AI provider keys reach
+# only the agent CLIs that need them (kind "agent").
+LAIKA_SECRETS = ("REDIS_URL", "REDIS_PASSWORD", "LAIKA_OPERATOR_TOKEN", "DATABASE_URL", "POSTGRES_PASSWORD")
+PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 # Sockets that grant root on the host.
 MASKED_FILES = ("/run/docker.sock", "/var/run/docker.sock", "/run/containerd/containerd.sock")
-# Agent CLI state, re-exposed read-write inside the hidden /root.
-AGENT_STATE = ("/root/.codex", "/root/.claude", "/root/.claude.json")
+def agent_state(home=None):
+    """Agent CLI state in the running user's home (root: /root; the laika
+    user: /var/lib/laika/home), re-exposed read-write inside the hidden home."""
+    home = home or os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    return tuple(os.path.join(home, name) for name in (".codex", ".claude", ".claude.json"))
+
+
+AGENT_STATE = agent_state()
 # Shared SDKs installed on the host (e.g. Flutter at /opt/flutter). Inside a
 # sandbox each gets a throwaway writable overlay: the SDK writes lock files
 # and caches into its own directory, and no project can change the real one.
@@ -107,7 +120,7 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
     if repo_git.exists():
         args += ["--ro-bind", str(repo_git), str(repo_git)]
     if kind == "agent":
-        for path in AGENT_STATE:
+        for path in agent_state():
             if _exists(path):
                 args += ["--bind", path, path]
     if kind == "app":
@@ -133,7 +146,10 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
     if kind in ("agent", "gate"):
         # No caches in the worktree (they would end up in the candidate).
         args += ["--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider"]
-    args += ["--setenv", "TMPDIR", "/tmp", "--unsetenv", "REDIS_URL", "--chdir", str(workdir), "--"]
+    args += ["--setenv", "TMPDIR", "/tmp"]
+    for name in LAIKA_SECRETS + (() if kind == "agent" else PROVIDER_KEYS):
+        args += ["--unsetenv", name]
+    args += ["--chdir", str(workdir), "--"]
     return args + list(argv)
 
 

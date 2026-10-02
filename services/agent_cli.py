@@ -13,6 +13,7 @@ reported as is_error=true in an otherwise normal JSON result.
 
 import json
 import os
+import pwd
 import re
 import signal
 import subprocess
@@ -199,7 +200,7 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
     )
     if wrap is not None:
         command = wrap(command)
-    env = {**os.environ, "HOME": os.environ.get("HOME") or "/root"}
+    env = {**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir}
     started = time.time()
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)

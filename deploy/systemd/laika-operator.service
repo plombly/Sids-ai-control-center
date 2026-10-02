@@ -21,8 +21,12 @@ After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
 User=root
+# Root for units, Docker and firewall rules; files it creates in LAIka's
+# shared data stay usable by the laika group (services/laika_user.py).
+UMask=0007
+Environment=GIT_CONFIG_GLOBAL=/etc/laika/gitconfig
+Type=simple
 WorkingDirectory=/opt/laika
 Environment=PYTHONUNBUFFERED=1
 Environment=REDIS_URL=redis://127.0.0.1:6379/0
@@ -31,7 +35,7 @@ Environment=WORKTREE_ROOT=/var/lib/laika/worktrees
 Environment=OPERATOR_ID=laika-operator-01
 Environment=OPERATOR_ALLOWED_ACTIONS=approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen,create_project,project_retry_clone,project_push_setup,delete_project,project_commit_upload,restore_project,project_revert,network_once,network_always,network_deny,apply_settings,provider_login,provider_status,provider_apply_keys
 Environment=OPERATOR_REQUEST_TTL=600
-ExecStart=/usr/bin/python3 /opt/laika/services/operator/laika_operator.py
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/services/operator/laika_operator.py
 Restart=always
 RestartSec=3
 

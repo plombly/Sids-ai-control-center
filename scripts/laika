@@ -2,39 +2,42 @@
 # The LAIka command (installed as /usr/local/bin/laika).
 #
 #   laika status            services, workers and health at a glance
+#   laika doctor            check this installation and explain problems
 #   laika setup-code        one-time code for the first-run web setup
 #   laika reset-password    new administrator password (signs everyone out)
 #   laika restart [TARGET]  restart services safely (default: all)
 #   laika logs [UNIT]       follow a service's log (default: orchestrator)
-#   laika doctor            check this installation and explain problems
+#   laika repair            put back missing packages, folders, services
 #   laika update            install the latest release (backup first)
+#   laika uninstall         remove LAIka (keeps your data unless --purge)
 #   laika branding apply    rebuild the web assets from /etc/laika/branding.json
 #   laika version           show the installed version
 set -uo pipefail
 LAIKA_HOME=${LAIKA_HOME:-/opt/laika}
-PY=/usr/bin/python3
+PY=/var/lib/laika/venv/bin/python
+[ -x "$PY" ] || PY=/usr/bin/python3
 need_root() { [ "$(id -u)" = 0 ] || { echo "Run this with sudo." >&2; exit 2; }; }
 
 case "${1:-help}" in
   status)
     systemctl --no-pager --plain list-units 'laika-*' --type=service --state=running,failed | sed -n '1,40p'
     curl -s --max-time 5 http://127.0.0.1:8000/health; echo ;;
-  setup-code) need_root; exec $PY "$LAIKA_HOME/scripts/laika-admin.py" setup-code ;;
-  reset-password) need_root; exec $PY "$LAIKA_HOME/scripts/laika-admin.py" reset-password ;;
+  doctor) need_root; exec "$PY" "$LAIKA_HOME/scripts/laika-doctor.py" "${@:2}" ;;
+  setup-code) need_root; exec "$PY" "$LAIKA_HOME/scripts/laika-admin.py" setup-code ;;
+  reset-password) need_root; exec "$PY" "$LAIKA_HOME/scripts/laika-admin.py" reset-password ;;
   restart) need_root; shift; exec "$LAIKA_HOME/scripts/laika-restart.sh" "${@:-all}" ;;
   logs) exec journalctl -f -u "laika-${2:-orchestrator}" ;;
-  doctor)
-    if [ -x "$LAIKA_HOME/scripts/laika-doctor.py" ]; then exec $PY "$LAIKA_HOME/scripts/laika-doctor.py"; fi
-    echo "doctor is not installed in this version" >&2; exit 1 ;;
+  repair) need_root; exec bash "$LAIKA_HOME/install.sh" --repair "${@:2}" ;;
+  uninstall) need_root; exec bash "$LAIKA_HOME/scripts/laika-uninstall.sh" "${@:2}" ;;
   update)
     need_root
-    if [ -x "$LAIKA_HOME/scripts/laika-update.py" ]; then exec $PY "$LAIKA_HOME/scripts/laika-update.py" "${@:2}"; fi
+    if [ -x "$LAIKA_HOME/scripts/laika-update.py" ]; then exec "$PY" "$LAIKA_HOME/scripts/laika-update.py" "${@:2}"; fi
     echo "updates are not available in this version" >&2; exit 1 ;;
   branding)
     need_root
-    if [ "${2:-}" = apply ] && [ -x "$LAIKA_HOME/scripts/laika-branding.py" ]; then exec $PY "$LAIKA_HOME/scripts/laika-branding.py" apply; fi
+    if [ "${2:-}" = apply ] && [ -x "$LAIKA_HOME/scripts/laika-branding.py" ]; then exec "$PY" "$LAIKA_HOME/scripts/laika-branding.py" apply; fi
     echo "usage: laika branding apply" >&2; exit 2 ;;
   version) cat "$LAIKA_HOME/VERSION" 2>/dev/null || git -C "$LAIKA_HOME" describe --always 2>/dev/null ;;
-  help|-h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown command: $1 (laika help)" >&2; exit 2 ;;
 esac

@@ -39,6 +39,7 @@ import project_history  # noqa: E402
 import project_sandbox  # noqa: E402
 import laika_projects  # noqa: E402
 import laika_redis  # noqa: E402
+import laika_user  # noqa: E402
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 LOOP_SECONDS = float(os.getenv("APPS_LOOP_SECONDS", "10"))
@@ -67,7 +68,7 @@ def purge_trash(now=None):
     if now - last_purge < PURGE_EVERY:
         return
     last_purge = now
-    result = run(["/usr/bin/python3", str(PROJECT_CLI), "purge-trash"], timeout=600)
+    result = run([sys.executable, str(PROJECT_CLI), "purge-trash"], timeout=600)
     if result.returncode:
         print(f"[laika-apps] purge-trash failed: {result.stderr.strip()[-300:]}", flush=True)
     elif '"removed": []' not in result.stdout:
@@ -154,7 +155,8 @@ def setup(project, live):
     command = project.setup_command or laika_projects.detect_setup(live)
     if not command:
         return True, ""
-    argv = project_sandbox.command(["/bin/sh", "-c", command], project, live, kind="setup")
+    # Project code runs as the laika user, never as root.
+    argv = laika_user.command_prefix() + project_sandbox.command(["/bin/sh", "-c", command], project, live, kind="setup")
     try:
         result = run(argv, cwd=str(live), timeout=SETUP_TIMEOUT, env={**os.environ, **app_env(live, 0)})
     except subprocess.TimeoutExpired:
@@ -180,7 +182,7 @@ def start_unit(project, live, port, unit=None, data_dir=None, description=None):
             f"--property=CPUQuota={int(project.run_cpus * 100)}%", f"--property=TasksMax={project.run_tasks}",
             f"--property=WorkingDirectory={live}",
             f"--property=EnvironmentFile=-{ENV_DIR / (project.id + '.env')}",
-            f"--description={description or f'LAIka app {project.id}'}"]
+            f"--description={description or f'LAIka app {project.id}'}", *laika_user.systemd_run_args()]
     args += [f"--setenv={k}={v}" for k, v in env.items()]
     result = run([*args, "--", *inner])
     if result.returncode:
@@ -482,6 +484,7 @@ def launch_assist(session_id):
     result = run([SYSTEMD_RUN, f"--unit=laika-assist-{session_id}-{int(time.time())}", "--quiet", "--collect",
                   "--property=RuntimeMaxSec=600", "--description=LAIka goal assistant",
                   "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
+                  "--property=EnvironmentFile=-/etc/laika/redis.env", *laika_user.systemd_run_args(),
                   "/var/lib/laika/venv/bin/python", str(ASSIST_SCRIPT), session_id])
     if result.returncode:
         goal_assist.save(redis, session_id, status="failed",

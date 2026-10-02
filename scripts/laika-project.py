@@ -187,7 +187,7 @@ def create(args):
             clone_env = os.environ.copy()
             clone_env["GIT_TERMINAL_PROMPT"] = "0"
         try:
-            run_git(["clone", args.clone, str(repo)], env=clone_env)
+            run_git(["clone", "--config", "core.sharedRepository=group", args.clone, str(repo)], env=clone_env)
         except ProjectError as exc:
             if is_ssh:
                 record["status"] = "pending_key"
@@ -201,7 +201,9 @@ def create(args):
             raise exc
         record["gate_command"] = args.gate if args.gate is not None else detect_gate(repo)
     else:
-        run_git(["init", "-b", "main"], cwd=repo)
+        # Shared with the laika group (services/laika_user.py): root services
+        # and the laika user both write here.
+        run_git(["init", "--shared=group", "-b", "main"], cwd=repo)
         run_git(["config", "user.name", "LAIka"], cwd=repo)
         run_git(["config", "user.email", "laika@localhost"], cwd=repo)
         run_git(["commit", "--allow-empty", "-m", "Initialize project"], cwd=repo)
@@ -762,7 +764,7 @@ def retry_clone(args):
         run_git(["-C", str(repo), "fetch", "origin"], env=ssh_env(key))
     else:
         if not url: raise ProjectError("stored clone URL is missing")
-        run_git(["clone", url, str(repo)], env=ssh_env(key))
+        run_git(["clone", "--config", "core.sharedRepository=group", url, str(repo)], env=ssh_env(key))
     record["status"] = "active"
     if not record.get("gate_command"):
         record["gate_command"] = detect_gate(repo)

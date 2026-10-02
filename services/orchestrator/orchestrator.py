@@ -2,6 +2,7 @@
 
 import json
 import os
+import pwd
 import subprocess
 import sys
 import time
@@ -303,7 +304,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         text=True,
         capture_output=True,
         timeout=PLAN_TIMEOUT,
-        env={**os.environ, "HOME": os.environ.get("HOME") or "/root"},
+        env={**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir},
     )
 
     if proc.returncode != 0:

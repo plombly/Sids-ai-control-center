@@ -37,7 +37,7 @@ def hidden(monkeypatch, tmp_path):
     state = tmp_path / "agent-state"
     state.mkdir()
     monkeypatch.setattr(project_sandbox, "HIDDEN", (str(secret_dir), str(tmp_path / "projects")))
-    monkeypatch.setattr(project_sandbox, "AGENT_STATE", (str(state),))
+    monkeypatch.setattr(project_sandbox, "agent_state", lambda home=None: (str(state),))
     return secret_dir, state
 
 
@@ -243,3 +243,20 @@ def test_agents_and_gates_write_no_python_caches(tmp_path, hidden):
     for kind in ("agent", "gate"):
         argv = " ".join(project_sandbox.command(["true"], project, wt, kind=kind))
         assert "--setenv PYTHONDONTWRITEBYTECODE 1" in argv
+
+
+def test_agent_state_follows_the_running_users_home(monkeypatch):
+    monkeypatch.setenv("HOME", "/var/lib/laika/home")
+    assert project_sandbox.agent_state() == ("/var/lib/laika/home/.codex", "/var/lib/laika/home/.claude",
+                                             "/var/lib/laika/home/.claude.json")
+    assert "/var/lib/laika/home" in project_sandbox.HIDDEN and "/var/lib/laika/db" in project_sandbox.HIDDEN
+
+
+def test_secrets_are_removed_from_the_environment(tmp_path, hidden):
+    project, wt = make_project(tmp_path)
+    for kind in ("gate", "setup", "app", "agent"):
+        joined = " ".join(project_sandbox.command(["true"], project, wt, kind=kind))
+        for name in ("REDIS_PASSWORD", "REDIS_URL", "LAIKA_OPERATOR_TOKEN"):
+            assert f"--unsetenv {name}" in joined, (kind, name)
+        assert ("--unsetenv ANTHROPIC_API_KEY" in joined) == (kind != "agent"), kind
+        assert ("--unsetenv OPENAI_API_KEY" in joined) == (kind != "agent"), kind

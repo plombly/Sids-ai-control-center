@@ -1,5 +1,6 @@
 import json
 import os
+import pwd
 import re
 import signal
 import socket
@@ -711,7 +712,7 @@ def run_codex(job, worktree, log_path):
     ]
 
     env = os.environ.copy()
-    env["HOME"] = os.environ.get("HOME") or "/root"
+    env["HOME"] = os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
     # Projects: inside the project sandbox (reviewers read-only).
     command = project_sandbox.codex_command(command, PROJECT, worktree, writable=(role != "reviewer"))
 

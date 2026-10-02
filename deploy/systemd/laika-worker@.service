@@ -4,8 +4,18 @@ After=docker.service network-online.target
 Wants=network-online.target
 
 [Service]
+User=laika
+Group=laika
+# The dedicated user (services/laika_user.py): agents and tests never run as
+# root. Shared data stays group-writable for the root control services.
+UMask=0007
+Environment=HOME=/var/lib/laika/home
+Environment=GIT_CONFIG_GLOBAL=/etc/laika/gitconfig
+# The claude CLI cannot update itself here; `laika update` updates it.
+Environment=DISABLE_AUTOUPDATER=1
+# Secrets as environment (read by systemd; the files stay root-only).
+EnvironmentFile=-/etc/laika/redis.env
 Type=simple
-User=root
 WorkingDirectory=/opt/laika
 Environment=PYTHONUNBUFFERED=1
 Environment=REDIS_URL=redis://127.0.0.1:6379/0
@@ -17,7 +27,7 @@ Environment=BUILDER_TIMEOUT_SECONDS=900
 Environment=REPAIR_TIMEOUT_SECONDS=600
 EnvironmentFile=-/etc/laika/laika.env
 EnvironmentFile=-/etc/laika/providers/providers.env
-ExecStart=/usr/bin/python3 /opt/laika/services/worker/worker.py
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/services/worker/worker.py
 Restart=always
 RestartSec=3
 # One runaway test cannot take the whole server down: above 3 GB the worker

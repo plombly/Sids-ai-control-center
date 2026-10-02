@@ -4,8 +4,10 @@ After=docker.service
 Requires=docker.service
 
 [Service]
-Type=oneshot
 User=root
+# Backups and restore checks hold secrets: readable by root only.
+UMask=0077
+Type=oneshot
 WorkingDirectory=/opt/laika
 Environment=PYTHONUNBUFFERED=1
 Environment=REDIS_URL=redis://127.0.0.1:6379/0

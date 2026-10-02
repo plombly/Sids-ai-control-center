@@ -163,7 +163,8 @@ def read_env(path=PROVIDERS_ENV):
 
 
 def apply_keys(r, runner=run):
-    key = read_env().get("OPENAI_API_KEY", "")
+    # The unit gets providers.env as its environment (the file itself is root-only).
+    key = os.environ.get("OPENAI_API_KEY") or read_env().get("OPENAI_API_KEY", "")
     if key:
         result = runner(["codex", "login", "--with-api-key"], stdin=key + "\n")
         print("codex:", "signed in with the API key" if result.returncode == 0 else "failed")

@@ -3,8 +3,12 @@ Description=LAIka: weekly digest (posts when due)
 After=docker.service network-online.target
 
 [Service]
-Type=oneshot
 User=root
+# Root for units, Docker and firewall rules; files it creates in LAIka's
+# shared data stay usable by the laika group (services/laika_user.py).
+UMask=0007
+Environment=GIT_CONFIG_GLOBAL=/etc/laika/gitconfig
+Type=oneshot
 WorkingDirectory=/opt/laika
 Environment=PYTHONUNBUFFERED=1
 Environment=REDIS_URL=redis://127.0.0.1:6379/0

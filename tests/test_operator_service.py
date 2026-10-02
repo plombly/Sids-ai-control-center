@@ -407,7 +407,7 @@ def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
     # and starting scripts/laika-system.py as its own unit (Settings → Apply).
     calls = [line.strip() for line in source.splitlines() if "runner(" in line or "subprocess.run" in line]
     assert calls == ["def execute_project(request, runner=subprocess.run):",
-                     'result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],',
+                     'result = runner([PYTHON, str(PROJECT_CLI), *project_cli_args(request)],',
                      "def execute_system(request, runner=subprocess.run):",
                      'result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",'], calls
 

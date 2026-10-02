@@ -3,8 +3,13 @@ Description=LAIka health watchdog
 After=docker.service
 
 [Service]
+User=root
+# Root for units, Docker and firewall rules; files it creates in LAIka's
+# shared data stay usable by the laika group (services/laika_user.py).
+UMask=0007
+Environment=GIT_CONFIG_GLOBAL=/etc/laika/gitconfig
 Type=oneshot
 Environment=REDIS_URL=redis://127.0.0.1:6379/0
 Environment=REPO_ROOT=/opt/laika
-Environment=WATCHDOG_WORKERS=8
-ExecStart=/usr/bin/python3 /opt/laika/scripts/laika-watchdog.py
+Environment=WATCHDOG_WORKERS=1
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-watchdog.py

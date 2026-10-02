@@ -42,6 +42,10 @@ from redis import Redis
 from redis.exceptions import ResponseError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # services/
 import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
+import laika_user  # noqa: E402
+
+# Host helpers run with the same Python as this service (LAIka's venv).
+PYTHON = sys.executable or "/usr/bin/python3"
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
@@ -333,7 +337,7 @@ def project_cli_args(request):
 def execute_project(request, runner=subprocess.run):
     """Run laika-project.py on the host. Returns (status, message, output)."""
     try:
-        result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],
+        result = runner([PYTHON, str(PROJECT_CLI), *project_cli_args(request)],
                         text=True, capture_output=True, timeout=300)
     except subprocess.TimeoutExpired:
         return "error", "project command timed out after 300s", ""
@@ -453,9 +457,13 @@ def execute_system(request, runner=subprocess.run):
     its own unit: it may wait for workers or for the operator's browser."""
     tag, script, args = SYSTEM_COMMANDS[request["action"]]
     name = f"laika-{tag}-{int(time.time())}"
+    # Applying settings changes the host (root); sign-ins belong to the
+    # laika user, whose home holds the agent CLIs' logins.
+    as_user = [] if request["action"] == "apply_settings" else laika_user.systemd_run_args()
     result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",
                      "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
-                     f"--description=LAIka: {request['action']}", "/usr/bin/python3",
+                     "--property=EnvironmentFile=-/etc/laika/redis.env", *as_user,
+                     f"--description=LAIka: {request['action']}", PYTHON,
                      str(ROOT / script), *args(request["what"])],
                     text=True, capture_output=True, timeout=60)
     if result.returncode != 0:
