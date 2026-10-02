@@ -60,7 +60,7 @@ def test_all_healthy(wd):
     report = run(wd, healthy_redis(wd))
     assert report["status"] == "ok", report
     assert set(levels(report)) == {"units", "redis", "heartbeats", "backup", "pipeline",
-                                   "api", "web", "live_tree", "disk", "memory", "load", "restore_check"}
+                                   "api", "web", "live_tree", "disk", "memory", "load", "restore_check", "exposure"}
 
 
 def test_backup_age_is_computed_in_utc(wd):
@@ -111,7 +111,7 @@ def test_unreachable_endpoint(wd):
 def test_publish_logs_only_changes(wd):
     r = healthy_redis(wd)
     first = wd.publish(r, run(wd, r))
-    assert len(first) == 12, "every check is new the first time"
+    assert len(first) == 13, "every check is new the first time"
     assert wd.publish(r, run(wd, r)) == [], "no change, no log lines"
     r.values["laika:provider-cooldown:claude"] = "limit"
     changed = wd.publish(r, run(wd, r))
@@ -171,3 +171,16 @@ def test_system_info_hides_credentials_in_https_remotes():
         return sp.CompletedProcess(args, 0, answers[key] + "\n", "")
     info = module.system_info(runner)
     assert info["remote"] == "https://github.com/me/laika.git" and info["branch"] == "main" and info["head"] == "abc1234"
+
+
+def test_a_public_address_is_a_warning(wd):
+    import json as _json
+    import subprocess as _sp
+    out = _json.dumps([{"ifname": "eth0", "addr_info": [{"local": "93.184.216.34"}]},
+                       {"ifname": "eth1", "addr_info": [{"local": "10.0.0.5"}]},
+                       {"ifname": "docker0", "addr_info": [{"local": "172.17.0.1"}]}])
+    info = wd.host_info(lambda argv, **k: _sp.CompletedProcess(argv, 0, out, ""), lambda: "MemTotal: 8388608 kB\n", lambda: 8)
+    assert info["public"] == ["93.184.216.34"] and info["cpus"] == 8 and info["memory_gb"] == 8.0
+    assert [a["interface"] for a in info["addresses"]] == ["eth0", "eth1"]
+    assert wd.check_exposure(info)["level"] == "warn"
+    assert wd.check_exposure({"public": []})["level"] == "ok"

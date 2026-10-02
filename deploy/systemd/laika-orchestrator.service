@@ -14,6 +14,7 @@ Environment=WORKER_QUEUE=laika:jobs
 Environment=ORCHESTRATOR_ID=laika-orchestrator-01
 Environment=LAIKA_PYTHON=/var/lib/laika/venv/bin/python
 EnvironmentFile=-/etc/laika/laika.env
+EnvironmentFile=-/etc/laika/providers/providers.env
 ExecStart=/usr/bin/python3 /opt/laika/services/orchestrator/orchestrator.py
 Restart=always
 RestartSec=3

@@ -55,7 +55,13 @@ if (typeof document !== 'undefined') {
       if (menu) menu.innerHTML = userMenuMarkup(state.user);
       if (state.setup_required) show(setupMarkup());
       else if (state.admin_exists && !state.signed_in) show(loginMarkup());
-      else show('');
+      else {
+        show('');
+        if (state.signed_in && !location.hash.startsWith('#/setup')) {
+          const setup = await requestJSON('/api/setup/state').catch(() => ({ done: true }));
+          if (setup.done === false) location.hash = '#/setup';
+        }
+      }
     } catch {}
   }
   window.addEventListener('laika:auth-required', check);

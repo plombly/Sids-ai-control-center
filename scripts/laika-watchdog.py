@@ -243,6 +243,7 @@ def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shuti
         check_disk(usage=usage),
         check_memory(meminfo_reader),
         check_load(loadavg, cpu_count),
+        check_exposure(host_info(runner, meminfo_reader, cpu_count)),
     ]
     order = {"ok": 0, "warn": 1, "fail": 2}
     overall = max((c["level"] for c in checks), key=order.__getitem__)
@@ -265,6 +266,55 @@ def publish(r, report):
 
 
 SYSTEM_INFO_KEY = "laika:system-info"
+HOST_KEY = "laika:host-info"
+
+
+def host_addresses(runner=subprocess.run):
+    """IPv4 addresses on this server's interfaces, each marked public or not."""
+    import ipaddress
+    result = runner(["ip", "-j", "-4", "addr"], text=True, capture_output=True)
+    try:
+        data = json.loads(result.stdout or "[]")
+    except ValueError:
+        return []
+    found = []
+    for interface in data:
+        name = interface.get("ifname", "")
+        if name == "lo" or name.startswith(("docker", "br-", "veth", "laika-build")):
+            continue
+        for info in interface.get("addr_info", []):
+            try:
+                address = ipaddress.ip_address(info.get("local", ""))
+            except ValueError:
+                continue
+            found.append({"interface": name, "address": str(address),
+                          "public": address.is_global})
+    return found
+
+
+def host_info(runner=subprocess.run, meminfo_reader=read_meminfo, cpu_count=os.cpu_count):
+    """For the web setup and the exposure check: CPUs, memory, addresses."""
+    memory_kb = 0
+    try:
+        values = meminfo_reader()
+        if hasattr(values, "items"):
+            memory_kb = float(values.get("MemTotal", 0))
+        else:
+            line = next((l for l in values.splitlines() if l.startswith("MemTotal:")), "MemTotal: 0")
+            memory_kb = float(line.split()[1])
+    except (OSError, TypeError, ValueError, IndexError):
+        memory_kb = 0
+    addresses = host_addresses(runner)
+    return {"cpus": cpu_count() or 1, "memory_gb": round(memory_kb / 1048576, 1), "addresses": addresses,
+            "public": [a["address"] for a in addresses if a["public"]], "checked_at": time.time()}
+
+
+def check_exposure(info):
+    """LAIka must only be reached over a LAN or VPN (docs/security.md)."""
+    if info.get("public"):
+        return check("exposure", "warn", f"this server has a public address ({', '.join(info['public'])}): make sure "
+                     "port 8080 is not reachable from the internet (firewall, or a LAN/VPN-only address)")
+    return check("exposure", "ok", "no public addresses on this server")
 
 
 def system_info(runner=subprocess.run):
@@ -288,6 +338,10 @@ def main():
         r.set(SYSTEM_INFO_KEY, json.dumps(system_info()), ex=HEALTH_TTL)
     except Exception as exc:
         print(f"[laika-watchdog] could not publish system info: {exc}", flush=True)
+    try:
+        r.set(HOST_KEY, json.dumps(host_info()), ex=HEALTH_TTL)
+    except Exception as exc:
+        print(f"[laika-watchdog] could not publish host info: {exc}", flush=True)
     report = run_checks(r)
     try:
         for line in publish(r, report):

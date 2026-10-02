@@ -260,7 +260,31 @@ def setup_code_ok(redis, code):
 @router.get("/api/setup/state")
 def setup_state():
     redis = _main().redis
-    return {"admin_exists": bool(admin(redis)), "code_issued": bool(redis.get("laika:setup:code"))}
+    return {"admin_exists": bool(admin(redis)), "code_issued": bool(redis.get("laika:setup:code")),
+            "done": bool(redis.get("laika:setup:done"))}
+
+
+@router.get("/api/setup/info")
+def setup_info():
+    """What the setup wizard suggests from: CPUs, memory, public addresses
+    (published by the host watchdog)."""
+    redis = _main().redis
+    try:
+        info = json.loads(redis.get("laika:host-info") or "{}")
+    except (TypeError, ValueError):
+        info = {}
+    cpus = int(info.get("cpus") or 2)
+    memory = float(info.get("memory_gb") or 4)
+    # One worker per CPU, and about 1.5 GB of memory each, at least 2.
+    suggested = max(2, min(cpus, int(memory // 1.5), 16))
+    return {"cpus": cpus, "memory_gb": memory, "public_addresses": info.get("public") or [],
+            "suggested_workers": suggested, "known": bool(info)}
+
+
+@router.post("/api/setup/done")
+def setup_done():
+    _main().redis.set("laika:setup:done", str(time.time()))
+    return {"done": True}
 
 
 @router.post("/api/setup/admin")

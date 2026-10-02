@@ -566,3 +566,14 @@ def test_undo_requests(op):
             op.validate({"action": "project_revert", "project_id": "shop", **bad}, stamp, NOW)
     with pytest.raises(op.Invalid):
         op.validate({"action": "project_revert", "project_id": "laika", "undo_job": "j1"}, stamp, NOW)
+
+
+def test_provider_actions_run_the_provider_helper(op):
+    import subprocess
+    with pytest.raises(op.Invalid, match="claude or codex"):
+        op.validate({"action": "provider_login", "request_id": "r-000002", "what": "gemini"}, "1000000-0", 1000)
+    request = op.validate({"action": "provider_login", "request_id": "r-000002", "what": "codex"}, "1000000-0", 1000)
+    calls = []
+    status, _, _ = op.execute_system(request, runner=lambda argv, **k: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""))
+    assert status == "succeeded" and calls[0][-3:] == [str(op.ROOT / "scripts/laika-providers.py"), "login", "codex"]
+    assert "--property=EnvironmentFile=-/etc/laika/providers/providers.env" in calls[0]

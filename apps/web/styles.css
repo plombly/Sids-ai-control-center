@@ -2321,3 +2321,83 @@ body.auth-locked .live-status {
   align-items: center;
   gap: 8px;
 }
+
+/* First-run setup (lib/setup-wizard.js) */
+.setup-panel {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  counter-reset: step;
+}
+.setup-steps li {
+  counter-increment: step;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.setup-steps li::before {
+  content: counter(step) '. ';
+}
+.setup-steps li.current {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.setup-steps li.done {
+  color: var(--ok, #3fcf8e);
+}
+#setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#setup-form h2 {
+  margin: 0;
+}
+.provider-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.provider-card h3 {
+  margin: 0;
+}
+.provider-login {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+}
+.login-code {
+  font-family: ui-monospace, monospace;
+  font-size: 1.2rem;
+  letter-spacing: 0.08em;
+}
+.swatch-pick input {
+  position: absolute;
+  opacity: 0;
+}
+.swatch-pick input:checked + .swatch {
+  outline: 3px solid var(--text);
+  outline-offset: 2px;
+}
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.setup-list {
+  padding-left: 1.2em;
+}
+.warn-notice {
+  border-color: var(--warn, #e0a030);
+}

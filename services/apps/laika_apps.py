@@ -481,6 +481,7 @@ def launch_assist(session_id):
         return
     result = run([SYSTEMD_RUN, f"--unit=laika-assist-{session_id}-{int(time.time())}", "--quiet", "--collect",
                   "--property=RuntimeMaxSec=600", "--description=LAIka goal assistant",
+                  "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
                   "/var/lib/laika/venv/bin/python", str(ASSIST_SCRIPT), session_id])
     if result.returncode:
         goal_assist.save(redis, session_id, status="failed",

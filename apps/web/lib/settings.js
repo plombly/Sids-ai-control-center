@@ -5,6 +5,7 @@ import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
 import { loadSettings, navMarkup, sectionMarkup, systemMarkup } from './system-settings.js';
 import { accessData } from './auth.js';
+import { providerCard } from './setup-wizard.js';
 
 const MODE_LABELS = [['ping', 'Post + ping me'], ['post', 'Post'], ['off', 'Off']];
 const DAY_LABELS = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -71,6 +72,9 @@ async function load(section = currentSection) {
       body = `${targetsMarkup(data.targets)}${rulesMarkup(data)}`;
     } else if (section === 'phones') {
       body = '<section class="settings-section" id="devices-section"></section>';
+    } else if (section === 'ai') {
+      const providers = await requestJSON('/api/ai-providers').catch(() => ({}));
+      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'access') {
       body = await accessData();
     } else if (section === 'system') {

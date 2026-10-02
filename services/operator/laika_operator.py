@@ -60,13 +60,13 @@ OUTPUT_LIMIT = 8000
 
 # network_*: answer a job's internet-access request (job-review.py network).
 NETWORK_ACTIONS = ("network_once", "network_always", "network_deny")
+# Host helpers (scripts/laika-system.py, laika-providers.py), run as their own unit.
+SYSTEM_ACTIONS = ("apply_settings", "provider_login", "provider_status", "provider_apply_keys")
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen", *NETWORK_ACTIONS,
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
-           "project_commit_upload", "restore_project", "project_revert", "apply_settings")
+           "project_commit_upload", "restore_project", "project_revert", *SYSTEM_ACTIONS)
 # Project-level actions run scripts/laika-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
-# Settings that change the host (scripts/laika-system.py), run as their own unit.
-SYSTEM_ACTIONS = ("apply_settings",)
 APPLY_WHAT = ("apply", "restart", "workers", "timers")
 PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project",
                    "project_commit_upload", "restore_project", "project_revert")
@@ -359,8 +359,12 @@ def validate(fields, entry_id, now):
         if entry_age(entry_id, now) > REQUEST_TTL:
             raise Invalid("request expired; apply again", status="expired")
         what = fields.get("what", "")
-        if what not in APPLY_WHAT:
+        if action == "apply_settings" and what not in APPLY_WHAT:
             raise Invalid(f"what must be one of {', '.join(APPLY_WHAT)}")
+        if action == "provider_login" and what not in ("claude", "codex"):
+            raise Invalid("provider must be claude or codex")
+        if action in ("provider_status", "provider_apply_keys"):
+            what = ""
         return {"action": action, "what": what, "job_id": "", "project_id": ""}
     if action in PROJECT_ACTIONS:
         if action not in ALLOWED_ACTIONS:
@@ -436,16 +440,29 @@ def call_action(request):
         job_review.reopen(job_id)
 
 
+SYSTEM_COMMANDS = {
+    "apply_settings": ("apply", "scripts/laika-system.py", lambda what: [what]),
+    "provider_login": ("signin", "scripts/laika-providers.py", lambda what: ["login", what]),
+    "provider_status": ("providers", "scripts/laika-providers.py", lambda what: ["status"]),
+    "provider_apply_keys": ("keys", "scripts/laika-providers.py", lambda what: ["apply-keys"]),
+}
+
+
 def execute_system(request, runner=subprocess.run):
-    """Start scripts/laika-system.py as its own unit (it may wait for workers)."""
-    name = f"laika-apply-{int(time.time())}"
+    """Start a host helper (scripts/laika-system.py, laika-providers.py) as
+    its own unit: it may wait for workers or for the operator's browser."""
+    tag, script, args = SYSTEM_COMMANDS[request["action"]]
+    name = f"laika-{tag}-{int(time.time())}"
     result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",
-                     "--description=LAIka: apply settings", "/usr/bin/python3",
-                     str(ROOT / "scripts/laika-system.py"), request["what"]],
+                     "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
+                     f"--description=LAIka: {request['action']}", "/usr/bin/python3",
+                     str(ROOT / script), *args(request["what"])],
                     text=True, capture_output=True, timeout=60)
     if result.returncode != 0:
         return "error", f"could not start: {(result.stderr or result.stdout).strip()[-300:]}", ""
-    return "succeeded", f"applying settings ({request['what']}) as {name}; workers finish their jobs first", ""
+    if request["action"] == "apply_settings":
+        return "succeeded", f"applying settings ({request['what']}) as {name}; workers finish their jobs first", ""
+    return "succeeded", f"started {name}", ""
 
 
 def execute(request):

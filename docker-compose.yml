@@ -72,6 +72,8 @@ services:
       - /var/log/laika/jobs:/job-logs:ro
       # Notification targets (apps/api/notify_routes.py), write-only from the page.
       - /etc/laika/notify:/notify
+      # AI provider API keys (apps/api/provider_routes.py), write-only from the page.
+      - /etc/laika/providers:/providers
     depends_on:
       postgres:
         condition: service_healthy

@@ -21,6 +21,7 @@ export function parseRoute(hash) {
     const tab = projectId && TABS.includes(parts[2]) ? parts[2] : 'overview';
     return { view: 'projects', projectId, create: false, files: tab === 'files', tab };
   }
+  if (parts[0] === 'setup') return { view: 'setup', projectId: null, create: false, files: false, tab: 'overview' };
   if (parts[0] === 'settings') {
     const section = /^[a-z-]{1,30}$/.test(parts[1] || '') ? parts[1] : 'general';
     return { view: 'settings', projectId: null, create: false, files: false, tab: 'overview', section };

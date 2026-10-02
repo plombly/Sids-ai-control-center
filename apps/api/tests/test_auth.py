@@ -117,3 +117,14 @@ def test_password_change_and_sessions(api):
     assert other.get("/api/projects").status_code == 401  # signed out everywhere else
     assert client.get("/api/projects").status_code == 200
     assert auth.verify_password("another long password", fake.hashes["laika:auth:admin"]["password"])
+
+
+def test_setup_info_and_done(api):
+    client, fake = api
+    setup(client)
+    fake.strings["laika:host-info"] = json.dumps({"cpus": 8, "memory_gb": 7.1, "public": ["93.184.216.34"]})
+    info = client.get("/api/setup/info").json()
+    assert info["suggested_workers"] == 4 and info["public_addresses"] == ["93.184.216.34"]
+    assert client.get("/api/setup/state").json()["done"] is False
+    assert client.post("/api/setup/done").status_code == 200
+    assert client.get("/api/setup/state").json()["done"] is True

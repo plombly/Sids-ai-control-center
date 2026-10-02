@@ -123,3 +123,17 @@ def test_setup_code_and_password_reset(capsys):
     assert "user: dylan" in out and r.records["laika:auth:admin"]["password"].startswith("scrypt$")
     assert "laika:sessions:s1" not in r.records
     assert admin.main(["x", "setup-code"], r) == 1  # an administrator exists
+
+
+def test_provider_helper_reads_cli_output_without_leaking_details():
+    import subprocess
+    helper = load_module(ROOT / "scripts/laika-providers.py")
+    out = "\x1b[1mFollow these steps\x1b[0m\n1. Open https://auth.openai.com/codex/device in your browser\n2. Enter this one-time code ABCD-12345\n"
+    assert helper.parse_prompt(out) == ("https://auth.openai.com/codex/device", "ABCD-12345")
+    assert helper.parse_prompt("nothing yet") == ("", "")
+    fake = lambda argv, **k: subprocess.CompletedProcess(argv, 0, '{"loggedIn": true, "authMethod": "claude.ai", "email": "me@x", "subscriptionType": "pro"}', "")
+    assert helper.claude_status(fake) == {"installed": True, "signed_in": True, "method": "claude.ai", "plan": "pro"}
+    codex = lambda argv, **k: subprocess.CompletedProcess(argv, 0, "Logged in using ChatGPT\n", "")
+    assert helper.codex_status(codex) == {"installed": True, "signed_in": True, "method": "ChatGPT"}
+    missing = lambda argv, **k: subprocess.CompletedProcess(argv, 127, "", "not found")
+    assert helper.codex_status(missing)["installed"] is False

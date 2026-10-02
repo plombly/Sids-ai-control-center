@@ -2,6 +2,7 @@
 // lib/registry.js; adding a feature means adding a file and one line here.
 import './appearance.js';
 import './auth.js';
+import './setup-wizard.js';
 import './merge-queue.js';
 import './pipeline-insights.js';
 import './providers.js';
