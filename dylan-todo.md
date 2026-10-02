@@ -99,3 +99,21 @@ that felt wrong; we'll go through the notes together.
 - [ ] Settings → AI: "Sign in with your ChatGPT account" shows a link and code;
       "Sign in with your Claude account" shows a link and takes the pasted code.
       (Only try this when you are willing to re-sign-in the server's CLIs.)
+
+## v1.0 checkpoints 6-9 (2026-10-02)
+
+- [ ] After the migration to the `laika` user: Settings → AI → sign Claude
+      in again (Codex's login was moved over). Run a small goal end to end.
+- [ ] `sudo laika doctor` on this server: everything green or explained.
+- [ ] Worker panel + / −, and watch automatic scaling add a worker when two
+      projects have work waiting.
+- [ ] Approve all: give a project a goal that makes 2+ jobs, approve them
+      with "Approve all N", check they merge one after another.
+- [ ] A project group: Activity → Whole group; Builds → Build the whole group.
+- [ ] Settings → System shows the version (updates: once the public
+      repository exists and its URL is set).
+- [ ] Optional: `sudo laika branding show` (and try apply / reset).
+- [ ] Install on a spare machine or VM with the one-line installer.
+- [ ] Keep `/root/laika-release-key/` safe: copy it OFFLINE (password
+      manager / USB) and consider deleting it from the server after
+      publishing. Anyone with it can sign updates for every install.
