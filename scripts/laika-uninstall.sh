@@ -76,8 +76,14 @@ if [ "$PURGE" = 1 ]; then
   docker volume ls -q | grep '^laika-build-cache-' | xargs -r docker volume rm >/dev/null 2>&1 || true
   docker image ls --format '{{.Repository}}' | grep -E '^laika-(api|web)$' | xargs -r docker image rm >/dev/null 2>&1 || true
   rm -rf /var/lib/laika /etc/laika /var/log/laika /var/backups/laika
-  userdel laika >/dev/null 2>&1 || true
+  # userdel refuses while anything still runs as laika (an app, a sign-in).
+  loginctl terminate-user laika >/dev/null 2>&1 || true
+  pkill -TERM -u laika >/dev/null 2>&1 || true
+  sleep 2
+  pkill -KILL -u laika >/dev/null 2>&1 || true
+  userdel laika >/dev/null 2>&1 || userdel -f laika >/dev/null 2>&1 || true
   groupdel laika >/dev/null 2>&1 || true
+  id laika >/dev/null 2>&1 && echo "Could not remove the laika user (still in use?): userdel laika" >&2
   echo "LAIka is removed, with all of its data."
 else
   echo "LAIka is removed. Your data is still in /var/lib/laika, /etc/laika and /var/backups/laika;"
