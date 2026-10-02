@@ -1,1 +1,1 @@
-{"private":true,"type":"module","scripts":{"test":"node app.test.js"}}
+{"private":true,"type":"module","scripts":{"test":"node app.test.js && node elapsed.test.js"}}

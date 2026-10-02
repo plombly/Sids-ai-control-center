@@ -42,11 +42,12 @@ test('needs you: ready approvals and stuck jobs with plain actions', () => {
 test('in progress: progress bar and what is happening now', () => {
   const html = inProgressMarkup({
     goals: [{ id: 'g1', status: 'running', prompt: 'Build the shop\nmore detail', project_id: 'shop', progress: { completed: 1, total: 4 }, created_at: NOW - 120 }, { id: 'g2', status: 'completed' }],
-    jobs: [{ id: 'j1', goal_id: 'g1', status: 'running', role: 'builder', title: 'Add cart' }]
+    jobs: [{ id: 'j1', goal_id: 'g1', status: 'running', role: 'builder', title: 'Add cart', started_at: NOW - 60 }]
   }, {}, NOW);
   assert.match(html, /Build the shop</);
   assert.match(html, /width:25%/);
   assert.match(html, /1 of 4 steps done · Building: Add cart/);
+  assert.match(html, /data-elapsed-since="1799999940"/);
   assert.doesNotMatch(html, /g2/);
   assert.match(inProgressMarkup({ goals: [] }), /SID is idle/);
 });

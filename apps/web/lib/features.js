@@ -15,3 +15,4 @@ import './previews.js';
 import './home.js';
 import './settings.js';
 import './devices.js';
+import './elapsed.js';

@@ -50,6 +50,8 @@ async function main() {
   assert.match(worker, /commands <b>4<\/b>/);
   assert.match(worker, /duration <b>1m 5s<\/b>/);
   assert.match(worker, /heartbeat <b>12s ago<\/b>/);
+  const runningWorker = workerMarkup({id:'w-3', status:'running', job_id:'j-3', job_started_at:100}, 160);
+  assert.match(runningWorker, /running <span class="elapsed" data-elapsed-since="100">1m 00s<\/span> on job j-3 · started/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /Provider unknown/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /cached <b>—<\/b>/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /heartbeat <b>—<\/b>/);
@@ -134,7 +136,7 @@ async function main() {
     provider: 'openai', model: 'm&1', review_status: 'complete', review_verdict: 'pass',
     integration_status: 'ready', goal_id: 'g1', branch: 'feature', base: 'base', candidate: 'candidate',
     integration_base_commit: 'base-2', integrated_candidate_commit: 'candidate-2', reviewed_commit: 'reviewed',
-    integration_worktree: 'worktree', integration_branch: 'main', duration: 12, effective_tokens: 42,
+    integration_worktree: 'worktree', integration_branch: 'main', duration: 12, started_at: 100, finished_at: 160, elapsed_seconds: 60, effective_tokens: 42,
     cached_input_tokens: 3, output_tokens: 4, command_count: 5, files: 6, tests: 'passed', error: null,
     repair_status: 'retry', repair_attempts: 1, max_repair_attempts: 2, needs_human_reason: '<reason>',
     review_job_id: 'review-1', review_findings: '<findings>',
@@ -147,18 +149,22 @@ async function main() {
     gate: {returncode: 1, summary: '<gate>'},
     related: [{
       id: 'related-1', role: 'reviewer', status: 'done', review_verdict: 'pass', duration: 1,
-      effective_tokens: 2, created_at: 3
+      started_at: 100, finished_at: 160, elapsed_seconds: 60, effective_tokens: 2, created_at: 3
     }]
   });
   for (const value of ['&lt;j1&gt;', '&lt;title&gt;', 'zz-first', 'aa-second', '&lt;gate&gt;', 'related-1']) {
     assert.match(detailMarkup, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.ok(detailMarkup.indexOf('zz-first') < detailMarkup.indexOf('aa-second'));
+  for (const heading of ['Started', 'Finished', 'Elapsed']) assert.match(detailMarkup, new RegExp(`<b>${heading}<\/b>`));
+  assert.match(detailMarkup, /<th>Started<\/th><th>Elapsed<\/th>/);
+  assert.match(detailMarkup, /1m 00s/);
   for (const heading of ['Summary', 'Candidate', 'Attempts', 'Review', 'Gate', 'Related jobs']) {
     assert.match(detailMarkup, new RegExp(`<h3>${heading}</h3>`));
   }
   assert.match(jobDetailMarkup({id:'j2'}), /No gate result/);
   assert.match(jobDetailMarkup({id:'j2'}), /<span>—<\/span>/);
+  assert.doesNotMatch(jobDetailMarkup({id:'old', related:[{id:'old-related'}]}), /<b>Started<\/b>/);
   const appSource = fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8');
   const indexSource = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8');
   assert.match(indexSource, /data-dismiss-all="failures"/);

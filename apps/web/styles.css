@@ -114,6 +114,7 @@ pre {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.elapsed { font-variant-numeric: tabular-nums; }
 .live-status {
   display: flex;
   align-items: center;

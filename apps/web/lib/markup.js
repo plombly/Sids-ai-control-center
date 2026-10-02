@@ -1,9 +1,11 @@
 import { asObject, duration, esc, number, pill, text } from './format.js';
+import { clockText, elapsedMarkup, elapsedText } from './elapsed.js';
 
-export const workerMarkup = w => {
+export const workerMarkup = (w, now = Date.now() / 1000) => {
   const busy = /^(working|busy|claimed|running|active|stopping)$/i.test(text(w.status, '')) || Boolean(w.active_job_id);
   const removeLabel = busy ? 'Remove (busy)' : 'Remove';
-  return `<div class="entity"><div class="entity-head"><span class="entity-name">${esc(w.id)}</span>${pill(w.status)}</div><div class="subtle">${esc(w.provider || 'Provider unknown')} · ${esc(w.model || 'model unknown')} · ${esc(w.role || 'role unknown')}</div><div class="stats"><span>job <b>${esc(w.job_id || 'none')}</b> · effective <b>${number(w.effective_tokens)}</b> · cached <b>${number(w.cached_input_tokens)}</b></span><span>commands <b>${number(w.command_count)}</b> · duration <b>${duration(w.duration)}</b> · heartbeat <b>${esc(w.heartbeat_age == null ? '—' : `${w.heartbeat_age}s ago`)}</b></span></div><div class="actions"><button data-worker="${esc(w.id)}" data-action="start">Start</button><button data-worker="${esc(w.id)}" data-action="stop">Stop</button><button class="danger-button" data-worker="${esc(w.id)}" data-action="remove"${busy ? ' disabled title="Busy worker: stop it before removing it"' : ''}>${removeLabel}</button></div></div>`;
+  const running = busy && w.job_started_at != null ? `running ${elapsedMarkup(w.job_started_at, null, now)} on job ${esc(w.job_id || w.active_job_id || 'none')} · started ${clockText(w.job_started_at, now)}` : '';
+  return `<div class="entity"><div class="entity-head"><span class="entity-name">${esc(w.id)}</span>${pill(w.status)}</div><div class="subtle">${esc(w.provider || 'Provider unknown')} · ${esc(w.model || 'model unknown')} · ${esc(w.role || 'role unknown')}</div><div class="stats"><span>job <b>${esc(w.job_id || 'none')}</b> · effective <b>${number(w.effective_tokens)}</b> · cached <b>${number(w.cached_input_tokens)}</b></span><span>commands <b>${number(w.command_count)}</b> · ${running || `duration <b>${duration(w.duration)}</b>`} · heartbeat <b>${esc(w.heartbeat_age == null ? '—' : `${w.heartbeat_age}s ago`)}</b></span></div><div class="actions"><button data-worker="${esc(w.id)}" data-action="start">Start</button><button data-worker="${esc(w.id)}" data-action="stop">Stop</button><button class="danger-button" data-worker="${esc(w.id)}" data-action="remove"${busy ? ' disabled title="Busy worker: stop it before removing it"' : ''}>${removeLabel}</button></div></div>`;
 };
 export const jobActionsMarkup = job => {
   const actions =
@@ -57,7 +59,8 @@ const detailRows = (job, fields) =>
     .map(([label, field]) => `<div class="detail-row"><b>${esc(label)}</b>${detailValue(job[field])}</div>`)
     .join('');
 const detailSection = (title, content) => `<section class="detail-block"><h3>${esc(title)}</h3>${content}</section>`;
-export const jobDetailMarkup = job => {
+export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
+  job = { ...job, _started: clockText(job.started_at, now), _finished: job.started_at == null ? '' : job.finished_at == null ? '—' : clockText(job.finished_at, now), _elapsed: job.started_at == null ? '' : job.finished_at == null ? elapsedMarkup(job.started_at, null, now) : elapsedText(job.elapsed_seconds) };
   const lineage = asObject(job.lineage) || {},
     reviewHistory = Array.isArray(lineage.review_findings_history) ? lineage.review_findings_history : [],
     sourceCommits = Array.isArray(lineage.source_candidate_commits) ? lineage.source_candidate_commits : [],
@@ -84,8 +87,13 @@ export const jobDetailMarkup = job => {
           ['Summary', 'summary']
         ])
       : '<p>No gate result</p>',
+    timingRows = job.started_at == null ? [] : [
+      ['Started', '_started'],
+      ['Finished', '_finished'],
+      ['Elapsed', '_elapsed']
+    ],
     relatedMarkup = related.length
-      ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
+      ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Started</th><th>Elapsed</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${clockText(item.started_at, now)}</td><td>${item.started_at == null ? '' : item.finished_at == null ? elapsedMarkup(item.started_at, null, now) : elapsedText(item.elapsed_seconds)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
       : detailValue(null);
   return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div><section class="job-log-section"><h3>Live log</h3><div class="job-log" data-job-log="${esc(job.id)}"><div class="subtle">Loading…</div></div><button type="button" class="detail-button" data-job-log-tests="${esc(job.id)}">Show test output</button><pre class="job-test-log" hidden></pre></section>${detailSection(
     'Summary',
@@ -100,6 +108,7 @@ export const jobDetailMarkup = job => {
       ['Review status', 'review_status'],
       ['Review verdict', 'review_verdict'],
       ['Integration status', 'integration_status'],
+      ...timingRows,
       ['Duration', 'duration'],
       ['Effective tokens', 'effective_tokens'],
       ['Cached input tokens', 'cached_input_tokens'],
