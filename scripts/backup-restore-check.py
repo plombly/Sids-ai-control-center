@@ -142,7 +142,8 @@ def run_checks(snapshot):
     with tempfile.TemporaryDirectory(prefix="laika-restore-check-") as tmp:
         workdir = Path(tmp)
         os.chmod(workdir, 0o700)
-        check("repo", check_bundle, snapshot / "repo.bundle", workdir)
+        if (snapshot / "repo.bundle").exists():  # only servers running LAIka from git have one
+            check("repo", check_bundle, snapshot / "repo.bundle", workdir)
         projects = snapshot / "projects"
         for bundle in sorted(projects.glob("*.bundle")) if projects.is_dir() else []:
             check(f"project {bundle.stem}", check_bundle, bundle, workdir)

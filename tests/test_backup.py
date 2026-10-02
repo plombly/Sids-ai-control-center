@@ -140,3 +140,10 @@ def test_projects_are_bundled_with_their_app_data(bk, tmp_path):
     assert set(result["bundles"]) == {"shop"} and result["data_bytes"] > 0
     names = tarfile.open(dest / "projects" / "project-data.tar.gz").getnames()
     assert any(n.endswith("shop/app.db") for n in names)
+
+
+def test_a_release_install_has_no_repository_to_bundle(tmp_path, monkeypatch):
+    backup = load_module(ROOT / "scripts/laika-backup.py", "laika_backup_release_test")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    monkeypatch.setattr(backup, "REPO_ROOT", tmp_path)
+    assert backup.backup_repo(tmp_path / "out") == {"skipped": "installed from a release", "version": "1.0.0"}

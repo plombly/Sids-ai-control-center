@@ -67,6 +67,7 @@ CONFIG_PATHS = [
     Path("/etc/systemd/system/laika-watchdog.service"),
     Path("/etc/systemd/system/laika-watchdog.timer"),
     Path("/etc/systemd/system/laika-apps.service"),
+    Path("/etc/systemd/system/laika-scaler.service"),
     Path("/etc/systemd/system/laika-notify.service"),
     Path("/etc/systemd/system/laika-notify.timer"),
     Path("/etc/systemd/system/laika-restore-check.service"),
@@ -85,6 +86,15 @@ def run(command, **kwargs):
 
 
 def backup_repo(dest):
+    """LAIka's own repository, when it runs from a git checkout (development
+    servers). An install from a release has nothing to bundle: its program
+    files come back by installing the same version (recorded here)."""
+    if not (REPO_ROOT / ".git").exists():
+        try:
+            version = (REPO_ROOT / "VERSION").read_text().strip()
+        except OSError:
+            version = "unknown"
+        return {"skipped": "installed from a release", "version": version}
     bundle = dest / "repo.bundle"
     result = run(["git", "-C", str(REPO_ROOT), "bundle", "create", str(bundle), "--all"])
     if result.returncode != 0:

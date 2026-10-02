@@ -10,7 +10,9 @@ Type=oneshot
 Environment=REPO_ROOT=/opt/laika
 Environment=BACKUP_ROOT=/var/backups/laika/snapshots
 Environment=BACKUP_KEEP=14
-Environment=BACKUP_GIT_REMOTE=origin
 Environment=BACKUP_GIT_BRANCHES=main
 # Environment=BACKUP_REMOTE=user@host:/path   (off-host copy; recommended)
+# Development servers: BACKUP_GIT_REMOTE=origin in laika.env also pushes
+# LAIka's own branches to that remote.
+EnvironmentFile=-/etc/laika/laika.env
 ExecStart=/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-backup.py

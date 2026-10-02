@@ -55,7 +55,7 @@ if [ -f "$REPO/.env" ] && [ ! -L "$REPO/.env" ]; then
 fi
 if [ ! -s "$CONF/laika.env" ]; then
   if [ $KEEP_BUILTIN = 1 ]; then
-    printf '# Install-wide settings.\n# Development server: keeps the built-in LAIka project.\nLAIKA_BUILTIN_PROJECT=1\n# Development checkouts hidden from project sandboxes.\nLAIKA_SANDBOX_HIDE=/opt/sid-dev\n' > "$CONF/laika.env"
+    printf '# Install-wide settings.\n# Development server: keeps the built-in LAIka project.\nLAIKA_BUILTIN_PROJECT=1\n# Development checkouts hidden from project sandboxes.\nLAIKA_SANDBOX_HIDE=/opt/sid-dev\n# Backups also push the main branch of LAIka itself to its git remote.\nBACKUP_GIT_REMOTE=origin\n' > "$CONF/laika.env"
   else
     printf '# Install-wide settings.\nLAIKA_BUILTIN_PROJECT=0\n' > "$CONF/laika.env"
   fi
