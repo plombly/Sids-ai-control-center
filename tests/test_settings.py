@@ -118,3 +118,16 @@ def test_provider_helper_reads_cli_output_without_leaking_details():
     assert helper.codex_status(codex) == {"installed": True, "signed_in": True, "method": "ChatGPT"}
     missing = lambda argv, **k: subprocess.CompletedProcess(argv, 127, "", "not found")
     assert helper.codex_status(missing)["installed"] is False
+
+
+def test_a_claude_sign_in_is_judged_by_the_cli_afterwards(monkeypatch):
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_finish_test")
+    r = MemoryRedis()
+    monkeypatch.setattr(helper, "status", lambda r, runner=None: {})
+    assert helper.finish_claude(r, 0, "", check=lambda: {"signed_in": True}) == 0
+    assert json.loads(r.get("laika:provider-login:claude"))["state"] == "done"
+    # Exit code lost or non-zero, but the CLI is signed in: still a success.
+    assert helper.finish_claude(r, 1, "", check=lambda: {"signed_in": True}) == 0
+    assert helper.finish_claude(r, 1, "\x1b[1mInvalid code\x1b[0m", check=lambda: {"signed_in": False}) == 1
+    failed = json.loads(r.get("laika:provider-login:claude"))
+    assert failed["state"] == "failed" and failed["message"] == "Invalid code"

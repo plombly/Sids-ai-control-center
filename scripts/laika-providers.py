@@ -119,13 +119,18 @@ def login_claude(r, clock=time.time):
     if pid == 0:
         os.execvp("claude", ["claude", "auth", "login", "--claudeai"])
     output, shown, sent, deadline = "", False, False, clock() + LOGIN_TIMEOUT
-    while clock() < deadline:
+    ended = False  # the CLI closed its terminal: it has finished, one way or the other
+    while clock() < deadline and not ended:
         ready, _, _ = select.select([fd], [], [], 1)
         if ready:
             try:
-                output += os.read(fd, 4096).decode(errors="replace")
+                chunk = os.read(fd, 4096).decode(errors="replace")
             except OSError:
+                chunk = ""
+            if not chunk:
+                ended = True
                 break
+            output += chunk
             url, _ = parse_prompt(output)
             if url and not shown:
                 publish(r, "claude", state="waiting", url=url,
@@ -140,14 +145,25 @@ def login_claude(r, clock=time.time):
                 publish(r, "claude", state="checking", message="Checking the code…")
         finished, code_status = os.waitpid(pid, os.WNOHANG)
         if finished:
-            ok = os.waitstatus_to_exitcode(code_status) == 0
-            publish(r, "claude", state="done" if ok else "failed",
-                    message="" if ok else ANSI.sub("", output)[-300:])
-            status(r)
-            return 0 if ok else 1
-    os.kill(pid, 9)
-    publish(r, "claude", state="failed", message="Sign-in timed out")
-    return 1
+            return finish_claude(r, os.waitstatus_to_exitcode(code_status), output)
+    if not ended:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        publish(r, "claude", state="failed", message="Sign-in timed out")
+        return 1
+    # The terminal closed before the exit was seen: wait for it (it is quick).
+    _, code_status = os.waitpid(pid, 0)
+    return finish_claude(r, os.waitstatus_to_exitcode(code_status), output)
+
+
+def finish_claude(r, exit_code, output, check=None):
+    """Report a finished Claude sign-in by what the CLI says now, not only by
+    its exit code (a closed terminal once looked like a timeout)."""
+    signed_in = (check or claude_status)().get("signed_in")
+    ok = exit_code == 0 or signed_in
+    publish(r, "claude", state="done" if ok else "failed", message="" if ok else ANSI.sub("", output)[-300:])
+    status(r)
+    return 0 if ok else 1
 
 
 def read_env(path=PROVIDERS_ENV):
