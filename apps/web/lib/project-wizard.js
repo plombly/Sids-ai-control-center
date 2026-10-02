@@ -220,7 +220,7 @@ onRoute(async route => {
   if (!entering) { active = false; return; }
   if (active) return;
   active = true;
-  state = { step: 1, importance: 'medium', source: '', existingIds: [], requestId: newRequestId(), parent: takePendingParent() };
+  state = { step: 1, importance: globalThis.LAIKA_PREFS?.DEFAULT_IMPORTANCE || 'medium', source: '', existingIds: [], requestId: newRequestId(), parent: takePendingParent() };
   if (typeof document === 'undefined') return;
   root = document.getElementById('projects-root');
   if (!root) return;

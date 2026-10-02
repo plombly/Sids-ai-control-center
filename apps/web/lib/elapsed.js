@@ -14,8 +14,13 @@ export function clockText(epochSeconds, now = Date.now() / 1000) {
   const date = new Date(Number(epochSeconds) * 1000);
   const current = new Date(Number(now) * 1000);
   if (Number.isNaN(date.getTime()) || Number.isNaN(current.getTime())) return '';
-  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  const prefs = globalThis.LAIKA_PREFS || {};
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const time = prefs.CLOCK === '12h'
+    ? `${date.getHours() % 12 || 12}:${minutes} ${date.getHours() < 12 ? 'AM' : 'PM'}`
+    : `${String(date.getHours()).padStart(2, '0')}:${minutes}`;
   if (date.getFullYear() === current.getFullYear() && date.getMonth() === current.getMonth() && date.getDate() === current.getDate()) return time;
+  if (prefs.DATE_FORMAT === 'iso') return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${time}`;
   return `${date.toLocaleString('en-US', { month: 'short' })} ${date.getDate()} ${time}`;
 }
 

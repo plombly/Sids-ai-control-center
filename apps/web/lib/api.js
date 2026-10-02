@@ -101,7 +101,12 @@ export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   try {
     body = await response.json();
   } catch {}
-  if (!response.ok) throw new Error(errorMessage(body, response.status));
+  if (!response.ok) {
+    const error = new Error(errorMessage(body, response.status));
+    error.body = body;
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 export const fetchJobDetail = (jobId, fetchImpl = fetch) =>

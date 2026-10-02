@@ -3,6 +3,7 @@
 import { requestJSON } from './api.js';
 import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
+import { loadSettings, navMarkup, sectionMarkup, systemMarkup } from './system-settings.js';
 
 const MODE_LABELS = [['ping', 'Post + ping me'], ['post', 'Post'], ['off', 'Off']];
 const DAY_LABELS = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -55,12 +56,27 @@ const say = (id, message) => {
   if (node) node.textContent = message;
 };
 
-async function load() {
+let currentSection = 'general';
+
+async function load(section = currentSection) {
+  currentSection = section;
   const container = root();
   if (!container) return;
   try {
-    data = await requestJSON('/api/notifications');
-    container.innerHTML = `<div class="settings-page"><div class="page-head"><h2>Settings</h2></div><section class="settings-section"><h2 class="section-title">Notifications</h2>${targetsMarkup(data.targets)}${rulesMarkup(data)}</section><section class="settings-section" id="devices-section"></section></div>`;
+    const settings = await loadSettings(true);
+    let body;
+    if (section === 'notifications') {
+      data = await requestJSON('/api/notifications');
+      body = `${targetsMarkup(data.targets)}${rulesMarkup(data)}`;
+    } else if (section === 'phones') {
+      body = '<section class="settings-section" id="devices-section"></section>';
+    } else if (section === 'system') {
+      const info = await requestJSON('/api/app/info').catch(() => ({}));
+      body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name });
+    } else {
+      body = sectionMarkup(settings, section, settings.values, settings.pending) || sectionMarkup(settings, 'general', settings.values, settings.pending);
+    }
+    container.innerHTML = `<div class="settings-page settings-layout"><div class="page-head"><h2>Settings</h2></div>${navMarkup(settings, section)}<div class="settings-body">${body}</div></div>`;
     window.dispatchEvent(new CustomEvent('laika:settings-loaded'));
   } catch (error) {
     container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
@@ -128,5 +144,6 @@ if (typeof document !== 'undefined') {
 }
 
 onRoute(route => {
-  if (route.view === 'settings') load();
+  if (route.view === 'settings') load(route.section || 'general');
 });
+if (typeof window !== 'undefined') window.addEventListener('laika:settings-redraw', () => load());

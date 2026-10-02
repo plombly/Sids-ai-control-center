@@ -12,7 +12,9 @@
   --green: #3fcf8e;
   --amber: #efb44a;
   --red: #ef5d6c;
+  --line-soft: rgba(255, 255, 255, 0.04);
   --radius: 10px;
+  color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -702,10 +704,10 @@ label {
   -webkit-user-select: none;
 }
 .file-table tbody tr.file-row:hover {
-  background: rgba(91, 157, 255, 0.06);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 .file-table tbody tr.file-row.selected {
-  background: rgba(91, 157, 255, 0.18);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .file-table tbody tr.file-row.cut {
@@ -715,7 +717,7 @@ label {
 .file-table tbody tr.drop-target {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
-  background: rgba(91, 157, 255, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .file-drop {
   min-height: 80px;
@@ -762,7 +764,7 @@ label {
   padding: 6px 12px;
   border: 1px solid var(--accent);
   border-radius: 8px;
-  background: rgba(91, 157, 255, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .selection-bar > span {
   margin-right: 8px;
@@ -875,7 +877,7 @@ label {
   background: transparent;
 }
 .picker-folder:hover {
-  background: rgba(91, 157, 255, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text);
 }
 .system-info {
@@ -918,7 +920,7 @@ label {
   grid-template-columns: 90px 1fr;
   gap: 8px;
   padding: 3px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--line-soft);
 }
 .log-line pre {
   margin: 0;
@@ -2088,4 +2090,193 @@ pre {
   width: 100%;
   font-family: ui-monospace, monospace;
   font-size: 12px;
+}
+
+
+/* Light theme (Settings → Appearance; "system" follows the device). */
+:root[data-theme="light"] {
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --panel-2: #eef2f8;
+  --line: #d7dee9;
+  --line-soft: rgba(0, 0, 0, 0.04);
+  --text: #18202c;
+  --muted: #5d6879;
+  --green: #12925a;
+  --amber: #b07a12;
+  --red: #c8344a;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --panel-2: #eef2f8;
+    --line: #d7dee9;
+    --line-soft: rgba(0, 0, 0, 0.04);
+    --text: #18202c;
+    --muted: #5d6879;
+    --green: #12925a;
+    --amber: #b07a12;
+    --red: #c8344a;
+    color-scheme: light;
+  }
+}
+/* Compact layout: tighter spacing everywhere. */
+:root[data-density="compact"] .home,
+:root[data-density="compact"] .stack,
+:root[data-density="compact"] .home-cards {
+  gap: 10px;
+}
+:root[data-density="compact"] .panel,
+:root[data-density="compact"] .home-card,
+:root[data-density="compact"] .settings-card,
+:root[data-density="compact"] .item {
+  padding: 8px 10px;
+}
+/* Reduced motion: no animations, spinners or transitions. */
+:root[data-reduce-motion] *,
+:root[data-reduce-motion] *::before,
+:root[data-reduce-motion] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+/* Home sections in a custom order: one column, ordered by Settings. */
+.home.home-custom-order .home-columns {
+  display: contents;
+}
+
+/* Settings pages (lib/system-settings.js) */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 18px;
+  max-width: 1100px;
+}
+.settings-layout .page-head {
+  grid-column: 1 / -1;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: start;
+  position: sticky;
+  top: 12px;
+}
+.settings-nav a {
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-decoration: none;
+}
+.settings-nav a:hover {
+  color: var(--text);
+}
+.settings-nav a.active {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(0, 1.2fr);
+  gap: 6px 18px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.setting-label {
+  font-weight: 600;
+}
+.setting-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.setting-control input:not([type="checkbox"]):not([type="color"]),
+.setting-control select {
+  max-width: 360px;
+}
+.setting-apply {
+  color: var(--amber);
+  font-size: 0.75rem;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.list-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 360px;
+}
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.list-move {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+.color-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.color-setting input[type="color"] {
+  width: 44px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+}
+.swatch {
+  width: 26px;
+  min-height: 26px !important;
+  height: 26px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+}
+.swatch.chosen {
+  border-color: var(--text);
+}
+.pending-card {
+  border-color: var(--amber);
+}
+.setting-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+}
+@media (max-width: 760px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-nav a {
+    flex: none;
+  }
+  .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
