@@ -54,6 +54,8 @@ def main():
     require("LAIKA_OPERATOR_TOKEN" not in nginx and "LAIKA_OPERATOR_TOKEN" not in dockerfile,
             "the web container must never hold the operator token")
     require("proxy_set_header X-Real-IP $remote_addr;" in nginx, "nginx must pass the real client address")
+    require("proxy_set_header Host $http_host;" in nginx,
+            "nginx must pass Host with its port: the API's same-origin check compares it with Origin")
     require("env_file" not in web, "the web container needs no secrets")
 
 if __name__ == "__main__":

@@ -1010,7 +1010,7 @@ label {
   width: 36px;
   height: 36px;
 }
-/* The wordmark: "LAI" in the accent colour, "ka" in the text colour. */
+/* The wordmark: only "AI" in the accent colour; "L" and "ka" in the text colour. */
 .wordmark {
   letter-spacing: 0.01em;
 }
@@ -2244,10 +2244,17 @@ pre {
   border-radius: 6px;
   background: none;
 }
+/* Fixed-size circles: inside a flex row (or as an inline span) a swatch
+   would otherwise shrink into a narrow oval. */
 .swatch {
+  display: inline-block;
+  flex: 0 0 26px;
+  box-sizing: border-box;
   width: 26px;
+  min-width: 26px;
   min-height: 26px !important;
   height: 26px;
+  aspect-ratio: 1;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 50%;
@@ -2380,6 +2387,13 @@ body.auth-locked .live-status {
   font-family: ui-monospace, monospace;
   font-size: 1.2rem;
   letter-spacing: 0.08em;
+}
+.swatch-pick {
+  display: inline-flex;
+  flex: 0 0 auto;
+  position: relative;
+  padding: 3px;
+  cursor: pointer;
 }
 .swatch-pick input {
   position: absolute;

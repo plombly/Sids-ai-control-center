@@ -88,6 +88,13 @@ def test_writes_from_other_sites_are_refused_and_writes_are_audited(api):
     setup(client)
     evil = client.patch("/api/projects/shop", json={"importance": "low"}, headers={"Origin": "http://evil.example"})
     assert evil.status_code == 403
+    # Through nginx, Host keeps the port; behind another proxy, X-Forwarded-Host counts.
+    portless = client.patch("/api/projects/shop", json={"importance": "low"},
+                            headers={"Origin": "http://laika.lan:8080", "Host": "laika.lan"})
+    assert portless.status_code == 403
+    proxied = client.patch("/api/projects/shop", json={"importance": "low"},
+                           headers={"Origin": "https://laika.home", "Host": "10.0.0.5:8080", "X-Forwarded-Host": "laika.home"})
+    assert proxied.status_code == 200
     ok = client.patch("/api/projects/shop", json={"importance": "low"}, headers={"Origin": "http://laika.lan:8080"})
     assert ok.status_code == 200
     entries = client.get("/api/audit").json()["entries"]

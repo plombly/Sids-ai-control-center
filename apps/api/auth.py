@@ -131,8 +131,14 @@ def same_origin(request):
     origin = request.headers.get("origin")
     if not origin:
         return True  # not a browser cross-site request (CLI, phone app)
-    host = request.headers.get("host", "")
-    return origin.split("://", 1)[-1].rstrip("/") == host
+    origin_host = origin.split("://", 1)[-1].rstrip("/").lower()
+    # Host as the browser sent it (nginx passes $http_host, port included),
+    # or the address a reverse proxy in front of LAIka was reached on. A
+    # cross-site page cannot set X-Forwarded-Host without a CORS preflight,
+    # which LAIka never grants.
+    hosts = {request.headers.get("host", "").lower()}
+    hosts.update(h.strip().lower() for h in request.headers.get("x-forwarded-host", "").split(",") if h.strip())
+    return origin_host in hosts
 
 
 # --- endpoints ------------------------------------------------------------------------------
