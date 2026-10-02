@@ -180,3 +180,21 @@ def test_sid_can_be_a_parent_and_keeps_copies_outside_every_sandbox(group, tmp_p
     assert copy == tmp_path / "sid-reference" / "other" and (copy / "README.md").exists()
     import project_sandbox
     assert "/var/lib/sid-ai" in project_sandbox.HIDDEN
+
+
+def test_push_main_only_for_projects_with_a_push_remote(group):
+    r, _ = group
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    shop = sid_projects.load(r, "shop")
+    assert sid_projects.push_main(shop, runner) == "" and calls == []  # no push remote
+    r.records["sid:projects:shop"]["push_remote"] = "git@github.com:me/shop.git"
+    assert sid_projects.push_main(sid_projects.load(r, "shop"), runner) == ""
+    assert calls[-1][-2:] == ["origin", "refs/heads/main:refs/heads/main"] and "push" in calls[-1]
+    assert sid_projects.push_main(sid_projects.load(r, "sid"), runner) == "" and len(calls) == 1
+    failing = lambda argv, **k: subprocess.CompletedProcess(argv, 1, "", "Permission denied (publickey)")
+    assert "Permission denied" in sid_projects.push_main(sid_projects.load(r, "shop"), failing)

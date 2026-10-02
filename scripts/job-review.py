@@ -303,6 +303,9 @@ def _approve_unlocked(job_id, expected_candidate=None):
     )
 
     cleanup_after_merge(job_id, data, worktree, branch)
+    warning = sid_projects.push_main(current_project())
+    if warning:
+        print(f"WARNING: {warning} (the merge is recorded; push again later)", file=sys.stderr)
 
     print()
     print(f"APPROVED + INTEGRATED: {job_id}")

@@ -529,7 +529,10 @@ def change_main(record, project_id, change, message_for):
         kind = "undo" if message_for(result).startswith("Undo ") else "code_change"
         sid_projects.record_event(r, project_id, kind, message_for(result).removesuffix(" from the dashboard"),
                                   ref=head[:12])
-        return {"id": project_id, "status": "committed", "commit": head, **result}
+        warning = (sid_projects.push_main(sid_projects.load(r, project_id))
+                   if r.hget(key_for(project_id), "push_remote") else "")
+        return {"id": project_id, "status": "committed", "commit": head, **result,
+                **({"push_warning": warning} if warning else {})}
     finally:
         r.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) "
                "else return 0 end", 1, lock_key, token)

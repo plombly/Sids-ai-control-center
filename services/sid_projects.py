@@ -43,6 +43,7 @@ class Project:
         self.worktrees = Path(fields["worktrees"])
         self.logs = Path(fields["logs"])
         self.default_branch = fields.get("default_branch") or "main"
+        self.push_remote = fields.get("push_remote") or ""
         # Project groups (one level): a child names its parent; see effective_fields().
         self.parent = fields.get("parent") or ""
         self.gate_command = fields.get("gate_command") or ""
@@ -310,6 +311,30 @@ def detect_setup(path):
     elif (path / "pyproject.toml").is_file():
         steps.append("python3 -m venv .venv && .venv/bin/pip install -q pytest -e .")
     return " && ".join(steps)
+
+
+PUSH_TIMEOUT = 120
+
+
+def push_main(project, runner=None):
+    """Push a project's main to its GitHub remote after it moved (approval,
+    dashboard change, undo). Best effort: the merge is already recorded;
+    returns "" or a warning. Uses the remote and deploy key set up by
+    sid-project.py push-setup (origin + core.sshCommand); SID itself and
+    projects without a push remote are never pushed."""
+    import subprocess
+    if project.is_sid or not getattr(project, "push_remote", ""):
+        return ""
+    run = runner or subprocess.run
+    try:
+        result = run(["git", "-C", str(project.repo), "push", "-q", "origin",
+                      f"refs/heads/{project.default_branch}:refs/heads/{project.default_branch}"],
+                     capture_output=True, text=True, timeout=PUSH_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"push to GitHub failed: {exc}"
+    if result.returncode != 0:
+        return f"push to GitHub failed: {(result.stderr or result.stdout).strip()[-300:]}"
+    return ""
 
 
 def verify_worktree_pointer(top, repo):
