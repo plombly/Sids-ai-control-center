@@ -73,7 +73,10 @@ done
 find "$DATA/projects" -maxdepth 2 -name 'deploy_key*' -exec chown root:root {} + -exec chmod 600 {} + 2>/dev/null || true
 for repo in "$DATA"/projects/*/repo "$REPO"; do
   [ -d "$repo/.git" ] || continue
-  git -C "$repo" config core.sharedRepository group
+  # Edit the file directly: git (as root) refuses a repository the laika
+  # user now owns ("dubious ownership"); the services get safe.directory
+  # from /etc/laika/gitconfig.
+  git config --file "$repo/.git/config" core.sharedRepository group
 done
 # LAIka's own repository (development servers build it with workers).
 if [ $KEEP_BUILTIN = 1 ] && [ -d "$REPO/.git" ]; then
