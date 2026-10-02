@@ -7,7 +7,7 @@ import { esc, escValue } from './format.js';
 
 export function suggestedUrl(location = globalThis.location) {
   const host = location?.hostname || 'localhost';
-  return `http://${host}:8000`;
+  return `http://${host}:${location?.port || '8080'}`;
 }
 
 function when(seconds, now = Date.now() / 1000) {

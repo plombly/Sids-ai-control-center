@@ -8,6 +8,7 @@ import { esc, escValue } from './format.js';
 export const EXTRA_SECTIONS = [
   { id: 'notifications', label: 'Notifications', help: 'Where alerts go and what each event does.' },
   { id: 'phones', label: 'Phones & apps', help: 'Pair the LAIka app and revoke lost phones.' },
+  { id: 'access', label: 'Access', help: 'Your password, signed-in browsers and the audit log.' },
   { id: 'system', label: 'System', help: 'Version, branding and where things live.' }
 ];
 

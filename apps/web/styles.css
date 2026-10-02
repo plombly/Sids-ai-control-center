@@ -2280,3 +2280,44 @@ pre {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Sign-in and first-run screens (lib/auth.js) */
+body.auth-locked .shell > :not(.auth-screen):not(.topbar),
+body.auth-locked .view-nav,
+body.auth-locked .live-status {
+  display: none !important;
+}
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 70vh;
+  padding: 16px;
+}
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, 100%);
+  padding: 28px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.auth-card h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+.auth-card input {
+  width: 100%;
+}
+.auth-logo {
+  align-self: center;
+}
+.auth-note {
+  font-size: 0.8rem;
+}
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

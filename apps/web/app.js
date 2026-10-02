@@ -277,30 +277,9 @@ async function runJobAction(button) {
     button.disabled = false;
   }
 }
-async function refreshTokenState() {
-  const node = document.getElementById('token-state');
-  if (!node) return;
-  try {
-    const auth = await requestJSON('/api/auth', { method: 'GET' });
-    node.textContent = tokenStateText(auth);
-    // nginx injects the token for this dashboard: nothing to enter.
-    const form = document.getElementById('token-form');
-    form?.querySelectorAll('input, button').forEach(el => (el.hidden = Boolean(auth.token_valid)));
-  } catch (error) {
-    node.textContent = error.message;
-  }
-}
 if (typeof document !== 'undefined') {
   applyRoute(currentRoute());
   window.addEventListener('hashchange', () => applyRoute(currentRoute()));
-  refreshTokenState();
-  document.getElementById('token-form')?.addEventListener('submit', event => {
-    event.preventDefault();
-    const input = document.getElementById('token-input');
-    operatorToken.set(input.value.trim());
-    input.value = '';
-    refreshTokenState();
-  });
   render();
   poll();
   loadHistoryPage();

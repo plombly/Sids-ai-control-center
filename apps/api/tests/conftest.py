@@ -2,6 +2,9 @@ import os
 
 # Tests never read the live server's stored settings (services/laika_env.py).
 os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
+# Most tests run without an administrator account: keep the API unlocked
+# (tests/test_auth.py turns the lock on).
+os.environ["LAIKA_SETUP_LOCK"] = "0"
 import sys
 from pathlib import Path
 

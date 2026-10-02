@@ -77,8 +77,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Only nginx (laika-web, port 8080) talks to the API: one way in, real
+    # client addresses for sign-in limits and the audit log.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/health'))['status'] == 'healthy'"]
       interval: 5s
@@ -92,12 +94,8 @@ services:
       context: ./apps/web
     container_name: laika-web
     restart: unless-stopped
-    # Same token file as the api: nginx adds it to /api requests from other
-    # machines only. Host networking lets nginx see real client addresses
-    # and this server's own ones (apps/web/nginx.conf); it listens on 8080.
-    env_file:
-      - path: /etc/laika/operator.env
-        required: false
+    # Host networking lets nginx see real client addresses (sign-in audit
+    # and rate limits); it listens on 8080.
     depends_on:
       api:
         condition: service_healthy

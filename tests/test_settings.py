@@ -104,3 +104,22 @@ def test_system_apply_starts_and_stops_workers_and_writes_the_backup_schedule(tm
     monkeypatch.setenv("BACKUP_TIME", "04:45")
     module.timers()
     assert "OnCalendar=*-*-* 04:45:00" in (tmp_path / "laika-backup.timer.d/schedule.conf").read_text()
+
+
+def test_setup_code_and_password_reset(capsys):
+    import hashlib
+    admin = load_module(ROOT / "scripts/laika-admin.py")
+    r = MemoryRedis()
+    assert admin.main(["x", "setup-code"], r) == 0
+    code = capsys.readouterr().out.strip()
+    assert len(code) == 9 and code[4] == "-"
+    assert r.get("laika:setup:code") == hashlib.sha256(code.replace("-", "").encode()).hexdigest()
+    assert admin.main(["x", "reset-password"], r) == 1  # no administrator yet
+    r.records["laika:auth:admin"] = {"username": "dylan", "password": "old"}
+    r.values["laika:session-ids"] = {"s1"}
+    r.records["laika:sessions:s1"] = {"user": "dylan"}
+    assert admin.main(["x", "reset-password"], r) == 0
+    out = capsys.readouterr().out
+    assert "user: dylan" in out and r.records["laika:auth:admin"]["password"].startswith("scrypt$")
+    assert "laika:sessions:s1" not in r.records
+    assert admin.main(["x", "setup-code"], r) == 1  # an administrator exists

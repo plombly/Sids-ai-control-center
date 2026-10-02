@@ -4,6 +4,7 @@ import { requestJSON } from './api.js';
 import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
 import { loadSettings, navMarkup, sectionMarkup, systemMarkup } from './system-settings.js';
+import { accessData } from './auth.js';
 
 const MODE_LABELS = [['ping', 'Post + ping me'], ['post', 'Post'], ['off', 'Off']];
 const DAY_LABELS = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -70,6 +71,8 @@ async function load(section = currentSection) {
       body = `${targetsMarkup(data.targets)}${rulesMarkup(data)}`;
     } else if (section === 'phones') {
       body = '<section class="settings-section" id="devices-section"></section>';
+    } else if (section === 'access') {
+      body = await accessData();
     } else if (section === 'system') {
       const info = await requestJSON('/api/app/info').catch(() => ({}));
       body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name });

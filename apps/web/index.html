@@ -17,14 +17,11 @@
         <a href="#/projects" data-nav="projects">Projects</a>
         <a href="#/settings" data-nav="settings">Settings</a>
       </nav>
-      <form id="token-form" class="token-form" autocomplete="off">
-        <input id="token-input" type="password" placeholder="Operator token" aria-label="Operator token">
-        <button type="submit">Save</button>
-        <span id="token-state" class="subtle">Checking access…</span>
-      </form>
+      <div id="user-menu" class="user-menu"></div>
       <div class="live-status"><span id="live-dot" class="dot"></span><span id="last-updated">Connecting…</span></div>
     </header>
 
+    <section id="auth-screen" class="auth-screen" hidden></section>
     <section id="banner" class="banner" hidden></section>
     <section id="job-detail" class="panel job-detail" hidden>
       <div class="panel-heading">

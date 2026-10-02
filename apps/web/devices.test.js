@@ -11,7 +11,7 @@ test('phones list, add form and revoke', () => {
   assert.match(html, /value="http:\/\/10\.0\.0\.59:8000"/);
   assert.match(html, /value="Home &lt;LAIka&gt;"/);
   assert.match(devicesMarkup({}), /No phones yet/);
-  assert.equal(suggestedUrl({ hostname: '10.0.0.59' }), 'http://10.0.0.59:8000');
+  assert.equal(suggestedUrl({ hostname: '10.0.0.59', port: '8080' }), 'http://10.0.0.59:8080');
 });
 
 test('the pairing code is shown once with its QR picture', () => {

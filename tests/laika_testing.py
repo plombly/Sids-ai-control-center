@@ -89,6 +89,9 @@ class MemoryRedis:
     def sadd(self, key, *members):
         self.values.setdefault(key, set()).update(members)
 
+    def srem(self, key, *members):
+        self.values.setdefault(key, set()).difference_update(members)
+
     def lpush(self, key, value):
         self.values.setdefault(key, []).insert(0, value)
         return len(self.values[key])

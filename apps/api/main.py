@@ -40,27 +40,36 @@ def _token_ok(request):
 
 @app.middleware("http")
 async def require_operator_token(request: Request, call_next):
-    # A device key (apps/api/device_routes.py) may make only the safe writes.
+    """Who may do what (apps/api/auth.py): sessions, device keys, the operator
+    token; LAIka itself and its app are view-only (managed.py); every write
+    is audited."""
+    import auth
     import device_routes
+    import managed
     request.state.device = None
     if request.headers.get("authorization"):
         request.state.device = device_routes.device_for(request)
-    # LAIka itself and its app are built from the host, never from inside.
-    import managed
-    if request.method not in _READ_METHODS:
+    write = request.method not in _READ_METHODS
+    if write:
         reason = managed.refused(redis, request.method, request.url.path)
         if reason:
             return JSONResponse(status_code=403, content={"detail": reason})
-    if request.method not in _READ_METHODS and not _token_ok(request):
-        device = request.state.device
-        if device is not None:
-            if not device_routes.device_may_write(request.method, request.url.path):
-                return JSONResponse(status_code=403, content={
-                    "detail": "This device may not do that; use the dashboard"})
-        elif OPERATOR_TOKEN:
-            return JSONResponse(status_code=401, content={
-                "detail": "Operator token required: enter it in the dashboard (X-Laika-Token)"})
-    return await call_next(request)
+    token_ok = _token_ok(request)
+    actor, status, body = auth.actor_for(request, token_ok, request.state.device)
+    if status:
+        return JSONResponse(status_code=status, content=body)
+    device = request.state.device
+    if write and not token_ok and device is not None:
+        if not device_routes.device_may_write(request.method, request.url.path):
+            return JSONResponse(status_code=403, content={"detail": "This device may not do that; use the dashboard"})
+    elif write and actor == "open" and not token_ok and OPERATOR_TOKEN:
+        # Unlocked installs without an administrator (tests): the old token rule.
+        return JSONResponse(status_code=401, content={
+            "detail": "Operator token required: enter it in the dashboard (X-Laika-Token)"})
+    response = await call_next(request)
+    if write and actor not in ("public",):
+        auth.audit(redis, request, response.status_code, actor)
+    return response
 
 
 engine = create_engine(DATABASE_URL)
@@ -1263,6 +1272,7 @@ from notify_routes import router as notify_router
 from build_routes import router as build_router
 from device_routes import router as device_router
 from settings_routes import router as settings_router
+from auth import router as auth_router
 from assist_routes import router as assist_router
 
 app.include_router(agent_router)
@@ -1277,4 +1287,5 @@ app.include_router(notify_router)
 app.include_router(build_router)
 app.include_router(device_router)
 app.include_router(settings_router)
+app.include_router(auth_router)
 app.include_router(assist_router)

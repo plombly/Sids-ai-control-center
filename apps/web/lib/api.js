@@ -101,6 +101,10 @@ export async function requestJSON(path, options = {}, fetchImpl = fetch) {
   try {
     body = await response.json();
   } catch {}
+  if (response.status === 401 && typeof window !== 'undefined' && !String(path).startsWith('/api/auth/')) {
+    // Signed out or not set up yet: lib/auth.js shows the right screen.
+    window.dispatchEvent(new CustomEvent('laika:auth-required', { detail: body }));
+  }
   if (!response.ok) {
     const error = new Error(errorMessage(body, response.status));
     error.body = body;
