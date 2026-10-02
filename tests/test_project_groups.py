@@ -179,7 +179,7 @@ def test_laika_can_be_a_parent_and_keeps_copies_outside_every_sandbox(group, tmp
     copy = project_reference.refresh(laika, laika_projects.load(r, "other"))
     assert copy == tmp_path / "laika-reference" / "other" and (copy / "README.md").exists()
     import project_sandbox
-    assert "/var/lib/laika" in project_sandbox.HIDDEN
+    assert "/var/lib/laika/reference" in project_sandbox.HIDDEN
 
 
 def test_push_main_only_for_projects_with_a_push_remote(group):

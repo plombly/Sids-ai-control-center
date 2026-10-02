@@ -37,7 +37,9 @@ BWRAP = os.environ.get("LAIKA_BWRAP", "/usr/bin/bwrap")
 HIDDEN = (
     "/opt/laika", "/opt/sid-dev", "/var/lib/laika/worktrees",
     "/var/lib/laika/projects", "/var/lib/laika/project-data", "/var/lib/laika/uploads", "/var/lib/laika/trash", "/etc/laika",
-    "/var/backups", "/var/log/laika", "/var/lib/laika",
+    # /var/lib/laika itself stays visible for the shared venv (gates use its
+    # pytest); everything per-project or private under it is hidden.
+    "/var/backups", "/var/log/laika", "/var/lib/laika/reference",
     "/root", "/home", "/srv", "/mnt", "/media",
 )
 # Sockets that grant root on the host.
