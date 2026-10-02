@@ -123,7 +123,7 @@ export function render() {
       `<div class="entity"><div class="entity-head"><span class="entity-name">${esc(o.id)}</span>${pill(o.status)}</div><div class="subtle">${esc(o.provider || 'Provider')} · ${esc(o.model || 'model unknown')}</div><div class="stats"><span>goal <b>${esc(o.active_goal || 'none')}</b></span><span>heartbeat <b>${esc(o.heartbeat_age == null ? '—' : `${o.heartbeat_age}s ago`)}</b></span></div></div>`,
     'No orchestrators reporting'
   );
-  list('workers', workers, workerMarkup, 'No workers reporting');
+  list('workers', workers, w => workerMarkup(w), 'No workers reporting');
   list(
     'goals',
     goals.filter(active),

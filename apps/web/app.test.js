@@ -52,6 +52,11 @@ async function main() {
   assert.match(worker, /heartbeat <b>12s ago<\/b>/);
   const runningWorker = workerMarkup({id:'w-3', status:'running', job_id:'j-3', job_started_at:100}, 160);
   assert.match(runningWorker, /running <span class="elapsed" data-elapsed-since="100">1m 00s<\/span> on job j-3 · started/);
+  const started = Date.now() / 1000 - 30;
+  // app.js renders workers through map with a one-argument wrapper so the index never becomes `now`.
+  assert.match(fs.readFileSync(new URL('./app.js', import.meta.url), 'utf8'), /workers, w => workerMarkup\(w\),/);
+  const [mapped] = [{id:'w-4', status:'running', job_id:'j-4', job_started_at:started}].map(w => workerMarkup(w));
+  assert.match(mapped, /running <span class="elapsed" data-elapsed-since="[\d.]+">(29|30|31)s<\/span> on job j-4/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /Provider unknown/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /cached <b>—<\/b>/);
   assert.match(workerMarkup({id:'w-2', status:'idle'}), /heartbeat <b>—<\/b>/);
