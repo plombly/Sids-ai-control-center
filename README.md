@@ -1,173 +1,111 @@
 # LAIka
 
-FastAPI service backed by PostgreSQL and Redis. Projects and Tasks retain their
-existing APIs and relationships. This foundation adds provider-neutral execution
-contracts and persistent agent definitions; it does not schedule or automatically
-execute tasks.
+**A self-hosted AI software builder.** Describe what you want; LAIka plans it
+into small jobs, AI agents build each one in an isolated copy of your
+repository, an independent AI reviewer checks the exact result, and nothing
+reaches your code until **you** approve it.
 
-## Architecture
+LAIka runs on your own Linux server, uses your own AI subscriptions
+(Claude and/or ChatGPT/Codex) or API keys, and is managed from a web
+dashboard that works on desktop, tablet and phone.
 
-- `apps/api/providers/base.py`: `Provider` interface (`execute`, `inspect`, name,
-  default model, supported capabilities), validated request/result schemas, and an
-  explicit registry. Add a Claude, Gemini, or other adapter by implementing this
-  interface and registering it in `providers.build_registry()`; no OpenAI SDK is
-  required by the core.
-- `apps/api/providers/codex.py`: first adapter, invoking a local Codex executable.
-- `apps/api/agents.py`: provider-independent agent definitions and a single-run
-  policy boundary. Agents have their own ID, role, provider reference, optional
-  model, capabilities, permissions, and status. Multiple agents can share a
-  provider. `ready` means configured, not authenticated or available.
-- `models.Agent` remains the persistent identity referenced by `Task.agent_id`.
-  The additive `agent_configurations` table stores role, capabilities, and
-  permissions. Existing agents without configuration receive conservative
-  defaults. Existing tables and data are not altered. The current startup
-  `create_all` creates this new table on the next service start; the database user
-  needs CREATE permission. No manual backfill is required.
-- `AgentRunner` resolves a provider through the registry, validates capabilities
-  and agent model, and enforces execution permissions. Execution is denied by
-  default. Requests requiring human approval fail closed because an approval
-  store is not yet implemented. There is no public execution endpoint.
+> ⚠️ **LAIka is for your own network or VPN only. Never expose it to the
+> internet.** It writes and runs code on your server. Running it on a
+> public address is unsupported and entirely at your own risk; see
+> [Security](docs/security.md).
 
-Future orchestration belongs above `AgentRunner`: use task/agent IDs and
-`parent_execution_id` for correlation, persist execution records, and introduce
-queues, handoff records, review-agent decisions, and durable human approvals there.
-Roles such as `reviewer` are definitions today, not scheduling behavior. Neither
-provider adapters nor task CRUD implement an orchestrator. Redis remains available
-for a future queue; this change adds no queue consumers or background jobs.
+## What it does
 
-## APIs
+- **Goals in plain words.** Type what you want, or let the goal assistant
+  ask a few questions and write a precise brief for you.
+- **Planned and parallel.** Goals are split into jobs that run side by side
+  when they don't touch the same files; workers are added and removed
+  automatically as work comes and goes.
+- **Built safely.** Every job works in its own git worktree inside a
+  sandbox as an unprivileged user: no access to LAIka's secrets, other
+  projects or the rest of the server; tests run offline unless you allow
+  internet access.
+- **Reviewed for real.** Each change is integrated onto the latest main and
+  reviewed by a separate AI against the exact integrated result, with the
+  test results in hand. Findings are repaired automatically, within limits.
+- **You approve.** One click merges a change, or approve everything a goal
+  produced through the merge queue. Nothing ever merges on its own. Undo
+  is one click too.
+- **Projects of any kind.** Web apps, APIs, bots, CLIs, libraries, mobile
+  and desktop apps, games and more: LAIka detects the stack, runs web apps
+  for you, shows previews of pending changes, and builds downloadable
+  artifacts.
+- **Groups.** Related projects (an app and its API) can be planned together,
+  see each other's code read-only, and be approved and built as a group.
+- **Everything at a glance.** Live job logs, history, activity, usage and
+  costs, files, notifications (Discord, ntfy) and a weekly digest.
+- **Phones.** Pair the LAIka app with a revocable per-device key.
 
-Existing routes: `GET /`, `GET /health`, `POST/GET /projects`,
-`GET /projects/{id}`, `POST/GET /tasks`, `GET /projects/{id}/tasks`.
+## Requirements
 
-New routes:
+- A Linux server or VM: **Ubuntu 22.04, 24.04 or 26.04, or Debian 12 or 13**
+  (x86_64 or arm64). Fedora 40+ and RHEL 9 compatibles are experimental.
+- 2 CPUs and 4 GB memory minimum; 4+ CPUs, 8 GB and 40 GB disk recommended.
+- Internet access for the server (to install, and for the AI providers).
+- A Claude Pro/Max subscription or Anthropic API key, and/or a ChatGPT plan
+  or OpenAI API key.
 
-| Route | Purpose |
+## Install
+
+On the server, as root:
+
+```sh
+curl -fsSL https://<release-url>/install.sh | sudo bash
+```
+
+or from a copy of this repository:
+
+```sh
+sudo bash install.sh --source /path/to/laika
+```
+
+The installer sets up Docker, Python, Node and the AI command-line tools,
+creates a dedicated `laika` user, installs LAIka to `/opt/laika` with its
+data in `/var/lib/laika`, starts everything and prints the dashboard
+address with a **one-time setup code**. Open the address from a computer on
+the same network, enter the code, create your account, and follow the
+setup guide (AI sign-in, capacity, notifications, backups).
+
+Details: [Installation](docs/install.md).
+
+## Everyday commands
+
+```sh
+sudo laika doctor          # check the installation, with fixes
+sudo laika status          # services at a glance
+sudo laika setup-code      # a new first-run setup code
+sudo laika reset-password  # forgot the dashboard password
+sudo laika repair          # put back missing pieces
+sudo laika uninstall       # remove LAIka (keeps your data unless --purge)
+```
+
+## Documentation
+
+| | |
 | --- | --- |
-| `GET /providers` | Registered providers, models, capabilities, installation status |
-| `GET /providers/{name}` | Inspect one provider (404 if unknown) |
-| `POST /agents` | Persist an agent and its configuration (201) |
-| `GET /agents` | Inspect persisted agents, including legacy entries |
-| `GET /agents/{id}` | Inspect one agent (404 if unknown) |
+| [Installation](docs/install.md) | requirements, install, first run, repair, uninstall |
+| [Using LAIka](docs/using.md) | projects, goals, approvals, groups, previews, builds |
+| [Configuration](docs/configuration.md) | every setting, branding, files in `/etc/laika` |
+| [Workers](docs/workers.md) | how many jobs run at once and automatic scaling |
+| [Security](docs/security.md) | the network rule, sign-in, sandboxing, secrets |
+| [Operations](docs/operations.md) | backups, restore checks, health, logs, commands |
+| [Phones](docs/phones.md) | pairing the LAIka app, VPN access |
+| [Troubleshooting](docs/troubleshooting.md) | common problems and fixes |
+| [Architecture](docs/architecture.md) | how the pipeline works and what it guarantees |
 
-Example registration:
+## Privacy
 
-```sh
-curl -X POST http://localhost:8000/agents \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Code reviewer","role":"reviewer","provider":"codex","capabilities":["code_analysis"]}'
-```
+LAIka has **no telemetry**. It talks only to the AI providers you sign in to,
+the package registries your projects use, and the notification services you
+configure.
 
-Permissions default to `{"execute":false,"require_human_approval":true}`.
-Unknown providers and unsupported capabilities return 422. A provider can be
-registered even when its CLI is unavailable. Models are optional and are validated
-by the provider at execution time, not against a hardcoded model catalog.
-Interactive API documentation is at `/docs`. These routes inherit the existing
-service's lack of authentication; keep deployment behind trusted access controls.
+## Contributing
 
-## Local Codex adapter
-
-The adapter was checked against installed `codex-cli 0.159.0` help and the
-[official non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
-It invokes the CLI with an argv list (no shell):
-
-```text
-codex --ask-for-approval never exec --sandbox read-only --color never --ephemeral --json --cd WORKSPACE [--model MODEL] -
-```
-
-The prompt is sent through stdin. Results include raw stdout JSONL, stderr,
-exit code, UTC start time, monotonic duration, execution UUID, requested model,
-correlation IDs, sandbox policy, and output size/truncation metadata. Model `null`
-means the CLI selects its configured default; it is not a claim about the resolved
-model. Nonzero exits, missing executables, invalid workspaces, launch failures,
-and timeouts have explicit outcomes. POSIX process groups are killed and reaped
-on timeout or interruption. This adapter targets Linux/POSIX workers.
-
-Output is temporarily spooled to disk and returned up to 1 MiB per stream by
-default. Returned output is memory bounded; temporary disk usage is not quota
-limited. Use worker/container disk quotas for untrusted or large workloads.
-Raw output may contain sensitive repository content: it is not logged, persisted,
-or returned by the inspection routes. Trusted internal callers must protect it.
-
-Runtime configuration (no credentials are stored in code):
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `CODEX_BINARY` | `codex` | Executable name or absolute path |
-| `CODEX_MODEL` | unset | Provider default; agent model takes precedence |
-| `CODEX_HOME` | CLI default | Existing CLI configuration/authentication location |
-
-The CLI must already be authenticated for the runtime user, or receive credentials
-through its supported runtime environment. Only an explicit environment allowlist
-is passed to the child; application DATABASE_URL/REDIS_URL are not forwarded.
-Availability checks only locate the executable: they do not contact a model,
-validate credentials, or guarantee execution will succeed. No inference is run at
-API startup or during inspection. Request timeouts default to 300 seconds (maximum
-3600). There is no retry or concurrent-run manager yet.
-
-Read-only sandboxing prevents workspace writes but is not a secret isolation
-boundary. Run against dedicated workspaces without secrets using a restricted OS
-identity. Local CLI configuration and extensions remain operator-managed. The
-internal caller must select an authorized workspace. Do not pass arbitrary public
-requests directly to the adapter.
-
-The current API Docker image contains Python dependencies only; the host's Codex
-installation and login are **not** automatically available inside it. Provider
-inspection will correctly report unavailable there. For execution, provision Codex
-and authentication in the same trusted runtime as the calling worker. This change
-does not mount host credentials or change the Compose services.
-
-## Run and test
-
-With the existing deployment configuration already provisioned:
-
-```sh
-docker compose up -d --build
-```
-
-For local development, supply `DATABASE_URL` and `REDIS_URL` through your runtime,
-then run `uvicorn main:app --app-dir apps/api`. Do not commit credentials.
-
-Tests use isolated in-memory SQLite and fake CLI executables. They do not read
-`.env`, call a paid model, or connect to PostgreSQL/Redis:
-
-```sh
-python3 -m venv /var/lib/laika/venv
-/var/lib/laika/venv/bin/pip install -r apps/api/requirements-dev.txt
-/var/lib/laika/venv/bin/python -m pytest apps/api/tests -q
-python3 -m compileall -q apps/api
-```
-
-Python 3.10+ is required; Docker uses 3.13. Tests cover subprocess arguments/stdin,
-failures/timeouts/output limits, unavailable providers, registration, execution
-gates, legacy-agent schema compatibility, new routes, and Project/Task regression.
-An authenticated live Codex run and PostgreSQL deployment smoke test remain
-separate integration checks.
-
-## Review, repair and operator workflow
-
-Reviewers are shown the complete integrated change
-(`integration_base_commit..integrated_candidate_commit`), the deterministic
-gate result, and any previous findings. They do not run tests (their sandbox
-is read-only) and block only on correctness, requirement, regression, or
-security defects in changed code. `VERDICT: PASS_WITH_NOTES` counts as a pass;
-notes are stored in `review_findings`.
-
-When a job still requires changes after its repair allowance
-(`MAX_REPAIR_ATTEMPTS`, default 2), it becomes `needs_human` instead of
-failing. Dependents keep waiting and the goal stays open. On the host:
-
-```sh
-python3 scripts/job-review.py approve JOB_ID
-python3 scripts/job-review.py reject JOB_ID        # also works for needs_human
-python3 scripts/job-review.py extend JOB_ID [N]    # grant N more repairs (default 1)
-python3 scripts/job-review.py reintegrate JOB_ID   # fresh integration on current main + fresh review
-python3 scripts/job-review.py reopen JOB_ID        # un-block a job whose failed dependency recovered
-```
-
-`reintegrate` is also the recovery path for stale candidates (main moved after
-integration). It preserves the ordered source commits and never touches main.
-
-Workers honor `laika:worker-control:<WORKER_ID> = disabled` (set by the Web/API
-Stop button): the current job finishes, then no new jobs are claimed until
-Start clears it. Test gates use `LAIKA_PYTHON`, defaulting to `/var/lib/laika/venv`.
+Every change goes through tests, an independent review and human approval;
+see [Architecture](docs/architecture.md) for the contract that keeps it safe.
+Never commit keys, tokens or credentials.

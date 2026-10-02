@@ -13,7 +13,7 @@ apply:
   "live"     takes effect at once (read on every use, or by the browser)
   "restart"  services pick it up when they restart ("Apply now" restarts
              them safely, waiting for running jobs)
-  "host"     also changes something on the host (worker count, timers);
+  "host"     also changes something on the host (the backup timer);
              applied by the operator service
 """
 
