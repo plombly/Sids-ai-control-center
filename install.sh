@@ -196,7 +196,10 @@ want_cli claude @anthropic-ai/claude-code "$LAIKA_CLAUDE_VERSION"
 
 # --- containers -------------------------------------------------------------------------------------
 say "Database, API and dashboard (Docker)"
-install -d -m 0700 "$DATA/db/redis" "$DATA/db/postgres"
+# Postgres 18 creates its data folder as its own user: the mount must be
+# enterable (the data inside is 0700 postgres). Redis takes its folder over.
+install -d -m 0700 "$DATA/db/redis"
+install -d -m 0755 "$DATA/db/postgres"
 ( cd "$LAIKA_HOME" && docker compose up -d --build --wait --quiet-pull >/dev/null 2>&1 ) \
   || ( cd "$LAIKA_HOME" && docker compose up -d --build --wait ) \
   || die "The containers did not start (cd $LAIKA_HOME && docker compose logs)."
