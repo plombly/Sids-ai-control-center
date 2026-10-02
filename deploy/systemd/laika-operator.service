@@ -29,7 +29,7 @@ Environment=REDIS_URL=redis://127.0.0.1:6379/0
 Environment=REPO_ROOT=/opt/laika
 Environment=WORKTREE_ROOT=/var/lib/laika/worktrees
 Environment=OPERATOR_ID=laika-operator-01
-Environment=OPERATOR_ALLOWED_ACTIONS=approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen,create_project,project_retry_clone,project_push_setup,delete_project,project_commit_upload,restore_project,project_revert,network_once,network_always,network_deny,apply_settings
+Environment=OPERATOR_ALLOWED_ACTIONS=approve,queue_approve,dequeue_approve,reject,extend,reintegrate,reopen,create_project,project_retry_clone,project_push_setup,delete_project,project_commit_upload,restore_project,project_revert,network_once,network_always,network_deny,apply_settings,provider_login,provider_status,provider_apply_keys
 Environment=OPERATOR_REQUEST_TTL=600
 ExecStart=/usr/bin/python3 /opt/laika/services/operator/laika_operator.py
 Restart=always
