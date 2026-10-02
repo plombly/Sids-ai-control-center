@@ -3,7 +3,10 @@
 
 Started by the apps service as its own unit (sid-build-<project>-<id>):
     sid-build.py PROJECT BUILD_ID
-1. checks out the project's main into <project>/builds/work-<id>
+1. exports the project's main (git archive: tracked files, no .git) into
+   <project>/builds/work-<id>; a git worktree's .git pointer names a host
+   path that does not exist in the container, which broke every git (and
+   Flutter) command inside builds
 2. runs the build recipe (apps/api/project_catalog.resolve_recipe) in the
    stack's Docker image: only that checkout is mounted (at /src), plus a
    per-project package cache volume; memory, CPU and process limits; no
@@ -107,6 +110,16 @@ def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
 
 
+def export_tree(repo, commit, dest):
+    """Tracked files of commit, without .git, into dest (a new directory)."""
+    dest.mkdir()
+    archive = subprocess.Popen(["git", "-C", str(repo), "archive", "--format=tar", commit], stdout=subprocess.PIPE)
+    extract = subprocess.run(["tar", "-x", "--no-same-owner", "-C", str(dest)], stdin=archive.stdout, capture_output=True)
+    archive.stdout.close()
+    if archive.wait() != 0 or extract.returncode != 0:
+        raise RuntimeError(f"checkout failed: {extract.stderr.decode(errors='replace').strip()[:200]}")
+
+
 def zip_output(source, archive):
     count = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as out:
@@ -167,10 +180,7 @@ def main(project_id, build_id, r=None, runner=subprocess.run, network_setup=None
     try:
         if not head:
             raise RuntimeError(f"the project has no {project.default_branch} branch yet; nothing to build")
-        added = git(project.repo, "worktree", "add", "--detach", str(work), head)
-        if added.returncode:
-            raise RuntimeError(f"checkout failed: {added.stderr.strip()[:200]}")
-        sid_projects.verify_worktree_pointer(work, project.repo)
+        export_tree(project.repo, head, work)
         mode = "none" if fields.get("build_network") == "none" else "internet"
         if mode == "internet":
             (network_setup or ensure_build_network)()
@@ -201,9 +211,8 @@ def main(project_id, build_id, r=None, runner=subprocess.run, network_setup=None
         sid_projects.record_event(r, project_id, "build_failed", f"Build {build_id} failed: {exc}"[:200], ref=build_id)
         return 1
     finally:
-        # The build could have rewritten anything in the checkout (even its
-        # .git pointer), so it is deleted as plain files and git only prunes
-        # its own record; no git command ever runs inside it.
+        # The build could have rewritten anything in its copy, so it is
+        # deleted as plain files; no git command ever runs inside it.
         if work.parent == folder and (work.exists() or work.is_symlink()):
             if work.is_symlink():
                 work.unlink()

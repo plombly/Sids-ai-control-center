@@ -213,3 +213,19 @@ def test_firewall_setup_is_idempotent_and_blocks_private_networks():
     calls.clear()
     module.ensure_build_network(run)
     assert not [c for c in calls if c[1:2] in (["-A"], ["-I"])]  # second run adds nothing
+
+
+def test_builds_see_tracked_files_only_and_no_git_pointer(build):
+    module, r, repo, folder, runs, runner = build
+    (repo / "notes.tmp").write_text("untracked")
+    seen = {}
+
+    def inspect(command, stdout=None, stderr=None):
+        work = __import__("pathlib").Path(next(a.split(":")[0] for a in command if a.endswith(":/src")))
+        seen["git"] = (work / ".git").exists()
+        seen["files"] = sorted(p.name for p in work.iterdir())
+        return runner(command, stdout=stdout, stderr=stderr)
+
+    start(r, "b1")
+    assert module.main("game", "b1", r=r, runner=inspect) == 0
+    assert seen["git"] is False and seen["files"] == ["conf.lua", "main.lua"]
