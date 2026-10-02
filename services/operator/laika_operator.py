@@ -65,7 +65,7 @@ OUTPUT_LIMIT = 8000
 # network_*: answer a job's internet-access request (job-review.py network).
 NETWORK_ACTIONS = ("network_once", "network_always", "network_deny")
 # Host helpers (scripts/laika-system.py, laika-providers.py), run as their own unit.
-SYSTEM_ACTIONS = ("apply_settings", "provider_login", "provider_status", "provider_apply_keys")
+SYSTEM_ACTIONS = ("apply_settings", "provider_login", "provider_status", "provider_apply_keys", "system_update")
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen", *NETWORK_ACTIONS,
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
            "project_commit_upload", "restore_project", "project_revert", *SYSTEM_ACTIONS)
@@ -367,7 +367,7 @@ def validate(fields, entry_id, now):
             raise Invalid(f"what must be one of {', '.join(APPLY_WHAT)}")
         if action == "provider_login" and what not in ("claude", "codex"):
             raise Invalid("provider must be claude or codex")
-        if action in ("provider_status", "provider_apply_keys"):
+        if action in ("provider_status", "provider_apply_keys", "system_update"):
             what = ""
         return {"action": action, "what": what, "job_id": "", "project_id": ""}
     if action in PROJECT_ACTIONS:
@@ -449,6 +449,7 @@ SYSTEM_COMMANDS = {
     "provider_login": ("signin", "scripts/laika-providers.py", lambda what: ["login", what]),
     "provider_status": ("providers", "scripts/laika-providers.py", lambda what: ["status"]),
     "provider_apply_keys": ("keys", "scripts/laika-providers.py", lambda what: ["apply-keys"]),
+    "system_update": ("update", "scripts/laika-update.py", lambda what: ["apply", "--yes"]),
 }
 
 
@@ -457,9 +458,9 @@ def execute_system(request, runner=subprocess.run):
     its own unit: it may wait for workers or for the operator's browser."""
     tag, script, args = SYSTEM_COMMANDS[request["action"]]
     name = f"laika-{tag}-{int(time.time())}"
-    # Applying settings changes the host (root); sign-ins belong to the
+    # Settings and updates change the host (root); sign-ins belong to the
     # laika user, whose home holds the agent CLIs' logins.
-    as_user = [] if request["action"] == "apply_settings" else laika_user.systemd_run_args()
+    as_user = [] if request["action"] in ("apply_settings", "system_update") else laika_user.systemd_run_args()
     result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",
                      "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
                      "--property=EnvironmentFile=-/etc/laika/redis.env", *as_user,

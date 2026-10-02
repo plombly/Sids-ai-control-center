@@ -45,6 +45,8 @@ What this server is called and how the dashboard behaves.
 | Dashboard refresh (seconds) | `5` | 2–60 | at once | How often open pages fetch fresh data. |
 | Clock | `24h` | 24h, 12h | at once |  |
 | Dates | `short` | Oct 1, 14:03, 2026-10-01 14:03 | at once |  |
+| Check for updates | on |  | after **Apply now** | Once a day, ask the update address whether a new LAIka is out (nothing else is sent). |
+| Update address | — |  | after **Apply now** | Where releases are published. Empty: the address this edition ships with. |
 
 ### Appearance
 

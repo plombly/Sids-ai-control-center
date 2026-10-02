@@ -80,8 +80,11 @@ async function load(section = currentSection) {
     } else if (section === 'access') {
       body = await accessData();
     } else if (section === 'system') {
-      const info = await requestJSON('/api/app/info').catch(() => ({}));
-      body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name });
+      const [info, update] = await Promise.all([
+        requestJSON('/api/app/info').catch(() => ({})),
+        requestJSON('/api/system/update').catch(() => null)
+      ]);
+      body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name }, update);
     } else {
       body = sectionMarkup(settings, section, settings.values, settings.pending) || sectionMarkup(settings, 'general', settings.values, settings.pending);
     }

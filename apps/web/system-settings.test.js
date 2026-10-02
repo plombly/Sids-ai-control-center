@@ -63,3 +63,18 @@ test('appearance and clock preferences', () => {
   assert.equal(clockText(at, at + 86400 * 3), '2026-10-01 15:04');
   applyPrefs({}, null);
 });
+
+test('updates card: up to date, available, running, failed, not configured', async () => {
+  const { updateMarkup, systemMarkup } = await import('./lib/system-settings.js');
+  assert.match(updateMarkup({ available: { newer: false, checked_at: 1 } }), /Up to date/);
+  const html = updateMarkup({ available: { newer: true, latest: '1.0.1', current: '1.0.0', notes: '<fixes>' } });
+  assert.match(html, /LAIka 1\.0\.1<\/b> is available \(you have 1\.0\.0\)/);
+  assert.match(html, /data-system-update/);
+  assert.match(html, /&lt;fixes&gt;/);
+  assert.match(updateMarkup({ status: { state: 'waiting' } }), /Waiting for running jobs to finish/);
+  assert.doesNotMatch(updateMarkup({ status: { state: 'waiting' }, available: { newer: true } }), /data-system-update/);
+  assert.match(updateMarkup({ status: { state: 'failed', message: 'x' } }), /Last update failed: x/);
+  assert.match(updateMarkup({ available: { configured: false } }), /no update address/);
+  assert.match(systemMarkup({ version: '1.0.0' }, { available: { newer: false } }), /id="update-card"/);
+  assert.doesNotMatch(systemMarkup({ version: '1.0.0' }), /update-card/);
+});

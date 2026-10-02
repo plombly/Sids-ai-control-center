@@ -60,3 +60,23 @@ def test_fixed_mode_changes_the_setting(api):
     state(fake, auto=False, fixed=5, target=5)
     assert client.post("/api/workers/scale", json={"delta": -1}).json()["target"] == 4
     assert json.loads(fake.strings["laika:settings"])["WORKER_COUNT"] == "4"
+
+
+def test_system_update_state_and_request(api):
+    client, fake = api
+    fake.strings["laika:system-info"] = json.dumps({"version": "1.0.0"})
+    assert client.get("/api/system/update").json() == {"version": "1.0.0", "available": None, "status": None}
+    assert client.post("/api/system/update", json={"request_id": "upd-00000001"}).status_code == 409
+    fake.strings["laika:update:available"] = json.dumps({"newer": True, "latest": "1.0.1"})
+    fake.strings["laika:update:status"] = json.dumps({"state": "installing"})
+    assert client.post("/api/system/update", json={"request_id": "upd-00000002"}).status_code == 409
+    fake.strings["laika:update:status"] = json.dumps({"state": "done"})
+    fake.hashes["laika:operator-service:op"] = {"id": "op", "allowed_actions": "system_update"}
+    import main
+    original = main._operator_service
+    main._operator_service = lambda: fake.hashes["laika:operator-service:op"]
+    try:
+        accepted = client.post("/api/system/update", json={"request_id": "upd-00000003"})
+    finally:
+        main._operator_service = original
+    assert accepted.status_code == 202 and fake.stream[-1][1]["action"] == "system_update"

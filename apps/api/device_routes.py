@@ -163,7 +163,8 @@ def app_info(request: Request):
     except (TypeError, ValueError):
         system = {}
     return {"server_name": server_name(), "api_version": API_VERSION, "min_api_version": 1,
-            "laika_commit": str(system.get("head") or "")[:12], "server_time": time.time(),
+            "version": str(system.get("version") or ""), "laika_commit": str(system.get("head") or "")[:12],
+            "server_time": time.time(),
             "device": {"id": device.get("id"), "name": device.get("name")} if device else None,
             "token_required": bool(main.OPERATOR_TOKEN),
             "device_actions": sorted(DEVICE_JOB_ACTIONS)}

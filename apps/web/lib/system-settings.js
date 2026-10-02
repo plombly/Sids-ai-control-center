@@ -83,8 +83,28 @@ export function changedValues(form, values = {}) {
   return changes;
 }
 
-export function systemMarkup(info = {}) {
-  return `<div class="settings-card"><h3>System</h3><div class="setting-facts"><span>Version</span><b>${esc(info.version || 'development')}</b><span>Commit</span><b>${esc(info.commit || '—')}</b><span>Server name</span><b>${esc(info.server_name || 'LAIka')}</b></div></div><div class="settings-card"><h3>Name and logo</h3><p class="subtle">LAIka's name and logo are part of the installation, not a setting. To change them, edit <code>/etc/laika/branding.json</code> and the logo files on the server, then run <code>sudo laika branding apply</code>.</p></div>`;
+const UPDATE_BUSY = /^(checking|downloading|backing_up|waiting|installing|restarting|rolling_back)$/;
+const UPDATE_STEP = { checking: 'Checking the release', downloading: 'Downloading', backing_up: 'Backing up first', waiting: 'Waiting for running jobs to finish', installing: 'Installing', restarting: 'Restarting', rolling_back: 'Going back to the previous version' };
+
+export function updateMarkup(update = {}) {
+  const available = update.available || {};
+  const status = update.status || {};
+  let body;
+  if (UPDATE_BUSY.test(status.state || '')) {
+    body = `<p><span class="spinner" aria-hidden="true"></span> ${esc(UPDATE_STEP[status.state] || status.state)}…</p><p class="subtle">${esc(status.message || '')}</p>`;
+  } else if (available.newer) {
+    body = `<p><b>LAIka ${esc(available.latest)}</b> is available (you have ${esc(available.current)}).</p>${available.notes ? `<pre class="update-notes">${esc(available.notes)}</pre>` : ''}<div class="settings-actions"><button type="button" class="primary" data-system-update>Update now</button><span class="form-status" role="status"></span></div><p class="subtle">LAIka backs up first, waits for running jobs to finish, and goes back to this version by itself if anything fails.</p>`;
+  } else if (available.configured === false) {
+    body = '<p class="subtle">This installation has no update address (Settings → General).</p>';
+  } else {
+    body = `<p>Up to date${available.checked_at ? ` <span class="subtle">(checked ${esc(new Date(available.checked_at * 1000).toLocaleString())})</span>` : ''}.</p>`;
+  }
+  const last = status.state === 'failed' ? `<p class="form-status">Last update failed: ${esc(status.message || '')}</p>` : status.state === 'done' && status.message ? `<p class="subtle">${esc(status.message)}</p>` : '';
+  return `<div class="settings-card" id="update-card"><h3>Updates</h3>${body}${last}</div>`;
+}
+
+export function systemMarkup(info = {}, update = null) {
+  return `<div class="settings-card"><h3>System</h3><div class="setting-facts"><span>Version</span><b>${esc(info.version || 'development')}</b><span>Commit</span><b>${esc(info.commit || '—')}</b><span>Server name</span><b>${esc(info.server_name || 'LAIka')}</b></div></div><div class="settings-card"><h3>Name and logo</h3><p class="subtle">LAIka's name and logo are part of the installation, not a setting. To change them, edit <code>/etc/laika/branding.json</code> and the logo files on the server, then run <code>sudo laika branding apply</code>.</p></div>${update ? updateMarkup(update) : ''}`;
 }
 
 let schemaCache = null;
@@ -94,6 +114,16 @@ export async function loadSettings(force = false) {
 }
 
 if (typeof document !== 'undefined') {
+  // The footer names the version and says when an update is out.
+  const footer = async () => {
+    const node = document.getElementById('footer-version');
+    if (!node) return;
+    const state = await requestJSON('/api/system/update').catch(() => null);
+    if (!state?.version) return;
+    node.innerHTML = ` · LAIka ${esc(state.version)}${state.available?.newer ? ` · <a href="#/settings/system">update to ${esc(state.available.latest)}</a>` : ''}`;
+  };
+  setTimeout(footer, 2000);
+  setInterval(footer, 30 * 60 * 1000);
   const statusIn = (node, message) => {
     const target = node?.querySelector?.('.settings-actions .form-status') || node;
     if (target) target.textContent = message;
@@ -132,6 +162,23 @@ if (typeof document !== 'undefined') {
       const item = button.closest('.list-item');
       if (button.dataset.listUp && item.previousElementSibling) item.parentElement.insertBefore(item, item.previousElementSibling);
       if (button.dataset.listDown && item.nextElementSibling) item.parentElement.insertBefore(item.nextElementSibling, item);
+    } else if (button.dataset.systemUpdate !== undefined) {
+      if (!window.confirm('Update LAIka now? It backs up first and waits for running jobs; the dashboard may be unavailable for a few minutes.')) return;
+      button.disabled = true;
+      const status = button.closest('.settings-actions')?.querySelector('.form-status');
+      try {
+        await requestJSON('/api/system/update', { method: 'POST', body: JSON.stringify({ request_id: newRequestId() }) });
+        if (status) status.textContent = 'Updating… this page refreshes when it is done.';
+        const poll = setInterval(async () => {
+          const state = await requestJSON('/api/system/update').catch(() => null);
+          const card = document.getElementById('update-card');
+          if (state && card) card.outerHTML = updateMarkup(state);
+          if (state && !UPDATE_BUSY.test(state.status?.state || '') && state.status?.state !== undefined) clearInterval(poll);
+        }, 5000);
+      } catch (error) {
+        button.disabled = false;
+        if (status) status.textContent = error.message;
+      }
     } else if (button.dataset.settingsApply !== undefined) {
       button.disabled = true;
       const status = document.getElementById('settings-apply-status');

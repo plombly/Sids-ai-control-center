@@ -348,9 +348,25 @@ def system_info(runner=subprocess.run):
     # Never publish credentials embedded in an https remote.
     if "@" in remote and remote.startswith("http"):
         remote = "https://" + remote.split("@", 1)[1]
-    return {"remote": remote, "branch": git("symbolic-ref", "--short", "HEAD"),
+    try:
+        version = (Path(REPO_ROOT) / "VERSION").read_text().strip()
+    except OSError:
+        version = ""
+    return {"version": version, "remote": remote, "branch": git("symbolic-ref", "--short", "HEAD"),
             "head": git("rev-parse", "--short", "HEAD"), "subject": git("log", "-1", "--format=%s"),
             "checked_at": str(time.time())}
+
+
+def update_check(r, runner=subprocess.run):
+    """Once a day (UPDATE_CHECK, on by default): is a newer release out?
+    scripts/laika-update.py check stores the answer in laika:update:available."""
+    if os.environ.get("UPDATE_CHECK", "true").lower() in ("false", "0", "off", "no"):
+        return False
+    if not r.set("laika:update:checked", str(time.time()), nx=True, ex=86400):
+        return False
+    runner([sys.executable, str(Path(__file__).resolve().parent / "laika-update.py"), "check"],
+           capture_output=True, text=True, timeout=180)
+    return True
 
 
 def main():
@@ -363,6 +379,10 @@ def main():
         r.set(HOST_KEY, json.dumps(host_info()), ex=HEALTH_TTL)
     except Exception as exc:
         print(f"[laika-watchdog] could not publish host info: {exc}", flush=True)
+    try:
+        update_check(r)
+    except Exception as exc:
+        print(f"[laika-watchdog] update check failed: {exc}", flush=True)
     report = run_checks(r)
     try:
         for line in publish(r, report):

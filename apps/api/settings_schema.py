@@ -49,6 +49,11 @@ FIELDS = [
     _f("CLOCK", "general", "Clock", "choice", "24h", apply="live", choices=["24h", "12h"]),
     _f("DATE_FORMAT", "general", "Dates", "choice", "short", apply="live",
        choices=["short", "iso"], choice_labels={"short": "Oct 1, 14:03", "iso": "2026-10-01 14:03"}),
+    _f("UPDATE_CHECK", "general", "Check for updates", "bool", "true",
+       "Once a day, ask the update address whether a new LAIka is out (nothing else is sent).", apply="restart"),
+    _f("UPDATE_URL", "general", "Update address", "str", "",
+       "Where releases are published. Empty: the address this edition ships with.", apply="restart",
+       max_length=300, pattern=r"^(https://\S+)?$"),
     # --- appearance ----------------------------------------------------------------------
     _f("THEME", "appearance", "Theme", "choice", "system", "System follows the device's light or dark mode.",
        apply="live", choices=["system", "dark", "light"]),
@@ -195,7 +200,7 @@ def clean(field, raw):
         raise ValueError("is too long or has invalid characters")
     if field.get("pattern") and not re.match(field["pattern"], value):
         raise ValueError("has invalid characters")
-    if not value and field["key"] not in ("BACKUP_REMOTE",):
+    if not value and field["key"] not in ("BACKUP_REMOTE", "UPDATE_URL"):
         raise ValueError("cannot be empty")
     return value
 
