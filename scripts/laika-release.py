@@ -39,8 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_FILE = Path(os.environ.get("LAIKA_RELEASE_FORBIDDEN", "/etc/laika/release-forbidden.txt"))
 NAMESPACE = "laika-release"
 # Development-only files: internal notes, assistant context, one-off tools.
-EXCLUDE = ("CLAUDE.md", "*-todo.md", "docs/stress-*.md", "docs/smoke-test.md", "scripts/laika-migrate-user.sh",
-           "scripts/laika-release.py", "scripts/hooks/*", ".env.example")
+EXCLUDE = ("CLAUDE.md", "*-todo.md", "docs/stress-*.md", "docs/smoke-test.md", "scripts/laika-migrate-user.sh")
 # Things that look like credentials. (A test may need a fake one: put
 # "release-scan: allow" on that line.)
 SECRETS = [
@@ -152,6 +151,7 @@ def main(argv):
     check.add_argument("--ref", default="HEAD")
     scan = sub.add_parser("scan")
     scan.add_argument("--range", default="HEAD")
+    scan.add_argument("--private", action="store_true", help="also the maintainer's private patterns")
     build = sub.add_parser("build")
     build.add_argument("--ref", required=True)
     build.add_argument("--out", default="release")
@@ -163,7 +163,7 @@ def main(argv):
     args = parser.parse_args(argv)
 
     if args.command == "scan":
-        findings = scan_range(args.range, all_patterns())
+        findings = scan_range(args.range, all_patterns() if args.private else SECRETS)
         for item in findings:
             print(item, file=sys.stderr)
         return 1 if findings else 0
@@ -192,7 +192,9 @@ def main(argv):
         env = {**os.environ, "GIT_AUTHOR_NAME": "LAIka", "GIT_AUTHOR_EMAIL": "release@laika.invalid",
                "GIT_COMMITTER_NAME": "LAIka", "GIT_COMMITTER_EMAIL": "release@laika.invalid"}
         for step in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", f"LAIka {version}"],
-                     ["tag", f"v{version}"]):
+                     ["tag", f"v{version}"],
+                     # A public repository: pushes are scanned for private patterns too.
+                     ["config", "laika.public", "true"], ["config", "core.hooksPath", "scripts/hooks"]):
             subprocess.run(["git", "-C", str(target), *step], check=True, env=env)
         print(f"exported {len(files)} files to {target} as one commit, tagged v{version}")
         return 0

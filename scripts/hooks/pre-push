@@ -1,0 +1,27 @@
+#!/bin/bash
+# Refuse to push commits that contain anything that looks like a secret or
+# matches the maintainer's private patterns (scripts/laika-release.py scan).
+# Install once per clone:  git config core.hooksPath scripts/hooks
+# A deliberate fake value in a test: put "release-scan: allow" on its line.
+set -uo pipefail
+root=$(git rev-parse --show-toplevel)
+python=$(command -v python3)
+zero=0000000000000000000000000000000000000000
+# A public repository (git config laika.public true) is also scanned for the
+# maintainer's private patterns (/etc/laika/release-forbidden.txt).
+private=()
+[ "$(git config --bool laika.public 2>/dev/null)" = true ] && private=(--private)
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue                 # deleting a branch
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha"                                    # new branch: everything
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  if ! "$python" "$root/scripts/laika-release.py" scan "${private[@]}" --range "$range"; then
+    echo "pre-push: refusing to push $local_ref: the scan above found something (nothing was pushed)." >&2
+    status=1
+  fi
+done
+exit $status
