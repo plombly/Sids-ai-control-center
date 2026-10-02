@@ -32,11 +32,15 @@ def collect(r):
             if key.count(":") == 2 and r.type(key) == "hash":
                 out[key.split(":", 2)[2]] = r.hgetall(key)
         return out
-    projects = [(p.id, "LAIka" if p.is_builtin else p.name) for p in laika_projects.all_projects(r)]
+    found = laika_projects.all_projects(r)
+    if os.environ.get("LAIKA_BUILTIN_PROJECT", "1") == "0":
+        found = [p for p in found if not p.is_builtin]  # production: no built-in project
+    projects = [(p.id, "LAIka" if p.is_builtin else p.name) for p in found]
+    parents = {p.id: p.parent for p in found}
     events = {pid: r.lrange(f"laika:events:{pid}", 0, 499) for pid, _ in projects}
     apps = {pid: r.hgetall(f"laika:app-status:{pid}") for pid, _ in projects}
     load = lambda key: json.loads(r.get(key) or "null")
-    return {"projects": projects, "goals": hashes("laika:goals:*"), "jobs": hashes("laika:jobs:*"), "events": events,
+    return {"projects": projects, "parents": parents, "goals": hashes("laika:goals:*"), "jobs": hashes("laika:jobs:*"), "events": events,
             "apps": apps, "backup": load("laika:backup:last"), "restore": load("laika:backup:restore-check")}
 
 

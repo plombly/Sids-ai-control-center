@@ -10,6 +10,7 @@ import { assistantMarkup } from './goal-assistant.js';
 import { nestProjects } from './project-groups.js';
 import { previewMarkup } from './markup.js';
 import { elapsedMarkup } from './elapsed.js';
+import { approveAllMarkup } from './group-actions.js';
 
 const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
 const FINISHED_GOAL = { completed: 'done', failed: 'failed', planning_failed: 'failed' };
@@ -68,7 +69,7 @@ export function needsYouMarkup(items, names = {}) {
   // Tests that need the internet ask first (services/network_access.py).
   const networkCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Wants internet</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Its ${esc(job.network_request_step || 'tests')} seem to need internet access, which tests don't have by default.</p>${job.network_request_reason ? `<pre class="network-reason">${esc(job.network_request_reason)}</pre>` : ''}<div class="card-actions"><button type="button" data-op="network_once" data-job="${escValue(job.id)}" data-status="needs_human">Allow for this change</button><button type="button" data-op="network_always" data-job="${escValue(job.id)}" data-status="needs_human">Always allow in this project</button><button type="button" data-op="network_deny" data-job="${escValue(job.id)}" data-status="needs_human">Keep tests offline</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button></div></article>`;
   const card = job => (job.needs_human_kind === 'network' ? networkCard(job) : stuckCard(job));
-  return `<div class="home-cards">${ready.map(approval).join('')}${stuck.map(card).join('')}</div>`;
+  return `<div class="home-cards">${approveAllMarkup(ready)}${ready.map(approval).join('')}${stuck.map(card).join('')}</div>`;
 }
 
 // --- in progress -------------------------------------------------------------------------

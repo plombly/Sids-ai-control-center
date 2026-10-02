@@ -66,16 +66,35 @@ def timeline(project_id, goals, jobs, logged, limit=80):
     return entries[:limit]
 
 
+def group_timeline(members, names, goals, jobs, logged, limit=80):
+    """One timeline for a whole project group; every entry names its project."""
+    entries = []
+    for member in members:
+        for entry in timeline(member, goals, jobs, logged.get(member, []), limit):
+            entries.append({**entry, "project_id": member, "project_name": names.get(member, member)})
+    entries.sort(key=lambda item: -item["at"])
+    return entries[:limit]
+
+
 @router.get("/api/projects/{project_id}/activity")
-def activity(project_id: str, limit: int = Query(default=80, ge=1, le=500)):
+def activity(project_id: str, limit: int = Query(default=80, ge=1, le=500), group: bool = False):
+    """A project's timeline; group=true: its whole group (parent and children)."""
     import main
     project_id = projects._id(project_id)
     if not projects._known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     goals = {key.split(":", 2)[2]: data for key, data in main._hashes("laika:goals:*")}
     jobs = {key.split(":", 2)[2]: data for key, data in main._hashes("laika:jobs:*")}
-    try:
-        logged = main.redis.lrange(f"laika:events:{project_id}", 0, 499) or []
-    except Exception:
-        logged = []
-    return {"project_id": project_id, "events": timeline(project_id, goals, jobs, logged, limit)}
+
+    def events_of(member):
+        try:
+            return main.redis.lrange(f"laika:events:{member}", 0, 499) or []
+        except Exception:
+            return []
+    if group:
+        parent_id, members = projects.group_of(project_id)
+        members = [m for m in members if projects._known(m)]
+        names = {m: projects._text(projects._project_data(m).get("name"), m) for m in members}
+        return {"project_id": project_id, "group": parent_id, "members": members,
+                "events": group_timeline(members, names, goals, jobs, {m: events_of(m) for m in members}, limit)}
+    return {"project_id": project_id, "events": timeline(project_id, goals, jobs, events_of(project_id), limit)}

@@ -109,6 +109,30 @@ def builds(project_id: str):
 @router.post("/api/projects/{project_id}/builds", status_code=202)
 def request_build(project_id: str):
     project_id = _project(project_id, builds=True)
+    return _start_build(project_id)
+
+
+@router.post("/api/projects/{project_id}/builds/all", status_code=202)
+def request_group_build(project_id: str):
+    """Build every project of this project's group (parent and children) that
+    can be built; the others are listed with the reason."""
+    project_id = _project(project_id)
+    parent_id, members = projects.group_of(project_id)
+    started, skipped = [], []
+    for member in members:
+        if member == "laika" or projects._view_only(member) or not projects._known(member):
+            skipped.append({"id": member, "reason": "managed by the LAIka builder"})
+            continue
+        try:
+            started.append(_start_build(member))
+        except HTTPException as exc:
+            skipped.append({"id": member, "reason": str(exc.detail)})
+    if not started:
+        raise HTTPException(status_code=409, detail={"message": "Nothing in this group can be built now", "skipped": skipped})
+    return {"group": parent_id, "started": started, "skipped": skipped}
+
+
+def _start_build(project_id):
     main = projects._redis()
     data = projects._project_data(project_id)
     if data.get("status") in ("archived", "deleting", "pending_key"):

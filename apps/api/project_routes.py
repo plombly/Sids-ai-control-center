@@ -225,6 +225,17 @@ def _group_info(project_id, data):
     return effective, group
 
 
+def group_of(project_id):
+    """(parent id, [member ids]) of the group a project is in: a child's
+    parent and all its children, or a parent and its children. A project in
+    no group: (project_id, [project_id])."""
+    main = _redis()
+    parent_id = _text(_project_data(project_id).get("parent"), "") or project_id
+    children = sorted(other for other in _members(main)
+                      if other != parent_id and main.redis.hget(f"laika:projects:{other}", "parent") == parent_id)
+    return parent_id, [parent_id, *children]
+
+
 def _view_only(project_id):
     import managed
     return managed.view_only(_redis().redis, project_id)

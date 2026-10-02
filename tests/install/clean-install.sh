@@ -99,7 +99,7 @@ done
 if out_box "test -d /var/lib/laika/projects/demo/repo/.git"; then
   pass "project repository created by the operator service"
   shared=$(out_box "git -C /var/lib/laika/projects/demo/repo config core.sharedRepository")
-  [ "$shared" = group ] && pass "repository shared with the laika group" || bad "core.sharedRepository=$shared"
+  case "$shared" in group|1|true) pass "repository shared with the laika group ($shared)" ;; *) bad "core.sharedRepository=$shared" ;; esac
   if in_box "cd /tmp && setpriv --reuid=laika --regid=laika --init-groups env HOME=/var/lib/laika/home GIT_CONFIG_GLOBAL=/etc/laika/gitconfig sh -c 'umask 0007; cd /var/lib/laika/projects/demo/repo && git worktree add -q -b t /var/lib/laika/worktrees/job-test && cd /var/lib/laika/worktrees/job-test && echo hi > f && git add f && git -c user.name=t -c user.email=t@t commit -qm t'"; then
     pass "the laika user can branch and commit in it"
   else

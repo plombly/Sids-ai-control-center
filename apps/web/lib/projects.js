@@ -5,6 +5,7 @@ import { projectsMarkup as homeProjectsMarkup } from './home.js';
 import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
 import { assistantMarkup } from './goal-assistant.js';
 import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
+import { buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
 
 const requestId = newRequestId;
 
@@ -107,21 +108,23 @@ const ACTIVITY = {
   build: ['⚙', 'ok'], build_failed: ['⚙', 'bad'], network: ['⇄', 'warn'], group: ['⧉', 'info']
 };
 
-export function activityMarkup(events, now = Date.now() / 1000) {
+export function activityMarkup(events, now = Date.now() / 1000, project = null, whole = false) {
   const list = Array.isArray(events) ? events : [];
-  if (!list.length) return '<div class="empty">Nothing has happened here yet.</div>';
+  const toggle = groupToggleMarkup(project, whole);
+  if (!list.length) return `${toggle}<div class="empty">Nothing has happened here yet.</div>`;
   const ago = seconds => {
     const age = Math.max(0, now - (Number(seconds) || 0));
     if (age < 3600) return `${Math.max(1, Math.floor(age / 60))} min ago`;
     if (age < 86400) return `${Math.floor(age / 3600)} h ago`;
     return new Date((Number(seconds) || 0) * 1000).toLocaleDateString();
   };
-  return `<ol class="activity-list">${list
+  return `${toggle}<ol class="activity-list">${list
     .map(event => {
       const [icon, tone] = ACTIVITY[event.kind] || ['•', 'info'];
       const isJob = ['merged', 'rejected', 'stuck'].includes(event.kind) && event.ref;
       const ref = isJob ? ` <button type="button" class="detail-button" data-detail="${escValue(event.ref)}">details</button>` : '';
-      return `<li class="activity-item"><span class="activity-icon tone-${tone}">${icon}</span><div class="activity-main"><span>${esc(event.title)}${ref}</span>${event.detail ? `<span class="subtle">${esc(event.detail)}</span>` : ''}</div><span class="subtle activity-time">${esc(ago(event.at))}</span></li>`;
+      const where = whole && event.project_name ? `<span class="chip">${esc(event.project_name)}</span> ` : '';
+      return `<li class="activity-item"><span class="activity-icon tone-${tone}">${icon}</span><div class="activity-main"><span>${where}${esc(event.title)}${ref}</span>${event.detail ? `<span class="subtle">${esc(event.detail)}</span>` : ''}</div><span class="subtle activity-time">${esc(ago(event.at))}</span></li>`;
     })
     .join('')}</ol>`;
 }
@@ -176,7 +179,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
     ? `<a class="button" href="http://${escValue(globalThis.location?.hostname || 'localhost')}:${escValue(app.port)}/" target="_blank" rel="noopener">Open app</a>`
     : '';
   const body =
-    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events) : tab === 'builds' ? buildsMarkup(id, project.builds, undefined, isViewOnly(project)) : tab === 'files' ? '' : overviewMarkup(project);
+    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events, undefined, project, Boolean(project.activity?.group)) : tab === 'builds' ? buildsMarkup(id, project.builds, undefined, isViewOnly(project), buildAllMarkup(project, isViewOnly(project))) : tab === 'files' ? '' : overviewMarkup(project);
   const importance = isViewOnly(project)
     ? `<span class="subtle">Importance ${esc(project.importance || 'medium')}</span>`
     : `<label class="importance-select"${project.parent ? ` title="Follows ${escValue(project.parent_name || project.parent)}"` : ''}>Importance <select id="project-importance" data-project="${esc(id)}"${project.parent ? ' disabled' : ''}><option value="high"${
@@ -365,7 +368,7 @@ if (typeof document !== 'undefined') {
         requestJSON(`/api/projects/${id}?limit=25`),
         tab === 'settings' && route.projectId !== 'laika' ? optional(`/api/projects/${id}/env`)
           : tab === 'history' ? optional(`/api/projects/${id}/history`)
-          : tab === 'activity' ? optional(`/api/projects/${id}/activity`)
+          : tab === 'activity' ? optional(`/api/projects/${id}/activity${wholeGroupActivity() ? '?group=true' : ''}`)
           : tab === 'overview' ? optional(`/api/usage?days=30&project=${id}`)
           : tab === 'builds' ? optional(`/api/projects/${id}/builds`)
           : null,

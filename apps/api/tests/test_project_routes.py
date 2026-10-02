@@ -449,3 +449,18 @@ def test_groups_have_one_level(groups):
     assert client.post("/api/projects/app/parent", json={"parent": "shop"}).status_code == 200
     assert client.post("/api/projects/blog/parent", json={"parent": "app"}).status_code == 409  # app is a child
     assert client.post("/api/projects/shop/parent", json={"parent": "blog"}).status_code == 409  # shop has children
+
+
+def test_build_all_builds_every_buildable_member_of_the_group(builds):
+    client, fake, _ = builds
+    fake.hashes["laika:projects:game-server"] = {"id": "game-server", "name": "Server", "status": "active", "parent": "game"}
+    fake.hashes["laika:projects:game-app"] = {"id": "game-app", "name": "App", "status": "active", "parent": "game",
+                                              "view_only": "1"}
+    fake.members |= {"game-server", "game-app"}
+    assert client.post("/api/projects/game/builds/all").status_code == 409  # nothing buildable yet
+    fake.strings["laika:project-type:game"] = json.dumps({"type": "game", "stack": "love2d"})
+    fake.strings["laika:project-type:game-server"] = json.dumps({"type": "game", "stack": "unity"})
+    result = client.post("/api/projects/game-server/builds/all").json()   # from any member
+    assert result["group"] == "game" and [b["id"] for b in result["started"]] == ["game"]
+    reasons = {s["id"]: s["reason"] for s in result["skipped"]}
+    assert "Unity" in reasons["game-server"] and "managed by the LAIka builder" in reasons["game-app"]

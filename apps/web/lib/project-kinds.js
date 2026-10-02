@@ -101,7 +101,7 @@ export function kindRequest(values) {
 
 const BUILD_STATES = { queued: 'Waiting to start', running: 'Building…', succeeded: 'Ready', failed: 'Failed' };
 
-export function buildsMarkup(id, data, now = Date.now() / 1000, viewOnly = false) {
+export function buildsMarkup(id, data, now = Date.now() / 1000, viewOnly = false, extraButton = '') {
   const recipe = data?.recipe || {};
   const builds = Array.isArray(data?.builds) ? data.builds : [];
   const pending = data?.requested || builds.some(build => /^(queued|running)$/.test(build.status));
@@ -124,7 +124,7 @@ export function buildsMarkup(id, data, now = Date.now() / 1000, viewOnly = false
       return `<div class="item build-item"><div class="item-head"><span class="item-title">${pill(build.status)} ${opt(BUILD_STATES[build.status])}</span><span class="subtle">${opt(agoText(build.requested_at || build.started_at, now))}${build.commit ? ` · main ${esc(build.commit.slice(0, 8))}` : ''}${opt(took)}</span></div><div class="form-row">${download}${log}</div>${error}</div>`;
     })
     .join('');
-  return `<div class="builds"><div class="item-head"><h3>Builds</h3>${button}</div>${what}<span id="build-status" class="form-status" role="status"></span><div class="stack">${rows || '<div class="empty">No builds yet</div>'}</div><p class="subtle">The newest 5 builds are kept.</p></div>`;
+  return `<div class="builds"><div class="item-head"><h3>Builds</h3><span class="form-row">${button}${extraButton}</span></div>${what}<span id="build-status" class="form-status" role="status"></span><div class="stack">${rows || '<div class="empty">No builds yet</div>'}</div><p class="subtle">The newest 5 builds are kept.</p></div>`;
 }
 
 if (typeof document !== 'undefined') {

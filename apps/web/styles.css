@@ -2453,3 +2453,29 @@ body.auth-locked .live-status {
   padding: 3px 0;
   border-top: 1px solid var(--line-soft, var(--line));
 }
+
+/* Project groups, phase 3 (lib/group-actions.js) */
+.approve-all-list {
+  margin: 6px 0;
+  padding-left: 1.2em;
+}
+.approve-all-list code {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.group-toggle {
+  display: inline-flex;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.group-toggle button {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.group-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}

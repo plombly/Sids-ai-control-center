@@ -32,9 +32,12 @@ def _ago(seconds, now):
     return f"{age / 3600:.0f} h ago" if age < 172800 else f"{age / 86400:.0f} days ago"
 
 
-def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=None, dashboard=""):
+def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=None, dashboard="", parents=None):
     """projects: [(id, name)]; goals/jobs: {id: record}; events: {project: [json]};
-    apps: {project: app-status}. Returns (title, text)."""
+    apps: {project: app-status}; parents: {child: parent} (project groups:
+    a parent's line sums its group, its children follow indented).
+    Returns (title, text)."""
+    parents = {child: parent for child, parent in (parents or {}).items() if parent}
     since = now - WEEK
     apps = apps or {}
     names = dict(projects)
@@ -47,7 +50,8 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
     def project_of(record):
         return record.get("project_id") or "laika"
 
-    lines, totals = [], {"done": 0, "failed": 0, "merged": 0, "undone": 0, "waiting": 0, "stuck": 0}
+    totals = {"done": 0, "failed": 0, "merged": 0, "undone": 0, "waiting": 0, "stuck": 0}
+    found = {}  # project -> (counts, parts) when there is something to say
     for project_id, name in projects:
         done = sum(1 for g in goals.values() if project_of(g) == project_id and g.get("status") == "completed"
                    and _number(g.get("updated_at")) >= since)
@@ -71,6 +75,7 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
         app = (apps.get(project_id) or {}).get("state")
         if not any((done, failed, merged, undone, waiting, stuck)) and app not in ("crashed", "setup_failed"):
             continue  # nothing to say about this project
+        counts = {"done": done, "failed": failed, "merged": merged, "waiting": waiting, "stuck": stuck}
         parts = []
         if done or failed:
             parts.append(f"{done} goal{'s' if done != 1 else ''} done" + (f", {failed} failed" if failed else ""))
@@ -86,7 +91,30 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
             parts.append("app running")
         elif app in ("crashed", "setup_failed"):
             parts.append("**app down**")
-        lines.append(f"• **{name or project_id}**: " + " · ".join(parts))
+        found[project_id] = (counts, parts)
+
+    lines = []
+    known = {project_id for project_id, _ in projects}
+    for project_id, name in projects:
+        if parents.get(project_id) in known:
+            continue  # listed under its parent
+        children = [(child, child_name) for child, child_name in projects
+                    if parents.get(child) == project_id and child in found]
+        if not children:
+            if project_id in found:
+                lines.append(f"• **{name or project_id}**: " + " · ".join(found[project_id][1]))
+            continue
+        members = [project_id] + [child for child, _ in children]
+        summed = {key: sum(found[m][0][key] for m in members if m in found) for key in ("done", "merged", "waiting", "stuck")}
+        group_parts = [f"{summed['done']} goal{'s' if summed['done'] != 1 else ''} done", f"{summed['merged']} merged"]
+        if summed["waiting"]:
+            group_parts.append(f"**{summed['waiting']} waiting for approval**")
+        if summed["stuck"]:
+            group_parts.append(f"**{summed['stuck']} stuck**")
+        lines.append(f"• **{name or project_id}** (group of {len(members)}): " + " · ".join(group_parts))
+        for member, member_name in [(project_id, name)] + children:
+            if member in found:
+                lines.append(f"    ◦ {member_name or member}: " + " · ".join(found[member][1]))
 
     summary = (f"{totals['done']} goals finished" + (f", {totals['failed']} failed" if totals["failed"] else "")
                + f" · {totals['merged']} changes merged" + (f" · {totals['undone']} undone" if totals["undone"] else "")

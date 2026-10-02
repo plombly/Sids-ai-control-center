@@ -189,7 +189,8 @@ want_cli() { # command package version
   local have; have=$("$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
   [ "$have" = "$3" ] && return 0
   say "$1 $3"
-  npm install -g -s --no-fund --no-audit "$2@$3" >/dev/null
+  # /usr/local: on everyone's PATH, whichever Node is installed.
+  npm install -g --prefix /usr/local -s --no-fund --no-audit "$2@$3" >/dev/null
 }
 want_cli codex @openai/codex "$LAIKA_CODEX_VERSION"
 want_cli claude @anthropic-ai/claude-code "$LAIKA_CLAUDE_VERSION"
@@ -221,7 +222,7 @@ for _ in $(seq 1 30); do
   curl -fsS -m 3 http://127.0.0.1:8080/health >/dev/null 2>&1 && break
   sleep 2
 done
-addresses=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -v '^172\.1[7-9]\.' || true)
+addresses=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|laika-build)/ {print $4}' | cut -d/ -f1 || true)
 echo
 say "LAIka is installed ($(cat "$LAIKA_HOME/VERSION" 2>/dev/null || echo dev))."
 echo

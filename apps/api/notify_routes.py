@@ -95,15 +95,16 @@ def _digest_data():
     import main
     hashes = lambda pattern: {key.split(":", 2)[2]: data for key, data in main._hashes(pattern)}
     redis = main.redis
-    ids = ["laika", *sorted(i for i in projects._members(main) if i != "laika")]
-    project_list = []
+    ids = (["laika"] if projects.BUILTIN_PROJECT else []) + sorted(i for i in projects._members(main) if i != "laika")
+    project_list, parents = [], {}
     for project_id in ids:
         data = projects._project_data(project_id)
         if project_id != "laika" and (data.get("status") or "active") != "active":
             continue
         project_list.append((project_id, "LAIka" if project_id == "laika" else data.get("name") or project_id))
+        parents[project_id] = data.get("parent") or ""
     load = lambda key: json.loads(redis.get(key) or "null")
-    return {"projects": project_list, "goals": hashes("laika:goals:*"), "jobs": hashes("laika:jobs:*"),
+    return {"projects": project_list, "parents": parents, "goals": hashes("laika:goals:*"), "jobs": hashes("laika:jobs:*"),
             "events": {pid: redis.lrange(f"laika:events:{pid}", 0, 499) or [] for pid, _ in project_list},
             "apps": {pid: redis.hgetall(f"laika:app-status:{pid}") or {} for pid, _ in project_list},
             "backup": load("laika:backup:last"), "restore": load("laika:backup:restore-check")}
