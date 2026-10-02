@@ -86,6 +86,7 @@ redis = Redis.from_url(REDIS_URL, password=sid_redis.password(), decode_response
 # (or it is still queued), which is how it detects jobs orphaned by a
 # worker restart or crash.
 CURRENT_JOB_ID = ""
+CURRENT_JOB_STARTED_AT = ""
 # Role, provider and model of the held job, published in the heartbeat so the
 # dashboard shows what is actually running (any worker takes any role).
 CURRENT_JOB_ROLE = ""
@@ -122,6 +123,7 @@ def heartbeat(status="idle"):
             "model": CURRENT_AGENT.get("model") or agent_cli.routing_summary(DEFAULT_MODEL),
             "status": status,
             "job_id": CURRENT_JOB_ID,
+            "job_started_at": CURRENT_JOB_STARTED_AT,
             "last_seen": str(time.time()),
         },
     )
@@ -1936,13 +1938,20 @@ def pick_job(now=None):
 
 
 def process_job(raw_job):
-    global CURRENT_JOB_ID, CURRENT_JOB_ROLE
+    global CURRENT_JOB_ID, CURRENT_JOB_ROLE, CURRENT_JOB_STARTED_AT
     try:
         parsed = json.loads(raw_job)
         CURRENT_JOB_ID = str(parsed.get("id", ""))
         CURRENT_JOB_ROLE = str(parsed.get("role") or "builder")
+        job_key = f"sid:jobs:{CURRENT_JOB_ID}"
+        if redis.exists(job_key):
+            CURRENT_JOB_STARTED_AT = str(time.time())
+            redis.hset(job_key, "started_at", CURRENT_JOB_STARTED_AT)
+            redis.hdel(job_key, "finished_at")
+        else:
+            CURRENT_JOB_STARTED_AT = ""
     except (ValueError, AttributeError):
-        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
+        CURRENT_JOB_ID = CURRENT_JOB_ROLE = CURRENT_JOB_STARTED_AT = ""
     try:
         # Publish the held job before touching its state, so the
         # orchestrator never sees it claimed by nobody.
@@ -1950,9 +1959,14 @@ def process_job(raw_job):
         with keep_alive("working"):
             _process_job(raw_job)
     finally:
-        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
+        if CURRENT_JOB_ID:
+            job_key = f"sid:jobs:{CURRENT_JOB_ID}"
+            if redis.exists(job_key):
+                redis.hset(job_key, "finished_at", str(time.time()))
+        CURRENT_JOB_ID = CURRENT_JOB_ROLE = CURRENT_JOB_STARTED_AT = ""
         CURRENT_AGENT.clear()
         use_project(None)
+        heartbeat("idle")
 
 
 def _process_job(raw_job):
@@ -2202,10 +2216,9 @@ def _process_job(raw_job):
         print(f"[{WORKER_ID}] job={job_id} FAILED: {exc}", flush=True)
 
     finally:
-        global CURRENT_JOB_ID, CURRENT_JOB_ROLE
-        CURRENT_JOB_ID = CURRENT_JOB_ROLE = ""
-        CURRENT_AGENT.clear()
-        heartbeat("idle")
+        # process_job owns the heartbeat/job lifecycle cleanup so that timing
+        # is recorded even when the handler raises unexpectedly.
+        pass
 
 
 def main():
