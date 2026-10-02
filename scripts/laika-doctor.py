@@ -315,6 +315,29 @@ def check_exposure(runner=run):
     return ok("exposure", "no public addresses")
 
 
+def check_backups(client=None, now=None):
+    import datetime
+    import time as _time
+    try:
+        client = client or redis_client()
+        last = json.loads(client.get("laika:backup:last") or "null")
+    except Exception:
+        return warn("backups", "cannot check (Redis unreachable)")
+    if not last:
+        return warn("backups", "no backup yet (the first runs at the scheduled time)", "sudo systemctl start laika-backup")
+    try:
+        at = datetime.datetime.strptime(last["at"], "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (KeyError, ValueError):
+        at = 0
+    age_hours = ((now or _time.time()) - at) / 3600
+    if not last.get("ok"):
+        return fail("backups", f"the last backup failed: {', '.join(last.get('errors') or {}) or 'see journalctl -u laika-backup'}",
+                    "journalctl -u laika-backup -n 50")
+    if age_hours > 48:
+        return warn("backups", f"the last backup is {age_hours:.0f} hours old", "systemctl status laika-backup.timer")
+    return ok("backups", f"last backup {age_hours:.0f} h ago")
+
+
 def check_admin(client=None):
     try:
         client = client or redis_client()
@@ -331,7 +354,7 @@ def all_checks():
               check_containers, check_services, check_redis_and_workers,
               lambda: check_http("api", "http://127.0.0.1:8000/health"),
               lambda: check_http("dashboard", "http://127.0.0.1:8080/health"),
-              check_sandbox, check_providers, check_exposure, check_admin]
+              check_sandbox, check_providers, check_exposure, check_backups, check_admin]
     results = []
     for check in checks:
         try:

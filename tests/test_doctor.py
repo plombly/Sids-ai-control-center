@@ -87,3 +87,14 @@ def test_exposure_and_render(doc):
     assert doc.check_exposure(done(out))["level"] == "warn"
     text = doc.render([doc.ok("a", "fine"), doc.fail("b", "broken", "do this")], color=False)
     assert " ✔ a" in text and " ✗ b" in text and "fix: do this" in text and "1 problem(s)" in text
+
+
+def test_backups(doc):
+    r = MemoryRedis()
+    assert doc.check_backups(r)["level"] == "warn"                       # none yet
+    r.values["laika:backup:last"] = json.dumps({"at": "20261002T033000Z", "ok": True})
+    assert doc.check_backups(r, now=1790919000)["level"] == "ok"
+    assert doc.check_backups(r, now=1790919000 + 3 * 86400)["level"] == "warn"
+    r.values["laika:backup:last"] = json.dumps({"at": "20261002T033000Z", "ok": False, "errors": {"repo": "x"}})
+    result = doc.check_backups(r, now=1790919000)
+    assert result["level"] == "fail" and "repo" in result["detail"]
