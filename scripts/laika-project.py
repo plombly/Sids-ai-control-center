@@ -13,6 +13,7 @@ import time
 import uuid
 from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))

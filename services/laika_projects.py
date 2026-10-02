@@ -23,6 +23,13 @@ PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 IMPORTANCE = ("high", "medium", "low")
 
 
+def _env_number(name, default, kind=int):
+    try:
+        return kind(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _bounded(value, default, low, high, kind=int):
     try:
         number = kind(value)
@@ -57,9 +64,10 @@ class Project:
         except (TypeError, ValueError):
             self.run_port = 0
         # Limits for the running app (systemd MemoryMax / CPUQuota / TasksMax).
-        self.run_memory_mb = _bounded(fields.get("run_memory_mb"), 1024, 64, 65536)
-        self.run_cpus = _bounded(fields.get("run_cpus"), 1.0, 0.1, 64.0, float)
-        self.run_tasks = _bounded(fields.get("run_tasks"), 512, 16, 32768)
+        # Defaults from Settings → Project defaults (services/laika_env.py).
+        self.run_memory_mb = _bounded(fields.get("run_memory_mb"), _env_number("DEFAULT_APP_MEMORY_MB", 1024), 64, 65536)
+        self.run_cpus = _bounded(fields.get("run_cpus"), _env_number("DEFAULT_APP_CPUS", 1.0, float), 0.1, 64.0, float)
+        self.run_tasks = _bounded(fields.get("run_tasks"), _env_number("DEFAULT_APP_TASKS", 512), 16, 32768)
         importance = fields.get("importance") or "medium"
         self.importance = importance if importance in IMPORTANCE else "medium"
         self.status = fields.get("status") or "active"

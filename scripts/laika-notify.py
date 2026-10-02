@@ -27,6 +27,7 @@ from pathlib import Path
 import redis as redis_lib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
 import notify_core  # noqa: E402  (apps/api/notify_core.py, shared with the API)

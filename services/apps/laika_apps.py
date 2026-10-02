@@ -31,6 +31,7 @@ from pathlib import Path
 from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 sys.path.append(str(Path(__file__).resolve().parents[2] / "apps/api"))  # goal_assist (shared)
 import goal_assist  # noqa: E402
 import project_detect  # noqa: E402

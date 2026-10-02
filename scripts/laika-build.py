@@ -32,6 +32,7 @@ import redis as redis_lib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 sys.path.insert(0, str(ROOT / "apps/api"))
 import project_catalog  # noqa: E402
 import laika_projects  # noqa: E402

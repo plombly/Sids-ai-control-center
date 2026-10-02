@@ -12,6 +12,7 @@ from pathlib import Path
 import redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)

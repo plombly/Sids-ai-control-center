@@ -14,6 +14,7 @@ class DeviceRedis(FakeRedis):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         self.sets = {}
+        self.stream = []
 
     def sadd(self, key, *members):
         self.sets.setdefault(key, set()).update(members)
@@ -24,6 +25,7 @@ class DeviceRedis(FakeRedis):
     def delete(self, key):
         self.strings.pop(key, None)
         self.hashes.pop(key, None)
+        self.sets.pop(key, None)
 
     def expire(self, key, seconds):
         return True
@@ -34,8 +36,9 @@ class DeviceRedis(FakeRedis):
         self.hashes.setdefault(key, {})[field] = value
         return True
 
-    def xadd(self, *a, **k):
-        return "1-0"
+    def xadd(self, name, fields, *a, **k):
+        self.stream.append((name, dict(fields)))
+        return f"{len(self.stream)}-0"
 
 
 @pytest.fixture

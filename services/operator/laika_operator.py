@@ -41,6 +41,7 @@ from pathlib import Path
 from redis import Redis
 from redis.exceptions import ResponseError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # services/
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
@@ -61,9 +62,12 @@ OUTPUT_LIMIT = 8000
 NETWORK_ACTIONS = ("network_once", "network_always", "network_deny")
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen", *NETWORK_ACTIONS,
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
-           "project_commit_upload", "restore_project", "project_revert")
+           "project_commit_upload", "restore_project", "project_revert", "apply_settings")
 # Project-level actions run scripts/laika-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
+# Settings that change the host (scripts/laika-system.py), run as their own unit.
+SYSTEM_ACTIONS = ("apply_settings",)
+APPLY_WHAT = ("apply", "restart", "workers", "timers")
 PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project",
                    "project_commit_upload", "restore_project", "project_revert")
 TRASH_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z")
@@ -349,6 +353,15 @@ def execute_project(request, runner=subprocess.run):
 def validate(fields, entry_id, now):
     """Re-check everything the API checked; never trust the stream."""
     action = fields.get("action", "")
+    if action in SYSTEM_ACTIONS:
+        if action not in ALLOWED_ACTIONS:
+            raise Invalid(f"action {action!r} is disabled on this host (OPERATOR_ALLOWED_ACTIONS)")
+        if entry_age(entry_id, now) > REQUEST_TTL:
+            raise Invalid("request expired; apply again", status="expired")
+        what = fields.get("what", "")
+        if what not in APPLY_WHAT:
+            raise Invalid(f"what must be one of {', '.join(APPLY_WHAT)}")
+        return {"action": action, "what": what, "job_id": "", "project_id": ""}
     if action in PROJECT_ACTIONS:
         if action not in ALLOWED_ACTIONS:
             raise Invalid(f"action {action!r} is disabled on this host (OPERATOR_ALLOWED_ACTIONS)")
@@ -423,8 +436,22 @@ def call_action(request):
         job_review.reopen(job_id)
 
 
+def execute_system(request, runner=subprocess.run):
+    """Start scripts/laika-system.py as its own unit (it may wait for workers)."""
+    name = f"laika-apply-{int(time.time())}"
+    result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",
+                     "--description=LAIka: apply settings", "/usr/bin/python3",
+                     str(ROOT / "scripts/laika-system.py"), request["what"]],
+                    text=True, capture_output=True, timeout=60)
+    if result.returncode != 0:
+        return "error", f"could not start: {(result.stderr or result.stdout).strip()[-300:]}", ""
+    return "succeeded", f"applying settings ({request['what']}) as {name}; workers finish their jobs first", ""
+
+
 def execute(request):
     """Run one validated request. Returns (status, message, output)."""
+    if request["action"] in SYSTEM_ACTIONS:
+        return execute_system(request)
     if request["action"] in PROJECT_ACTIONS:
         return execute_project(request)
     job_status = redis.hget(f"laika:jobs:{request['job_id']}", "status")

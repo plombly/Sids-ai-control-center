@@ -14,6 +14,7 @@ from pathlib import Path
 from redis import Redis
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import project_reference  # noqa: E402  (services/project_reference.py)
@@ -1871,7 +1872,21 @@ def process_integrate_job(job, key):
 # prompts take effect immediately; running jobs are never preempted. A job is
 # claimed with LREM (atomic): losing a race just moves on to the next one.
 
-WORKER_CLASS = os.environ.get("WORKER_CLASS", "general")
+def worker_class(worker_id=None, env=os.environ):
+    """"support" for the last SUPPORT_WORKERS of WORKER_COUNT workers
+    (Settings → Workers), else "general"; WORKER_CLASS forces one."""
+    if env.get("WORKER_CLASS"):
+        return env["WORKER_CLASS"]
+    try:
+        number = int(str(worker_id or WORKER_ID).rsplit("-", 1)[-1])
+        count = int(env.get("WORKER_COUNT", "8"))
+        support = int(env.get("SUPPORT_WORKERS", "2"))
+    except ValueError:
+        return "general"
+    return "support" if support > 0 and number > count - support else "general"
+
+
+WORKER_CLASS = worker_class()
 PICK_IDLE_SECONDS = float(os.environ.get("PICK_IDLE_SECONDS", "2"))
 AGING_POINTS_PER_MINUTE = float(os.environ.get("AGING_POINTS_PER_MINUTE", "0.5"))
 TIER_ORDER = {

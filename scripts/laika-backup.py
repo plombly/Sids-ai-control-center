@@ -33,6 +33,9 @@ import sys
 import tarfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment)
+
 REPO_ROOT = Path(os.getenv("REPO_ROOT", "/opt/laika"))
 # A directory of its own: /var/backups/laika also holds hand-made backups.
 BACKUP_ROOT = Path(os.getenv("BACKUP_ROOT", "/var/backups/laika/snapshots"))

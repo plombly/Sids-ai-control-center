@@ -1,7 +1,12 @@
 """Fixtures for host-side tests; helpers live in laika_testing.py, which has
 a unique module name (both tests/ and apps/api/tests have a conftest)."""
 
+import os
+
 import pytest
+
+# Tests never read the live server's stored settings (services/laika_env.py).
+os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
 
 from laika_testing import (  # noqa: F401  (re-exported for fixtures below)
     BASE, INTEGRATED, JOB, ROOT, FakeGit, MemoryRedis, load_module, make_builder,

@@ -20,6 +20,7 @@ import urllib.request
 from pathlib import Path
 import redis as redis_lib
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")

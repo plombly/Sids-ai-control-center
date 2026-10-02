@@ -81,7 +81,8 @@ def _view(record):
 
 
 def server_name():
-    return (_main().redis.get("laika:server-name") or "LAIka").strip()[:60] or "LAIka"
+    import settings_schema
+    return settings_schema.values(_main().redis)["SERVER_NAME"]
 
 
 class DeviceCreate(BaseModel):
@@ -108,7 +109,10 @@ def create_device(payload: DeviceCreate, request: Request):
     key = KEY_PREFIX + secrets.token_urlsafe(32)
     now = time.time()
     if payload.server_name and payload.server_name.strip():
-        redis.set("laika:server-name", payload.server_name.strip())
+        import settings_schema
+        cleaned, errors = settings_schema.validate({"SERVER_NAME": payload.server_name})
+        if not errors:
+            settings_schema.save(redis, cleaned)
     redis.hset(f"laika:devices:{device_id}", mapping={"id": device_id, "name": payload.name.strip(),
                                                     "key_hash": key_hash(key), "created_at": str(now)})
     redis.set(f"laika:device-key:{key_hash(key)}", device_id)

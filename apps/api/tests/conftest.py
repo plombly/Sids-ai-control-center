@@ -1,4 +1,7 @@
 import os
+
+# Tests never read the live server's stored settings (services/laika_env.py).
+os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
 import sys
 from pathlib import Path
 

@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 
 
@@ -153,7 +154,7 @@ def prune(
 
 def main(argv=None, redis_client=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=int(os.environ.get("PRUNE_DAYS", "30")))
     parser.add_argument("--log-root", default="/var/log/laika")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)

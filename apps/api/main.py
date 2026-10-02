@@ -1262,6 +1262,7 @@ from activity_routes import router as activity_router
 from notify_routes import router as notify_router
 from build_routes import router as build_router
 from device_routes import router as device_router
+from settings_routes import router as settings_router
 from assist_routes import router as assist_router
 
 app.include_router(agent_router)
@@ -1275,4 +1276,5 @@ app.include_router(activity_router)
 app.include_router(notify_router)
 app.include_router(build_router)
 app.include_router(device_router)
+app.include_router(settings_router)
 app.include_router(assist_router)
