@@ -25,7 +25,7 @@ export function fieldMarkup(field, value) {
   const name = escValue(field.key);
   const note = APPLY_NOTES[field.apply] ? `<span class="setting-apply">${esc(APPLY_NOTES[field.apply])}</span>` : '';
   const help = field.help ? `<span class="field-hint">${esc(field.help)}</span>` : '';
-  const label = (choice) => esc(field.choice_labels?.[choice] || choice);
+  const label = choice => esc(field.choice_labels?.[choice] || String(choice).charAt(0).toUpperCase() + String(choice).slice(1));
   let control;
   if (field.type === 'bool') {
     control = `<label class="switch"><input type="checkbox" id="${id}" name="${name}"${value === 'true' ? ' checked' : ''}> <span>${value === 'true' ? 'On' : 'Off'}</span></label>`;

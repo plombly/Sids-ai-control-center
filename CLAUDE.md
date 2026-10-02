@@ -414,6 +414,21 @@ controls) and the home page never offers their approvals or stuck jobs.
 LAIKA_BUILTIN_PROJECT=0 (production) removes the built-in project from the
 API entirely.
 
+Settings (v1.0): apps/api/settings_schema.py is the single list of
+operator settings (types, ranges, section, apply mode live/restart/host).
+Stored overrides: Redis laika:settings (JSON). services/laika_env.py is
+imported first by every host program and copies stored service settings
+into os.environ (so existing os.getenv reads pick them up; tests set
+LAIKA_SETTINGS_SOURCE=none). GET/PUT /api/settings; settings needing a
+restart/host change are listed in laika:settings:pending until
+POST /api/settings/apply -> operator action apply_settings ->
+scripts/laika-system.py apply (backup timer drop-in, worker count via
+enable/disable laika-worker@NN after they finish, laika-restart.sh all).
+Web: lib/system-settings.js (generic forms), lib/appearance.js (theme,
+accent, density, text size, motion, home sections, clock, refresh;
+cached in localStorage as laika-prefs). Worker class = support for the
+last SUPPORT_WORKERS of WORKER_COUNT.
+
 Operations (host timers, units in deploy/systemd/):
 - `laika-backup.timer` daily 03:30: scripts/laika-backup.py ->
   /var/backups/laika/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

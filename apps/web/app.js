@@ -32,6 +32,10 @@ export * from './lib/router.js';
 
 // Settings → General → Dashboard refresh (lib/appearance.js sets LAIKA_PREFS first).
 const POLL_MS = Math.min(60, Math.max(2, Number(globalThis.LAIKA_PREFS?.DASHBOARD_REFRESH_SECONDS) || 2)) * 1000;
+if (typeof document !== 'undefined') {
+  const seconds = document.getElementById('poll-seconds');
+  if (seconds) seconds.textContent = String(POLL_MS / 1000);
+}
 const HISTORY_REFRESH_MS = 30000;
 const initial = () => Object.fromEntries(ENDPOINTS.map(key => [key, { data: null, error: null, stale: false }]));
 export const state = { ...initial(), lastUpdated: null, polling: false, dismissed: new Set() };
