@@ -12,6 +12,13 @@ export function loginMarkup(message = '') {
   return `<form id="auth-login-form" class="auth-card"><img class="auth-logo" src="brand/logo.svg" alt="" width="72" height="72"><h1>Sign in to <span class="wordmark"><span class="wordmark-ai">LAI</span>ka</span></h1><label class="field">Username<input name="username" required autocomplete="username"></label><label class="field">Password<input name="password" type="password" required autocomplete="current-password"></label><button type="submit" class="primary">Sign in</button><span class="form-status" role="status">${message ? esc(message) : ''}</span><p class="subtle auth-note">Forgot the password? Run <code>sudo laika reset-password</code> on the server.</p></form>`;
 }
 
+// Which screen the sign-in state calls for: 'setup', 'login' or '' (none).
+export function screenFor(state) {
+  if (state?.setup_required) return 'setup';
+  if (state?.admin_exists && !state.signed_in) return 'login';
+  return '';
+}
+
 export const userMenuMarkup = user => (user ? `<span class="subtle">${esc(user)}</span><button type="button" class="detail-button" data-sign-out>Sign out</button>` : '');
 
 function when(seconds) {
@@ -36,9 +43,13 @@ export async function accessData() {
 
 if (typeof document !== 'undefined') {
   const screen = () => document.getElementById('auth-screen');
-  const show = html => {
+  // The dashboard keeps polling while signed out, and every 401 asks for a
+  // check: draw a screen only when it changes, or typing would be wiped.
+  let shown = null;
+  const show = (kind, html) => {
     const node = screen();
-    if (!node) return;
+    if (!node || kind === shown) return;
+    shown = kind;
     node.innerHTML = html;
     node.hidden = !html;
     document.body.classList.toggle('auth-locked', Boolean(html));
@@ -53,10 +64,11 @@ if (typeof document !== 'undefined') {
       const state = await requestJSON('/api/auth/state');
       const menu = document.getElementById('user-menu');
       if (menu) menu.innerHTML = userMenuMarkup(state.user);
-      if (state.setup_required) show(setupMarkup());
-      else if (state.admin_exists && !state.signed_in) show(loginMarkup());
+      const kind = screenFor(state);
+      if (kind === 'setup') show(kind, setupMarkup());
+      else if (kind === 'login') show(kind, loginMarkup());
       else {
-        show('');
+        show('', '');
         if (state.signed_in && !location.hash.startsWith('#/setup')) {
           const setup = await requestJSON('/api/setup/state').catch(() => ({ done: true }));
           if (setup.done === false) location.hash = '#/setup';

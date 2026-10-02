@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { accessMarkup, loginMarkup, setupMarkup, userMenuMarkup } from './lib/auth.js';
+import { accessMarkup, loginMarkup, screenFor, setupMarkup, userMenuMarkup } from './lib/auth.js';
 
 test('first-run, sign-in and user menu screens', () => {
   const setup = setupMarkup('<oops>');
@@ -26,4 +26,11 @@ test('access page: password form, sessions and audit log', () => {
   assert.match(html, /data-end-session="bbbbbbbbbbbbbbbb"/);
   assert.doesNotMatch(html, /data-end-session="aaaa/);
   assert.match(html, /PATCH \/api\/projects\/&lt;x&gt;/);
+});
+
+test('which screen the sign-in state calls for', () => {
+  assert.equal(screenFor({ setup_required: true }), 'setup');
+  assert.equal(screenFor({ setup_required: false, admin_exists: true, signed_in: false }), 'login');
+  assert.equal(screenFor({ setup_required: false, admin_exists: true, signed_in: true }), '');
+  assert.equal(screenFor(null), '');
 });
