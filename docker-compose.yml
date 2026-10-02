@@ -104,6 +104,9 @@ services:
     restart: unless-stopped
     # Host networking lets nginx see real client addresses (sign-in audit
     # and rate limits); it listens on 8080.
+    volumes:
+      # The server's own name and logo (scripts/laika-branding.py), if any.
+      - /var/lib/laika/branding:/usr/share/nginx/html/brand-custom:ro
     depends_on:
       api:
         condition: service_healthy

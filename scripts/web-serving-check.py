@@ -57,6 +57,8 @@ def main():
     require("proxy_set_header Host $http_host;" in nginx,
             "nginx must pass Host with its port: the API's same-origin check compares it with Origin")
     require("env_file" not in web, "the web container needs no secrets")
+    require("try_files /brand-custom/$1 /brand/$1 =404;" in nginx,
+            "a server's own name and logo (laika branding apply) must be served in place of the shipped ones")
 
 if __name__ == "__main__":
     main()

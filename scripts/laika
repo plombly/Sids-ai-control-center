@@ -10,7 +10,7 @@
 #   laika repair            put back missing packages, folders, services
 #   laika update            install the latest release (backup first)
 #   laika uninstall         remove LAIka (keeps your data unless --purge)
-#   laika branding apply    rebuild the web assets from /etc/laika/branding.json
+#   laika branding apply    use the name and logo in /etc/laika/branding.json
 #   laika version           show the installed version
 set -uo pipefail
 LAIKA_HOME=${LAIKA_HOME:-/opt/laika}
@@ -33,10 +33,7 @@ case "${1:-help}" in
     need_root
     if [ "${2:-}" = --check ]; then exec "$PY" "$LAIKA_HOME/scripts/laika-update.py" check; fi
     exec "$PY" "$LAIKA_HOME/scripts/laika-update.py" apply "${@:2}" ;;
-  branding)
-    need_root
-    if [ "${2:-}" = apply ] && [ -x "$LAIKA_HOME/scripts/laika-branding.py" ]; then exec "$PY" "$LAIKA_HOME/scripts/laika-branding.py" apply; fi
-    echo "usage: laika branding apply" >&2; exit 2 ;;
+  branding) need_root; exec "$PY" "$LAIKA_HOME/scripts/laika-branding.py" "${2:-show}" ;;
   version) cat "$LAIKA_HOME/VERSION" 2>/dev/null || git -C "$LAIKA_HOME" describe --always 2>/dev/null ;;
   help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown command: $1 (laika help)" >&2; exit 2 ;;

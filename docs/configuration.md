@@ -176,5 +176,27 @@ After editing one by hand, run `sudo laika restart`.
 ## Name and logo
 
 The name and logo are deliberately not dashboard settings. To rebrand a
-server, write `/etc/laika/branding.json` and run `sudo laika branding apply`
-(see `apps/web/brand/brand.json` for the format).
+server, write `/etc/laika/branding.json`:
+
+```json
+{
+  "name": "Acme Builder",
+  "wordmark": ["Acme ", "Builder"],
+  "tagline": "Our software builder",
+  "logo": "/etc/laika/branding/logo.svg",
+  "favicon": "/etc/laika/branding/favicon.svg"
+}
+```
+
+`wordmark` parts alternate between the text colour and the accent colour.
+Logos are SVG or PNG files of up to 512 KB; an SVG may not contain
+scripts, event handlers or links to other sites. Then:
+
+```sh
+sudo laika branding apply    # check and use it (reload the dashboard)
+sudo laika branding show     # what is in use
+sudo laika branding reset    # back to LAIka's own name and logo
+```
+
+The server name shown in notifications and the phone app is a normal
+setting (Settings → General).

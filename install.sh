@@ -142,6 +142,7 @@ for dir in projects project-data worktrees uploads reference; do
   install -d -m 2770 -o "$USER_NAME" -g "$USER_NAME" "$DATA/$dir"
 done
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA/home"
+install -d -m 0755 -o root -g root "$DATA/branding"
 install -d -m 0700 -o root -g root "$DATA/trash" "$DATA/db" "$BACKUPS"
 install -d -m 2770 -o "$USER_NAME" -g "$USER_NAME" "$LOGS" "$LOGS/jobs" "$LOGS/integration" "$LOGS/assist"
 install -d -m 0750 -o root -g "$USER_NAME" "$CONF"
