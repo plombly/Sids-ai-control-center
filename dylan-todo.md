@@ -4,6 +4,21 @@ Things only you can check: on your own devices, with real projects, or by
 waiting for a scheduled event. Tick them off as you go and note anything
 that felt wrong; we'll go through the notes together.
 
+## SID App (checkpoint B)
+- [ ] Install the APK on your Android phone: dashboard → SID App → Builds →
+      Download (build apk5), unzip, open sid-app.apk (allow "install unknown apps").
+- [ ] SID dashboard → Settings → Phones & apps → Add a phone; in the app
+      Settings → Add server → Scan QR code. The server appears and is active.
+- [ ] App Settings → the server's key icon (VPN): import your .ovpn, enter the
+      password, Save, Connect now. Android asks for VPN permission once.
+- [ ] Off Wi-Fi (mobile data): open Home; the app connects the VPN by itself
+      and shows SID's status, Needs you, In progress and Recently finished.
+- [ ] Projects tab: open SID App, press "Give SID work", try "Plan it with me".
+- [ ] Answer a stuck job or an internet request from the Home tab.
+- [ ] Revoke the phone in SID Settings: the app says its key is no longer valid.
+- [ ] iPhone (on your Mac): flutter build ios / run from Xcode works for
+      everything except the VPN, which needs the paid account (see README).
+
 ## Project groups (phases 1-2)
 - [ ] On a project's Overview, press **New child project** and create one; it
       should show "Part of …" and appear nested under the parent everywhere.
