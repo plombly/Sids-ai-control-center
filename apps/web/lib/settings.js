@@ -74,6 +74,7 @@ async function load(section = currentSection) {
       body = '<section class="settings-section" id="devices-section"></section>';
     } else if (section === 'ai') {
       const providers = await requestJSON('/api/ai-providers').catch(() => ({}));
+      window.dispatchEvent(new CustomEvent('laika:providers-loaded', { detail: providers }));
       body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'workers') {
       body = `<div class="settings-card"><h3>Right now</h3><div data-worker-scale="log"></div></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;

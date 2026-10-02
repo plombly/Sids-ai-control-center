@@ -111,6 +111,17 @@ if (typeof document !== 'undefined') {
     const node = root()?.querySelector('#setup-form > .form-status');
     if (node) node.textContent = message;
   };
+  // A saved sign-in status can be old (for example from before LAIka moved
+  // to its own user): ask the host to check again, then redraw.
+  let refreshed = 0;
+  const refreshIfStale = (providers, redrawLater) => {
+    if (!providers?.stale || Date.now() - refreshed < 60000) return;
+    refreshed = Date.now();
+    requestJSON('/api/ai-providers/refresh', { method: 'POST', body: JSON.stringify({ request_id: newRequestId() }) })
+      .then(() => setTimeout(redrawLater, 6000))
+      .catch(() => {});
+  };
+  window.addEventListener('laika:providers-loaded', event => refreshIfStale(event.detail, () => window.dispatchEvent(new CustomEvent('laika:settings-redraw'))));
   async function load() {
     const [settings, providers, info] = await Promise.all([
       requestJSON('/api/settings').catch(() => ({})),
@@ -118,6 +129,10 @@ if (typeof document !== 'undefined') {
       requestJSON('/api/setup/info').catch(() => ({}))
     ]);
     data = { values: settings.values || {}, providers, info };
+    refreshIfStale(providers, async () => {
+      data.providers = await requestJSON('/api/ai-providers').catch(() => data.providers);
+      if (step === 'ai') draw();
+    });
   }
   async function draw() {
     const node = root();

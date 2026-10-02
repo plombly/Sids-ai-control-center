@@ -9,6 +9,7 @@ providers.env (mounted at /providers), never returned, never put in Redis.
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,7 @@ import project_routes as projects
 router = APIRouter()
 PROVIDERS_DIR = Path(os.environ.get("LAIKA_PROVIDERS_DIR", "/providers"))
 KEYS = {"anthropic_api_key": "ANTHROPIC_API_KEY", "openai_api_key": "OPENAI_API_KEY"}
+STALE_SECONDS = 600
 
 
 def _redis():
@@ -97,7 +99,9 @@ class ClaudeCode(BaseModel):
 def providers():
     status = _json("laika:providers:status") or {}
     keys = saved_keys()
-    return {"status": status,
+    # Older than 10 minutes (or never checked): the page asks the host to look again.
+    stale = time.time() - float(status.get("checked_at") or 0) > STALE_SECONDS
+    return {"status": status, "stale": stale,
             "login": {name: _json(f"laika:provider-login:{name}") for name in ("claude", "codex")},
             "keys": {field: env in keys for field, env in KEYS.items()}}
 

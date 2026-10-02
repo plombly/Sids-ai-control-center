@@ -24,6 +24,7 @@ def api(monkeypatch, tmp_path):
 def test_status_login_and_claude_code(api):
     client, fake, _ = api
     body = client.get("/api/ai-providers").json()
+    assert body["stale"] is True  # never checked
     assert body["status"]["claude"]["signed_in"] is True and body["keys"] == {"anthropic_api_key": False, "openai_api_key": False}
     started = client.post("/api/ai-providers/codex/login", json={"request_id": "login-0001"})
     assert started.status_code == 202 and fake.stream[-1][1]["action"] == "provider_login" and fake.stream[-1][1]["what"] == "codex"
@@ -33,6 +34,9 @@ def test_status_login_and_claude_code(api):
     assert client.post("/api/ai-providers/claude/code", json={"code": "abc123#xyz"}).status_code == 200
     assert fake.strings["laika:provider-login:claude:code"] == "abc123#xyz"
     assert client.get("/api/ai-providers").json()["login"]["claude"]["url"] == "https://claude.ai/x"
+    import time
+    fake.strings["laika:providers:status"] = json.dumps({"claude": {"signed_in": False}, "checked_at": time.time()})
+    assert client.get("/api/ai-providers").json()["stale"] is False
 
 
 def test_keys_are_write_only_and_validated(api):
