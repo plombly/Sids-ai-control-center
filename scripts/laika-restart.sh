@@ -2,7 +2,8 @@
 # Restart LAIka's own services safely, then check they came back.
 #
 #   scripts/laika-restart.sh [--wait SECONDS] TARGET...
-#   TARGET: operator | orchestrator | apps | workers | worker@NN | all
+#   TARGET: operator | orchestrator | apps | scaler | workers | worker@NN | all
+#   (workers / all: only the running workers; the scaler stopped the rest)
 #
 # Workers are never restarted mid-job: each one is paused first (the
 # laika:worker-control key, so it claims nothing new), the script waits until
@@ -26,15 +27,16 @@ done
 [ ${#targets[@]} -gt 0 ] || { sed -n '2,13p' "$0"; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 2; }
 
-all_workers() { systemctl list-units --all --plain --no-legend 'laika-worker@*.service' | awk '{print $1}' | sort; }
+# Only running workers: the scaler stopped the others on purpose.
+all_workers() { systemctl list-units --plain --no-legend --state=active,activating 'laika-worker@*.service' | awk '{print $1}' | sort; }
 units=()
 for target in "${targets[@]}"; do
   case "$target" in
-    operator|orchestrator|apps) units+=("laika-$target.service") ;;
+    operator|orchestrator|apps|scaler) units+=("laika-$target.service") ;;
     workers) mapfile -t found < <(all_workers); units+=("${found[@]}") ;;
     worker@[0-9][0-9]) units+=("laika-$target.service") ;;
-    all) mapfile -t found < <(all_workers); units+=(laika-operator.service laika-orchestrator.service laika-apps.service "${found[@]}") ;;
-    *) echo "unknown target: $target (operator, orchestrator, apps, workers, worker@NN, all)" >&2; exit 2 ;;
+    all) mapfile -t found < <(all_workers); units+=(laika-operator.service laika-orchestrator.service laika-apps.service laika-scaler.service "${found[@]}") ;;
+    *) echo "unknown target: $target (operator, orchestrator, apps, scaler, workers, worker@NN, all)" >&2; exit 2 ;;
   esac
 done
 mapfile -t units < <(printf '%s\n' "${units[@]}" | awk '!seen[$0]++')

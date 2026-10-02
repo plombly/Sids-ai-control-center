@@ -1,0 +1,20 @@
+[Unit]
+Description=LAIka: start, drain and stop workers (services/scaler/laika_scaler.py)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+EnvironmentFile=-/etc/laika/laika.env
+ExecStart=/usr/bin/python3 /opt/laika/services/scaler/laika_scaler.py
+Restart=always
+RestartSec=5
+# Stopping the scaler leaves workers as they are (they are their own units).
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

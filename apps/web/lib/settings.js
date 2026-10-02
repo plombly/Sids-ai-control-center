@@ -75,6 +75,8 @@ async function load(section = currentSection) {
     } else if (section === 'ai') {
       const providers = await requestJSON('/api/ai-providers').catch(() => ({}));
       body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
+    } else if (section === 'workers') {
+      body = `<div class="settings-card"><h3>Right now</h3><div data-worker-scale="log"></div></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'access') {
       body = await accessData();
     } else if (section === 'system') {
@@ -84,6 +86,7 @@ async function load(section = currentSection) {
       body = sectionMarkup(settings, section, settings.values, settings.pending) || sectionMarkup(settings, 'general', settings.values, settings.pending);
     }
     container.innerHTML = `<div class="settings-page settings-layout"><div class="page-head"><h2>Settings</h2></div>${navMarkup(settings, section)}<div class="settings-body">${body}</div></div>`;
+    if (section === 'workers') window.dispatchEvent(new CustomEvent('laika:worker-scale-refresh'));
     window.dispatchEvent(new CustomEvent('laika:settings-loaded'));
   } catch (error) {
     container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;

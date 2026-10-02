@@ -2415,3 +2415,41 @@ body.auth-locked .live-status {
 .warn-notice {
   border-color: var(--warn, #e0a030);
 }
+
+/* Worker scaling (lib/worker-scale.js) */
+.worker-scale {
+  margin-bottom: 12px;
+}
+.scale-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.scale-count {
+  font-size: 1.05rem;
+}
+.scale-buttons {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.scale-buttons button {
+  min-width: 40px;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.scale-note {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+}
+.scale-log {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+}
+.scale-log li {
+  padding: 3px 0;
+  border-top: 1px solid var(--line-soft, var(--line));
+}

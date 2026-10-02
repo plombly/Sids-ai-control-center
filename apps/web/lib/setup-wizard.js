@@ -65,7 +65,9 @@ export function stepMarkup(step, data = {}) {
   }
   if (step === 'capacity') {
     const info = data.info || {};
-    return `<h2>How much at once?</h2><p class="subtle">This server has ${esc(info.cpus || '?')} CPUs and ${esc(info.memory_gb || '?')} GB of memory. Each worker runs one job at a time.</p>${field('Workers', 'WORKER_COUNT', values.WORKER_COUNT || info.suggested_workers || 4, ' type="number" min="1" max="32"')}<span class="field-hint">Suggested for this server: ${esc(info.suggested_workers || 4)}.</span>${field('Claude runs at the same time', 'CLAUDE_MAX_CONCURRENT', values.CLAUDE_MAX_CONCURRENT || 2, ' type="number" min="1" max="16"')}<span class="field-hint">Subscriptions have usage limits; fewer parallel Claude runs last longer.</span>`;
+    const suggested = info.suggested_workers || 4;
+    const auto = String(values.AUTOSCALE ?? 'true') !== 'false';
+    return `<h2>How much at once?</h2><p class="subtle">This server has ${esc(info.cpus || '?')} CPUs and ${esc(info.memory_gb || '?')} GB of memory. Each worker runs one job at a time.</p><label class="field">Workers<select name="AUTOSCALE"><option value="true"${auto ? ' selected' : ''}>Automatic (recommended): add workers when jobs could run side by side, remove them when idle</option><option value="false"${auto ? '' : ' selected'}>A fixed number</option></select></label>${field('Most workers (automatic)', 'MAX_WORKERS', Number(values.MAX_WORKERS) || suggested, ' type="number" min="1" max="32"')}<span class="field-hint">Suggested for this server: ${esc(suggested)}. When memory runs low LAIka lets a worker finish its job and stops it.</span>${field('Fixed number of workers', 'WORKER_COUNT', values.WORKER_COUNT || suggested, ' type="number" min="1" max="32"')}${field('Claude runs at the same time', 'CLAUDE_MAX_CONCURRENT', values.CLAUDE_MAX_CONCURRENT || 2, ' type="number" min="1" max="16"')}<span class="field-hint">Subscriptions have usage limits; fewer parallel Claude runs last longer.</span>`;
   }
   if (step === 'notify') {
     return `<h2>Notifications (optional)</h2><p class="subtle">LAIka can tell you when something is ready for approval or needs you.</p>${field('Discord webhook', 'discord_webhook', '', ' type="password" placeholder="https://discord.com/api/webhooks/…" autocomplete="off"')}${field('ntfy topic', 'ntfy_url', '', ' type="password" placeholder="https://ntfy.sh/your-topic" autocomplete="off"')}<button type="button" class="detail-button" data-setup-test-notify>Send a test</button><span class="form-status" id="setup-notify-status" role="status"></span>`;
@@ -94,7 +96,7 @@ export function wizardMarkup(step, data) {
 export function stepChanges(step, values) {
   const pick = keys => Object.fromEntries(keys.filter(key => values[key] !== undefined && values[key] !== '').map(key => [key, values[key]]));
   if (step === 'welcome') return pick(['SERVER_NAME', 'THEME', 'ACCENT']);
-  if (step === 'capacity') return pick(['WORKER_COUNT', 'CLAUDE_MAX_CONCURRENT']);
+  if (step === 'capacity') return pick(['AUTOSCALE', 'MAX_WORKERS', 'WORKER_COUNT', 'CLAUDE_MAX_CONCURRENT']);
   if (step === 'backups') return { ...pick(['BACKUP_TIME', 'BACKUP_KEEP']), BACKUP_REMOTE: values.BACKUP_REMOTE || '' };
   return {};
 }

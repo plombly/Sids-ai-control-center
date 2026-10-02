@@ -279,10 +279,10 @@ def setup_info():
         info = json.loads(redis.get("laika:host-info") or "{}")
     except (TypeError, ValueError):
         info = {}
+    import settings_schema
     cpus = int(info.get("cpus") or 2)
     memory = float(info.get("memory_gb") or 4)
-    # One worker per CPU, and about 1.5 GB of memory each, at least 2.
-    suggested = max(2, min(cpus, int(memory // 1.5), 16))
+    suggested = settings_schema.suggested_workers(cpus, memory)
     return {"cpus": cpus, "memory_gb": memory, "public_addresses": info.get("public") or [],
             "suggested_workers": suggested, "known": bool(info)}
 

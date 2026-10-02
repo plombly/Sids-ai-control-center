@@ -98,11 +98,32 @@ FIELDS = [
        "The quick model behind 'Plan it with me'.", max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
     _f("ASSIST_BUDGET_USD", "ai", "Goal assistant cap per turn ($)", "float", 0.30, min=0.05, max=5),
     # --- workers -------------------------------------------------------------------------
-    _f("WORKER_COUNT", "workers", "Workers", "int", 8,
-       "Jobs that can run at the same time. Each uses CPU and memory while it works.", apply="host", min=1, max=32),
+    # The scaler (services/scaler/laika_scaler.py) reads these every 15 s.
+    _f("AUTOSCALE", "workers", "Automatic scaling", "bool", "true",
+       "Add workers when jobs could run in parallel and are waiting, remove them when idle. "
+       "Off: always run the fixed number below.", apply="live"),
+    _f("WORKER_COUNT", "workers", "Fixed number of workers", "int", 8,
+       "Used when automatic scaling is off. Each worker runs one job at a time.", apply="live", min=1, max=32),
+    _f("MIN_WORKERS", "workers", "Fewest workers", "int", 1, "Automatic scaling never goes below this.",
+       apply="live", min=1, max=32),
+    _f("MAX_WORKERS", "workers", "Most workers", "int", 0,
+       "0 = suggested from this server: 2 per CPU, about 0.9 GB of memory each, at most 16.",
+       apply="live", min=0, max=32),
+    _f("SCALE_UP_WAIT_MINUTES", "workers", "Add a worker after jobs wait (minutes)", "float", 3,
+       "Only jobs that could start right now count: not ones waiting for other jobs or for the same files.",
+       apply="live", min=0.5, max=120),
+    _f("SCALE_DOWN_IDLE_MINUTES", "workers", "Remove a worker after idling (minutes)", "float", 15,
+       apply="live", min=1, max=1440),
+    _f("PRESSURE_MEMORY_PERCENT", "workers", "Drain a worker below free memory (%)", "int", 15,
+       "Works in both modes: the newest worker finishes its job and stops; never mid-job.",
+       apply="live", min=3, max=60),
+    _f("CRITICAL_MEMORY_PERCENT", "workers", "Pause new work below free memory (%)", "int", 7,
+       "No worker starts a new job until memory is back above the drain level.", apply="live", min=1, max=50),
+    _f("PRESSURE_LOAD", "workers", "Drain a worker above load per CPU", "float", 1.5,
+       "The 5-minute load average divided by the CPU count, held for 2 minutes.", apply="live", min=0.5, max=10),
     _f("SUPPORT_WORKERS", "workers", "Support workers", "int", 2,
-       "The last workers prefer medium and low importance work, so smaller projects keep moving.",
-       apply="host", min=0, max=31),
+       "Up to this many of the last running workers (one per four) prefer medium and low importance work, "
+       "so smaller projects keep moving.", apply="restart", min=0, max=31),
     # --- project defaults ----------------------------------------------------------------
     _f("DEFAULT_IMPORTANCE", "projects", "Importance of new projects", "choice", "medium", apply="live",
        choices=["high", "medium", "low"]),
@@ -193,6 +214,17 @@ def values(redis):
     return {field["key"]: current.get(field["key"], field["default"]) for field in FIELDS}
 
 
+def suggested_workers(cpus, memory_gb):
+    """Most workers for a server: agents mostly wait on the AI providers, so
+    2 per CPU; tests and builds need memory, so about 0.9 GB each; 2..16."""
+    try:
+        by_cpu = int(cpus) * 2
+        by_memory = int(float(memory_gb) / 0.9)
+    except (TypeError, ValueError):
+        return 4
+    return max(2, min(by_cpu, by_memory, 16))
+
+
 def validate(changes):
     """(clean changes, errors {key: message}); unknown keys are errors."""
     cleaned, errors = {}, {}
@@ -208,6 +240,10 @@ def validate(changes):
     merged = {**{f["key"]: f["default"] for f in FIELDS}, **cleaned}
     if int(merged["SUPPORT_WORKERS"]) >= int(merged["WORKER_COUNT"]):
         errors.setdefault("SUPPORT_WORKERS", "Support workers must be fewer than workers")
+    if int(merged["MAX_WORKERS"]) and int(merged["MIN_WORKERS"]) > int(merged["MAX_WORKERS"]):
+        errors.setdefault("MIN_WORKERS", "Fewest workers must not be above most workers")
+    if int(merged["CRITICAL_MEMORY_PERCENT"]) >= int(merged["PRESSURE_MEMORY_PERCENT"]):
+        errors.setdefault("CRITICAL_MEMORY_PERCENT", "The pause level must be below the drain level")
     if int(merged["APPS_PORT_MIN"]) > int(merged["APPS_PORT_MAX"]):
         errors.setdefault("APPS_PORT_MAX", "Last app port must not be below the first")
     return cleaned, errors

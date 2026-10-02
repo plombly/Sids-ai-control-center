@@ -429,6 +429,26 @@ accent, density, text size, motion, home sections, clock, refresh;
 cached in localStorage as laika-prefs). Worker class = support for the
 last SUPPORT_WORKERS of WORKER_COUNT.
 
+Variable workers (v1.0, 2026-10-02): services/scaler/laika_scaler.py
+(unit laika-scaler.service) owns the worker units: workers 1..target run
+(laika:scaler:target), the rest are stopped. Never under laika:workers:*
+(that prefix is scanned as worker heartbeats). Target moves by the
+dashboard + / - (POST /api/workers/scale; in automatic mode it pauses
+automatic decisions 10 min, in fixed mode it changes WORKER_COUNT), by
+automatic scaling (AUTOSCALE, MIN_WORKERS, MAX_WORKERS 0 = 2/CPU, 0.9 GB
+each, max 16): up only when ready-queue jobs that could start now (Claude
+jobs counted up to free Claude slots) outnumber idle workers for
+SCALE_UP_WAIT_MINUTES and the server has room; down after
+SCALE_DOWN_IDLE_MINUTES idle; and by pressure in every mode (memory under
+PRESSURE_MEMORY_PERCENT 30 s or load5 over PRESSURE_LOAD x CPUs 2 min:
+drain the newest, one per 2 min, no growth for 10 min after; under
+CRITICAL_MEMORY_PERCENT laika:scaler:hold pauses all claiming). Draining =
+laika:worker-drain:<id>; the worker reports "draining" only between jobs,
+and the unit is stopped only then (never mid-job). State laika:scaler:state,
+decisions laika:scaler:log; watchdog expects the target's worker units.
+Worker units have MemoryHigh=3G/MemoryMax=4G. Support class = last
+min(SUPPORT_WORKERS, running/4) running workers.
+
 Operations (host timers, units in deploy/systemd/):
 - `laika-backup.timer` daily 03:30: scripts/laika-backup.py ->
   /var/backups/laika/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

@@ -24,7 +24,7 @@ class SettingsChange(BaseModel):
 
 
 class SettingsApply(BaseModel):
-    what: Literal["apply", "restart", "workers", "timers"] = "apply"
+    what: Literal["apply", "restart", "timers"] = "apply"
     request_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
 
 

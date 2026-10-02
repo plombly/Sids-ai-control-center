@@ -67,7 +67,7 @@ ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "r
            "project_commit_upload", "restore_project", "project_revert", *SYSTEM_ACTIONS)
 # Project-level actions run scripts/laika-project.py on the host (directories,
 # git clone, deploy keys); they carry project fields instead of a job.
-APPLY_WHAT = ("apply", "restart", "workers", "timers")
+APPLY_WHAT = ("apply", "restart", "timers")
 PROJECT_ACTIONS = ("create_project", "project_retry_clone", "project_push_setup", "delete_project",
                    "project_commit_upload", "restore_project", "project_revert")
 TRASH_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}-\d{8}T\d{6}Z")

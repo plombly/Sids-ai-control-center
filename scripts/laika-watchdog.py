@@ -28,8 +28,21 @@ REPO_ROOT = os.getenv("REPO_ROOT", "/opt/laika")
 EXPECTED_WORKERS = int(os.getenv("WATCHDOG_WORKERS", "6"))
 BACKUP_MAX_AGE_HOURS = float(os.getenv("WATCHDOG_BACKUP_MAX_AGE_HOURS", "36"))
 DISK_MIN_FREE_PERCENT = float(os.getenv("WATCHDOG_DISK_MIN_FREE_PERCENT", "10"))
-UNITS = ["laika-orchestrator", "laika-operator"] + [
-    f"laika-worker@{n:02d}" for n in range(1, EXPECTED_WORKERS + 1)]
+SERVICES = ["laika-orchestrator", "laika-operator", "laika-scaler"]
+UNITS = SERVICES + [f"laika-worker@{n:02d}" for n in range(1, EXPECTED_WORKERS + 1)]
+
+
+def expected_workers(r):
+    """How many workers should run: the scaler's target (it changes them),
+    else WATCHDOG_WORKERS."""
+    try:
+        return max(1, int(r.get("laika:scaler:target")))
+    except (TypeError, ValueError, Exception):
+        return EXPECTED_WORKERS
+
+
+def expected_units(count):
+    return SERVICES + [f"laika-worker@{n:02d}" for n in range(1, count + 1)]
 HEALTH_KEY = "laika:health"
 HEALTH_TTL = 900
 IN_FLIGHT = {"queued", "claimed", "running", "testing", "reviewing", "repairing", "integrating"}
@@ -39,9 +52,10 @@ def check(name, level, detail):
     return {"name": name, "level": level, "detail": detail}
 
 
-def unit_states(runner=subprocess.run):
-    result = runner(["systemctl", "is-active", *UNITS], text=True, capture_output=True)
-    return dict(zip(UNITS, result.stdout.split()))
+def unit_states(runner=subprocess.run, units=None):
+    units = units or UNITS
+    result = runner(["systemctl", "is-active", *units], text=True, capture_output=True)
+    return dict(zip(units, result.stdout.split()))
 
 
 def http_json(url, timeout=5):
@@ -53,22 +67,24 @@ def http_json(url, timeout=5):
         return {"raw": body.strip()}
 
 
-def check_units(states):
-    down = [unit for unit in UNITS if states.get(unit) != "active"]
+def check_units(states, units=None):
+    units = units or UNITS
+    down = [unit for unit in units if states.get(unit) != "active"]
     if not down:
-        return check("units", "ok", f"{len(UNITS)} units active")
+        return check("units", "ok", f"{len(units)} units active")
     return check("units", "fail", "not active: " + ", ".join(f"{u} ({states.get(u, 'unknown')})" for u in down))
 
 
-def check_heartbeats(r):
+def check_heartbeats(r, expected=None):
+    expected = expected or EXPECTED_WORKERS
     workers = list(r.scan_iter("laika:workers:*"))
     missing = []
     if not list(r.scan_iter("laika:orchestrators:*")):
         missing.append("orchestrator")
     if not list(r.scan_iter("laika:operator-service:*")):
         missing.append("operator service")
-    if len(workers) < EXPECTED_WORKERS:
-        missing.append(f"workers {len(workers)}/{EXPECTED_WORKERS}")
+    if len(workers) < expected:
+        missing.append(f"workers {len(workers)}/{expected}")
     if missing:
         return check("heartbeats", "fail", "stale or missing: " + ", ".join(missing))
     busy = sum(1 for key in workers if r.hget(key, "status") == "working")
@@ -229,10 +245,15 @@ def check_pipeline(r):
 def run_checks(r, now=None, runner=subprocess.run, getter=http_json, usage=shutil.disk_usage,
                meminfo_reader=read_meminfo, loadavg=os.getloadavg, cpu_count=os.cpu_count):
     now = time.time() if now is None else now
-    checks = [check_units(unit_states(runner))]
+    try:
+        count = expected_workers(r)
+    except Exception:
+        count = EXPECTED_WORKERS
+    units = expected_units(count)
+    checks = [check_units(unit_states(runner, units), units)]
     try:
         r.ping()
-        checks += [check("redis", "ok", "responding"), check_heartbeats(r), check_backup(r, now), check_restore(r, now),
+        checks += [check("redis", "ok", "responding"), check_heartbeats(r, count), check_backup(r, now), check_restore(r, now),
                    check_pipeline(r)]
     except Exception as exc:
         checks.append(check("redis", "fail", f"unreachable: {exc}"))

@@ -27,7 +27,8 @@ def test_read_change_and_apply(api):
     assert saved.status_code == 200
     body = saved.json()
     assert body["values"]["THEME"] == "light" and body["values"]["WORKER_COUNT"] == "6"
-    assert body["pending"] == ["MAX_REPAIR_ATTEMPTS", "WORKER_COUNT"]
+    # The scaler reads worker settings live: nothing to apply for WORKER_COUNT.
+    assert body["pending"] == ["MAX_REPAIR_ATTEMPTS"]
     applied = client.post("/api/settings/apply", json={"what": "apply", "request_id": "apply-0001"})
     assert applied.status_code == 202
     assert fake.stream[-1][1]["action"] == "apply_settings" and fake.stream[-1][1]["what"] == "apply"

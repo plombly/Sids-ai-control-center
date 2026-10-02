@@ -184,3 +184,13 @@ def test_a_public_address_is_a_warning(wd):
     assert [a["interface"] for a in info["addresses"]] == ["eth0", "eth1"]
     assert wd.check_exposure(info)["level"] == "warn"
     assert wd.check_exposure({"public": []})["level"] == "ok"
+
+
+def test_expected_workers_follow_the_scaler(wd):
+    r = healthy_redis(wd)
+    r.values["laika:scaler:target"] = "3"
+    report = run(wd, r)
+    units = next(c for c in report["checks"] if c["name"] == "units")
+    assert units["level"] == "ok" and units["detail"] == "6 units active"  # 3 services + 3 workers
+    assert next(c for c in report["checks"] if c["name"] == "heartbeats")["level"] == "ok"
+    assert wd.expected_workers(type("R", (), {"get": lambda self, k: None})()) == wd.EXPECTED_WORKERS

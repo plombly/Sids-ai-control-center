@@ -48,7 +48,7 @@ def test_cross_field_rules_and_unknown_keys():
 def test_save_keeps_only_changes_and_reports_what_needs_applying():
     r = MemoryRedis()
     cleaned, _ = schema.validate({"THEME": "light", "MAX_REPAIR_ATTEMPTS": 3, "WORKER_COUNT": 4})
-    assert schema.save(r, cleaned) == ["MAX_REPAIR_ATTEMPTS", "WORKER_COUNT"]
+    assert schema.save(r, cleaned) == ["MAX_REPAIR_ATTEMPTS"]  # worker settings are read live by the scaler
     assert schema.values(r)["THEME"] == "light" and schema.values(r)["CLOCK"] == "24h"
     schema.save(r, {"THEME": "system"})  # back to the default: no longer stored
     assert "THEME" not in json.loads(r.get(schema.KEY))
@@ -77,29 +77,10 @@ def test_support_workers_are_the_last_ones():
     assert worker.worker_class("laika-worker-01", {"WORKER_CLASS": "support"}) == "support"
 
 
-def test_system_apply_starts_and_stops_workers_and_writes_the_backup_schedule(tmp_path, monkeypatch):
+def test_system_apply_writes_the_backup_schedule(tmp_path, monkeypatch):
     module = load_module(ROOT / "scripts/laika-system.py")
-    states = {f"laika-worker@{n:02d}.service": ("active" if n <= 8 else "inactive") for n in range(1, 33)}
-    calls = []
-
-    def run(*argv, check=False):
-        calls.append(argv)
-        import subprocess
-        if argv[1] == "is-active":
-            return subprocess.CompletedProcess(argv, 0, states[argv[2]] + "\n", "")
-        return subprocess.CompletedProcess(argv, 0, "", "")
-
-    monkeypatch.setattr(module, "run", run)
-    monkeypatch.setenv("WORKER_COUNT", "6")
-    r = MemoryRedis()
-    r.records["laika:workers:laika-worker-07"] = {"status": "idle"}
-    module.workers(r, sleep=lambda s: None)
-    stopped = [c[-1] for c in calls if c[1] == "disable" and "--now" in c]
-    assert stopped == ["laika-worker@07.service", "laika-worker@08.service"]
-    monkeypatch.setenv("WORKER_COUNT", "10")
-    calls.clear()
-    module.workers(r, sleep=lambda s: None)
-    assert [c[-1] for c in calls if c[1] == "enable"] == ["laika-worker@09.service", "laika-worker@10.service"]
+    assert not hasattr(module, "workers")  # the scaler owns worker units
+    monkeypatch.setattr(module, "run", lambda *argv, check=False: None)
     monkeypatch.setattr(module, "UNIT_DIR", tmp_path)
     monkeypatch.setenv("BACKUP_TIME", "04:45")
     module.timers()

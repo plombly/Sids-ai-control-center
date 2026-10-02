@@ -3,6 +3,7 @@
 import './appearance.js';
 import './auth.js';
 import './setup-wizard.js';
+import './worker-scale.js';
 import './merge-queue.js';
 import './pipeline-insights.js';
 import './providers.js';

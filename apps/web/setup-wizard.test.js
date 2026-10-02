@@ -10,7 +10,9 @@ test('setup route and every step renders', () => {
     assert.match(html, /id="setup-form"/, id);
     assert.equal(html.includes('data-setup-skip'), id !== 'done', id);
   }
-  assert.match(stepMarkup('capacity', { values: {}, info: { cpus: 8, memory_gb: 16, suggested_workers: 6 } }), /value="6"/);
+  const capacity = stepMarkup('capacity', { values: {}, info: { cpus: 8, memory_gb: 16, suggested_workers: 6 } });
+  assert.match(capacity, /name="MAX_WORKERS" value="6"/);
+  assert.match(capacity, /<option value="true" selected>Automatic/);
 });
 
 test('the safety step warns about public addresses', () => {
@@ -34,7 +36,7 @@ test('provider cards: status, device code, Claude code box, saved key', () => {
 
 test('steps only send their own settings', () => {
   assert.deepEqual(stepChanges('welcome', { SERVER_NAME: 'Home', THEME: 'dark', ACCENT: '#3fcf8e', other: 'x' }), { SERVER_NAME: 'Home', THEME: 'dark', ACCENT: '#3fcf8e' });
-  assert.deepEqual(stepChanges('capacity', { WORKER_COUNT: '4', CLAUDE_MAX_CONCURRENT: '' }), { WORKER_COUNT: '4' });
+  assert.deepEqual(stepChanges('capacity', { AUTOSCALE: 'true', MAX_WORKERS: '7', WORKER_COUNT: '4', CLAUDE_MAX_CONCURRENT: '' }), { AUTOSCALE: 'true', MAX_WORKERS: '7', WORKER_COUNT: '4' });
   assert.deepEqual(stepChanges('backups', { BACKUP_TIME: '02:00', BACKUP_KEEP: '7' }), { BACKUP_TIME: '02:00', BACKUP_KEEP: '7', BACKUP_REMOTE: '' });
   assert.deepEqual(stepChanges('notify', { discord_webhook: 'x' }), {});
 });

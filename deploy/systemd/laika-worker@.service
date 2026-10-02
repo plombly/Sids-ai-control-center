@@ -20,6 +20,12 @@ EnvironmentFile=-/etc/laika/providers/providers.env
 ExecStart=/usr/bin/python3 /opt/laika/services/worker/worker.py
 Restart=always
 RestartSec=3
+# One runaway test cannot take the whole server down: above 3 GB the worker
+# is slowed; at 4 GB the kernel kills its biggest process (normally the
+# test, which then fails; if it is the worker, systemd restarts it and the
+# lost job is retried). The scaler drains workers on memory pressure first.
+MemoryHigh=3G
+MemoryMax=4G
 
 [Install]
 WantedBy=multi-user.target

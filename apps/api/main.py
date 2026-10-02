@@ -1274,6 +1274,7 @@ from device_routes import router as device_router
 from settings_routes import router as settings_router
 from auth import router as auth_router
 from provider_routes import router as provider_router
+from scale_routes import router as scale_router
 from assist_routes import router as assist_router
 
 app.include_router(agent_router)
@@ -1290,4 +1291,5 @@ app.include_router(device_router)
 app.include_router(settings_router)
 app.include_router(auth_router)
 app.include_router(provider_router)
+app.include_router(scale_router)
 app.include_router(assist_router)

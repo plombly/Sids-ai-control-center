@@ -111,9 +111,28 @@ def worker_disabled():
         return False
 
 
+def pause_reason():
+    """Why this worker must not claim a new job now, or None: the operator
+    stopped it ("disabled"), the scaler is removing it ("draining",
+    laika:worker-drain:<id>), or memory is critical ("held",
+    laika:scaler:hold; see services/scaler/laika_scaler.py)."""
+    if worker_disabled():
+        return "disabled"
+    try:
+        if redis.get(f"laika:worker-drain:{WORKER_ID}"):
+            return "draining"
+        if redis.get("laika:scaler:hold"):
+            return "held"
+    except Exception:
+        pass
+    return None
+
+
 def heartbeat(status="idle"):
-    if status == "idle" and worker_disabled():
-        status = "disabled"
+    if status == "idle":
+        # The scaler stops a draining worker once it reports "draining"
+        # with no job: written only here, between jobs, after the check.
+        status = pause_reason() or "idle"
     redis.hset(
         worker_key(),
         mapping={
@@ -1872,18 +1891,29 @@ def process_integrate_job(job, key):
 # prompts take effect immediately; running jobs are never preempted. A job is
 # claimed with LREM (atomic): losing a race just moves on to the next one.
 
-def worker_class(worker_id=None, env=os.environ):
-    """"support" for the last SUPPORT_WORKERS of WORKER_COUNT workers
-    (Settings → Workers), else "general"; WORKER_CLASS forces one."""
+def worker_class(worker_id=None, env=os.environ, running=None):
+    """"support" for the last of the running workers (one in four, at most
+    SUPPORT_WORKERS; Settings → Workers), else "general"; WORKER_CLASS
+    forces one. running: how many workers run now (the scaler's target,
+    laika:scaler:target), else WORKER_COUNT."""
     if env.get("WORKER_CLASS"):
         return env["WORKER_CLASS"]
     try:
         number = int(str(worker_id or WORKER_ID).rsplit("-", 1)[-1])
-        count = int(env.get("WORKER_COUNT", "8"))
-        support = int(env.get("SUPPORT_WORKERS", "2"))
-    except ValueError:
+        count = int(running or env.get("WORKER_COUNT", "8"))
+        support = min(int(env.get("SUPPORT_WORKERS", "2")), count // 4)
+    except (TypeError, ValueError):
         return "general"
-    return "support" if support > 0 and number > count - support else "general"
+    return "support" if support > 0 and count - support < number <= count else "general"
+
+
+def refresh_worker_class():
+    """The number of running workers changes (scaler): re-derive the class."""
+    global WORKER_CLASS
+    try:
+        WORKER_CLASS = worker_class(running=redis.get("laika:scaler:target"))
+    except Exception:
+        pass
 
 
 WORKER_CLASS = worker_class()
@@ -2254,11 +2284,13 @@ def main():
         try:
             heartbeat()
 
-            # An operator stop takes effect between jobs: the current job
-            # always finishes, and no new job is claimed while disabled.
-            if worker_disabled():
+            # An operator stop, a scaler drain or a memory hold takes effect
+            # between jobs: the current job always finishes, and no new job
+            # is claimed while paused.
+            if pause_reason():
                 time.sleep(5)
                 continue
+            refresh_worker_class()
 
             raw_job = pick_job()
 
