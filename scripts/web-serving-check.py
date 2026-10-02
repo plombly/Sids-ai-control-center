@@ -27,7 +27,8 @@ def main():
         web["depends_on"]["api"]["condition"] == "service_healthy",
         "web must wait for a healthy api",
     )
-    require(api["ports"] == ["8000:8000"], "api port must remain unchanged")
+    require(api["ports"] == ["127.0.0.1:8000:8000"],
+            "the api must only listen on 127.0.0.1 (all traffic goes through nginx on 8080)")
     require("healthcheck" in api, "api must have a healthcheck")
     require("ports" not in services["postgres"], "postgres must not be exposed")
     require(
@@ -37,10 +38,8 @@ def main():
 
     dockerfile = (ROOT / "apps/web/Dockerfile").read_text(encoding="utf-8")
     require("FROM nginx:" in dockerfile, "web must use nginx")
-    require(
-        "COPY nginx.conf /etc/nginx/templates/default.conf.template" in dockerfile,
-        "nginx config must be installed as a template (operator token substitution)",
-    )
+    require("COPY nginx.conf /etc/nginx/conf.d/default.conf" in dockerfile,
+            "nginx config must be installed as-is (no credentials substituted into it)")
     require("HEALTHCHECK" in dockerfile, "web container must define a healthcheck")
 
     nginx = (ROOT / "apps/web/nginx.conf").read_text(encoding="utf-8")
@@ -48,18 +47,14 @@ def main():
     require("listen 8080 default_server;" in nginx, "nginx must listen on host port 8080")
     require("proxy_pass http://127.0.0.1:8000;" in nginx, "API traffic must go to the api's host port")
     require("location = /health" in nginx, "nginx must provide a health endpoint")
-    require(
-        "proxy_set_header X-Laika-Token $laika_operator_token;" in nginx
-        and 'default "${LAIKA_OPERATOR_TOKEN}";' in nginx,
-        "API route must inject the operator token from the environment",
-    )
-    require(
-        "include /etc/nginx/laika-local-addrs.conf;" in nginx and "127.0.0.0/8    1;" in nginx,
-        "requests from this server itself must not get the operator token",
-    )
-    require("docker-entrypoint.d/15-laika-local-addrs.sh" in dockerfile,
-            "the web image must list this server's addresses at start")
-
+    # Sign-in replaced the old LAN token injection: nginx adds no credentials,
+    # strips any operator token a browser sends, and passes the real client
+    # address (the API trusts it because only nginx can reach port 8000).
+    require('proxy_set_header X-Laika-Token "";' in nginx, "nginx must strip any operator token from browsers")
+    require("LAIKA_OPERATOR_TOKEN" not in nginx and "LAIKA_OPERATOR_TOKEN" not in dockerfile,
+            "the web container must never hold the operator token")
+    require("proxy_set_header X-Real-IP $remote_addr;" in nginx, "nginx must pass the real client address")
+    require("env_file" not in web, "the web container needs no secrets")
 
 if __name__ == "__main__":
     main()
