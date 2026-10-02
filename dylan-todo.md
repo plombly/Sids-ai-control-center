@@ -1,5 +1,14 @@
 # Dylan's to-do: hands-on testing
 
+## MAJOR (later): building and shipping the apps
+Decided 2026-10-01 to handle as its own checkpoint later. Covers: building
+the iOS app on the Mac, the paid Apple developer account and the VPN network
+extension, a real Android release signing key (today's APK is debug-signed),
+TestFlight / App Store / Play Store / F-Droid releases, pinning the app's
+Flutter version, a test Android build before app changes are approved, and
+real push notifications (APNs / Firebase). The checks under "SID App" below
+can wait until then.
+
 Things only you can check: on your own devices, with real projects, or by
 waiting for a scheduled event. Tick them off as you go and note anything
 that felt wrong; we'll go through the notes together.
