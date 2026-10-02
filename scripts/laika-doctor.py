@@ -168,8 +168,10 @@ def check_tools(versions_file=ROOT / "deploy/versions.env", runner=run):
             continue
         have = version_tuple(found.stdout)
         results.append(f"{command} {'.'.join(map(str, have))}")
-        if wanted.get(key) and have != version_tuple(wanted[key]):
-            problems.append(f"{command} {'.'.join(map(str, have))} (tested: {wanted[key]})")
+        if wanted.get(key) and have < version_tuple(wanted[key]):
+            problems.append(f"{command} {'.'.join(map(str, have))} is older than the tested {wanted[key]}")
+        elif wanted.get(key) and have > version_tuple(wanted[key]):
+            results[-1] += " (newer than tested, updates itself)"
     node = runner(["node", "--version"])
     if node.returncode or version_tuple(node.stdout) < (20, 0, 0):
         problems.append("node 20 or newer missing")

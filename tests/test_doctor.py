@@ -59,7 +59,11 @@ def test_tools_compare_with_the_tested_versions(doc, tmp_path, monkeypatch):
     runner = lambda argv, **k: subprocess.CompletedProcess(argv, 0, answers[argv[0]], "")
     assert doc.check_tools(versions, runner)["level"] == "ok"
     answers["claude"] = "2.1.300 (Claude Code)"
+    newer = doc.check_tools(versions, runner)
+    assert newer["level"] == "ok" and "newer than tested" in newer["detail"]
+    answers["claude"] = "2.1.200 (Claude Code)"
     assert doc.check_tools(versions, runner)["level"] == "warn"
+    answers["claude"] = "2.1.287 (Claude Code)"
     answers["node"] = "v18.0.0"
     assert doc.check_tools(versions, runner)["level"] == "fail"
 
