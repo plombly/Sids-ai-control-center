@@ -86,3 +86,16 @@ that felt wrong; we'll go through the notes together.
       on their ports (8100-8199).
 - [ ] The first monthly restore check runs **2026-11-01 04:30**. Its result shows
       under system health, and a failure pings you.
+
+## Sign-in and first-run setup (CP4/CP5, 2026-10-01)
+
+- [ ] Create the administrator account with the setup code (desktop), then
+      sign in from a phone and a tablet; sign out; wrong password is refused.
+- [ ] Settings → Access: change the password (other browsers get signed out),
+      end a session from another device, read the audit log.
+- [ ] The LAIka app connects on port **8080** now (the API's port 8000 only
+      listens on the server itself). Re-point any saved server address.
+- [ ] Run the setup guide (#/setup): every step on a phone, Skip and Back work.
+- [ ] Settings → AI: "Sign in with your ChatGPT account" shows a link and code;
+      "Sign in with your Claude account" shows a link and takes the pasted code.
+      (Only try this when you are willing to re-sign-in the server's CLIs.)
