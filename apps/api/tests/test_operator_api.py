@@ -86,7 +86,7 @@ def fake(monkeypatch):
     return fake
 
 
-TOKEN = "operator-test-token"
+TOKEN = "operator-test-token"  # release-scan: allow (test value)
 AUTH = {"X-Laika-Token": TOKEN}
 
 

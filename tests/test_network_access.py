@@ -33,7 +33,7 @@ def test_ordinary_failures_and_decided_jobs_make_no_request():
 
 
 def test_requests_carry_evidence_or_the_builders_reason_without_credentials():
-    fields = network_access.request({}, "fatal: unable to access 'https://bob:hunter2@github.com/x.git/'", "tests")
+    fields = network_access.request({}, "fatal: unable to access 'https://bob:hunter2@github.com/x.git/'", "tests")  # release-scan: allow (masking test)
     assert fields["network_request"] == "pending" and "hunter2" not in fields["network_request_reason"]
     assert "//***@github.com" in fields["network_request_reason"]
     fields = network_access.request({}, "1 failed", "tests", agent_text="Done.\nNEEDS_NETWORK: tests call the Stripe sandbox")
