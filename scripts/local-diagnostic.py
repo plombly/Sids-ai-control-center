@@ -20,14 +20,20 @@ REDIS_HOST = "127.0.0.1"
 REDIS_PORT = "6379"
 API_HEALTH_URL = os.getenv("LAIKA_API_HEALTH_URL", "http://127.0.0.1:8000/health")
 ORCHESTRATOR_SERVICE = os.getenv("LAIKA_ORCHESTRATOR_SERVICE", "laika-orchestrator.service")
-WORKER_SERVICES = tuple(
-    value.strip()
-    for value in os.getenv(
-        "LAIKA_WORKER_SERVICES",
-        "laika-worker@01.service,laika-worker@02.service,laika-worker@03.service,laika-worker@04.service",
-    ).split(",")
-    if value.strip()
-)
+def worker_services():
+    """The worker units that should be running: LAIKA_WORKER_SERVICES, else
+    workers 1..the scaler's target (laika:scaler:target; the scaler stops
+    idle workers on purpose), else worker 01."""
+    configured = [v.strip() for v in os.getenv("LAIKA_WORKER_SERVICES", "").split(",") if v.strip()]
+    if configured:
+        return tuple(configured)
+    try:
+        client = redis.Redis(host=REDIS_HOST, port=int(REDIS_PORT), password=laika_redis.password(),
+                             socket_connect_timeout=5, socket_timeout=5)
+        target = int(client.get("laika:scaler:target") or 1)
+    except Exception:
+        target = 1
+    return tuple(f"laika-worker@{n:02d}.service" for n in range(1, max(1, target) + 1))
 
 
 def command_check(label, command, expected_output=None):
@@ -103,7 +109,7 @@ def main():
         ("orchestrator", lambda: check_service("orchestrator", ORCHESTRATOR_SERVICE)),
         *(
             (service, lambda service=service: check_service("worker", service))
-            for service in WORKER_SERVICES
+            for service in worker_services()
         ),
         ("repository", check_repository),
         ("api", check_api),

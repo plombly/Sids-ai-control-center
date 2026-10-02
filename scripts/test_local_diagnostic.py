@@ -9,8 +9,12 @@ diagnostic = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(diagnostic)
 
 
+WORKERS = ("laika-worker@01.service", "laika-worker@02.service")
+
+
 def test_main_passes_when_all_checks_pass(monkeypatch, capsys):
-    checks = ["redis", "orchestrator", *diagnostic.WORKER_SERVICES, "repository", "api"]
+    monkeypatch.setattr(diagnostic, "worker_services", lambda: WORKERS)
+    checks = ["redis", "orchestrator", *WORKERS, "repository", "api"]
     monkeypatch.setattr(
         diagnostic,
         "check_redis",
@@ -38,6 +42,7 @@ def test_main_passes_when_all_checks_pass(monkeypatch, capsys):
 
 
 def test_main_fails_and_reports_failed_check(monkeypatch, capsys):
+    monkeypatch.setattr(diagnostic, "worker_services", lambda: WORKERS)
     monkeypatch.setattr(
         diagnostic,
         "check_redis",
@@ -50,7 +55,7 @@ def test_main_fails_and_reports_failed_check(monkeypatch, capsys):
     assert diagnostic.main() == 1
     output = capsys.readouterr().out
     assert "[FAIL] Redis: connection refused" in output
-    assert output.count("[PASS]") == len(diagnostic.WORKER_SERVICES) + 3
+    assert output.count("[PASS]") == len(WORKERS) + 3
 
 
 def test_redis_check_uses_fixed_local_endpoint(monkeypatch):
@@ -83,3 +88,17 @@ def test_service_check_reports_systemd_state(monkeypatch):
     assert passed is False
     assert "inactive" in detail
     assert calls == [["systemctl", "is-active", "laika-worker.service"]]
+
+
+def test_worker_services_follow_the_scaler(monkeypatch):
+    class FakeRedis:
+        def __init__(self, **kwargs):
+            pass
+
+        def get(self, key):
+            return "3" if key == "laika:scaler:target" else None
+    monkeypatch.delenv("LAIKA_WORKER_SERVICES", raising=False)
+    monkeypatch.setattr(diagnostic.redis, "Redis", FakeRedis)
+    assert diagnostic.worker_services() == ("laika-worker@01.service", "laika-worker@02.service", "laika-worker@03.service")
+    monkeypatch.setenv("LAIKA_WORKER_SERVICES", "a.service, b.service")
+    assert diagnostic.worker_services() == ("a.service", "b.service")
