@@ -50,7 +50,7 @@ docker build -q -t "$TAG" "$WORK" >>"$LOG" 2>&1 || { bad "base image"; exit 1; }
 step "start a fresh machine"
 docker rm -f -v "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" --hostname laika-test --privileged --cgroupns=private \
-  --tmpfs /run --tmpfs /run/lock -v /var/lib/docker --memory=4g --cpus=2 "$TAG" >>"$LOG" 2>&1 \
+  --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /var/lib/containerd --memory=4g --cpus=2 "$TAG" >>"$LOG" 2>&1 \
   || { bad "container start"; exit 1; }
 for _ in $(seq 1 30); do
   state=$(out_box "systemctl is-system-running" || true)
@@ -62,7 +62,7 @@ pass "systemd is up ($state)"
 step "copy LAIka ($REF) into the machine"
 git -C "$REPO" archive --format=tar --prefix=laika-src/ "$REF" > "$WORK/src.tar"
 docker cp "$WORK/src.tar" "$NAME:/root/src.tar" >>"$LOG" 2>&1
-in_box "tar -xf /root/src.tar -C /root && git config --global user.email t@t && git config --global user.name t" \
+in_box "tar -xf /root/src.tar -C /root" \
   || true
 
 step "install"

@@ -429,6 +429,29 @@ accent, density, text size, motion, home sections, clock, refresh;
 cached in localStorage as laika-prefs). Worker class = support for the
 last SUPPORT_WORKERS of WORKER_COUNT.
 
+Install and the laika user (v1.0, CP6): install.sh (curl | sudo bash, or
+--source DIR|URL; --repair) installs Docker, the venv (deploy/
+requirements.lock), Node + codex/claude (deploy/versions.env), the
+`laika` user, folders, secrets (created once: /etc/laika/{redis,operator,
+compose,laika}.env; /opt/laika/.env -> compose.env; compose data in
+LAIKA_DB_DIR=/var/lib/laika/db), containers, units, and prints a setup
+code. Production laika.env: LAIKA_BUILTIN_PROJECT=0. Runtime split
+(services/laika_user.py): workers, orchestrator, app/preview units, app
+setup, goal assistant and provider sign-ins run as `laika` (HOME
+/var/lib/laika/home, agent logins there, DISABLE_AUTOUPDATER=1); operator,
+apps, scaler, backup, watchdog, prune, notify, digest stay root. Shared
+data via the laika group: setgid 2770 folders, UMask=0007 everywhere
+(backups 0077), repos core.sharedRepository=group, safe.directory=* in
+/etc/laika/gitconfig (GIT_CONFIG_GLOBAL). Secrets reach laika units as
+EnvironmentFile (files root 600); sandboxes --unsetenv LAIka secrets and
+(outside agents) provider keys. All units run /var/lib/laika/venv python.
+`laika doctor` (read-only checks + fixes), `laika repair`, `laika
+uninstall [--purge]` (refuses on a dev repo with worktrees).
+tests/install/clean-install.sh IMAGE runs the whole thing in a privileged
+systemd container. scripts/laika-migrate-user.sh moves a root-run install
+(this server: --keep-builtin) onto the user; Claude must then be signed
+in again for laika (Settings -> AI); Codex's login is moved.
+
 Variable workers (v1.0, 2026-10-02): services/scaler/laika_scaler.py
 (unit laika-scaler.service) owns the worker units: workers 1..target run
 (laika:scaler:target), the rest are stopped. Never under laika:workers:*
