@@ -525,3 +525,15 @@ def test_integration_gate_failure_names_the_failing_check(orch):
     orch.retry_failed_builds()
     prompt = job(orch, "b1")["prompt"]
     assert "[ FAIL ] web-tests" in prompt and "AssertionError: expected 10" in prompt
+
+
+def test_next_repair_learns_why_the_last_one_was_discarded(orch, tmp_path):
+    log = tmp_path / "r1-tests.log"
+    log.write_text("FAILED test/settings_screen_test.dart: expected 'SID Home'\n")
+    put(orch, "r1", role="repair", status="test_failed", test_log=str(log))
+    put(orch, "b1", role="builder", last_repair_job_id="r1")
+    note = orch.previous_repair_note(job(orch, "b1"))
+    assert "previous repair attempt was discarded" in note and "expected 'SID Home'" in note
+    job(orch, "r1")["status"] = "repair_complete"
+    assert orch.previous_repair_note(job(orch, "b1")) == ""
+    assert orch.previous_repair_note({"id": "b2"}) == ""

@@ -783,6 +783,7 @@ def queue_repairs():
             r.hset(key, "last_repair_job_id", existing)
             r.hdel(key, "repair_job_id")
             builder.pop("repair_job_id", None)
+            builder["last_repair_job_id"] = existing
 
         review_job_id = builder.get("review_job_id")
         if not review_job_id:
@@ -796,6 +797,7 @@ def queue_repairs():
         findings = review_findings(review)
         repair_job_id = uuid.uuid4().hex[:8]
         next_attempt = attempts + 1
+        previous = previous_repair_note(builder)
 
         # Atomic reservation prevents the orchestrator loop from
         # dispatching the same repair twice.
@@ -817,7 +819,7 @@ Reviewer findings:
 
 Repair attempt:
 {next_attempt} of {repair_limit}
-
+{previous}
 Work ONLY on the concrete reviewer findings necessary to satisfy the original
 task. Preserve correct existing work. Do not broaden the scope, redesign
 unrelated code, merge branches, or commit changes yourself.
@@ -1105,6 +1107,23 @@ def test_output_excerpt(output, limit=3000):
         if not skipping:
             kept.append(line)
     return "\n".join(kept)[-limit:]
+
+
+def previous_repair_note(builder):
+    """Why the last repair of this builder was thrown away, if its own tests
+    failed: without this the next repair repeats the same mistake (found when
+    two repairs in a row broke existing tests while adding new ones)."""
+    last_id = builder.get("last_repair_job_id") or ""
+    if not last_id:
+        return ""
+    last = r.hgetall(f"sid:jobs:{last_id}") or {}
+    if last.get("status") not in ("test_failed", "failed"):
+        return ""
+    return (
+        "\nThe previous repair attempt was discarded (the candidate is unchanged) because of this "
+        "failure. Do not repeat it; keep every existing test passing:\n"
+        + failure_reason(last)[:3500] + "\n"
+    )
 
 
 def failure_reason(job):
