@@ -49,6 +49,9 @@ class OperatorFakeRedis:
     def hgetall(self, key):
         return dict(self.hashes.get(key, {}))
 
+    def hget(self, key, field):
+        return self.hashes.get(key, {}).get(field)
+
     def hsetnx(self, key, field, value):
         record = self.hashes.setdefault(key, {})
         if field in record:
@@ -75,7 +78,7 @@ def heartbeat(allowed="approve,queue_approve,dequeue_approve,reject,extend,reint
 def fake(monkeypatch):
     fake = OperatorFakeRedis({
         "sid:operator-service:sid-operator-01": heartbeat(),
-        JOB_KEY: {"id": "b1", "status": "awaiting_review",
+        JOB_KEY: {"id": "b1", "status": "awaiting_review", "project_id": "shop",
                   "integrated_candidate_commit": CANDIDATE},
     })
     monkeypatch.setattr(main, "redis", fake)
@@ -260,7 +263,7 @@ def test_writes_need_the_operator_token(client, fake):
 
 
 @pytest.mark.parametrize("method,path,payload", [
-    ("post", "/api/goals", {"goal": "x"}),
+    ("post", "/api/projects/shop/goals", {"goal": "x"}),
     ("post", "/api/workers/w1/stop", None),
     ("delete", "/api/workers/w1", None),
     ("post", "/projects", {"name": "p"}),

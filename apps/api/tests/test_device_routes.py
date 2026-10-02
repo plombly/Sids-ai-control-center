@@ -41,7 +41,7 @@ class DeviceRedis(FakeRedis):
 @pytest.fixture
 def api(monkeypatch):
     fake = DeviceRedis({"sid:projects:shop": {"id": "shop", "name": "Shop", "status": "active"},
-                        "sid:jobs:j1": {"id": "j1", "status": "needs_human", "needs_human_kind": "network"},
+                        "sid:jobs:j1": {"id": "j1", "status": "needs_human", "needs_human_kind": "network", "project_id": "shop"},
                         "sid:operator-service:op": {"id": "op", "allowed_actions": "approve,reject,network_once"}},
                        members=["shop"])
     fake.strings["sid:system-info"] = json.dumps({"head": "abcdef1234567890"})

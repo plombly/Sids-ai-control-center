@@ -45,6 +45,12 @@ async def require_operator_token(request: Request, call_next):
     request.state.device = None
     if request.headers.get("authorization"):
         request.state.device = device_routes.device_for(request)
+    # LAIka itself and its app are built from the host, never from inside.
+    import managed
+    if request.method not in _READ_METHODS:
+        reason = managed.refused(redis, request.method, request.url.path)
+        if reason:
+            return JSONResponse(status_code=403, content={"detail": reason})
     if request.method not in _READ_METHODS and not _token_ok(request):
         device = request.state.device
         if device is not None:

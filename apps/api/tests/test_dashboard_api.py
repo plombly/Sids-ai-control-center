@@ -292,19 +292,34 @@ class WritableFakeRedis(FakeRedis):
         return len(self.queues[key])
 
 
+def with_shop(fake):
+    """A registered project: the built-in one takes no goals from the API."""
+    fake.hashes["sid:projects:shop"] = {"id": "shop", "name": "Shop", "status": "active"}
+    fake.sets.setdefault("sid:projects", set()).add("shop")
+    return fake
+
+
+def test_the_built_in_project_takes_no_goals(client, monkeypatch):
+    monkeypatch.setattr(main, "redis", WritableFakeRedis())
+    for path in ("/api/goals", "/api/goals/submit", "/api/goals/submit-atomic"):
+        response = client.post(path, json={"goal": "change LAIka itself"})
+        assert response.status_code == 403 and "view-only" in response.json()["detail"]
+
+
 def test_goal_duplicate_guard_distinguishes_atomic_mode(client, monkeypatch):
     fake = WritableFakeRedis({
         "sid:goals:existing": {
             "id": "existing",
             "goal": "same work",
             "status": "queued",
+            "project_id": "shop",
             "atomic": "false",
         }
     })
-    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
-        "/api/goals",
+        "/api/projects/shop/goals",
         json={"goal": "same work", "atomic": True},
     )
 
@@ -318,10 +333,10 @@ def test_goal_duplicate_guard_distinguishes_atomic_mode(client, monkeypatch):
 def test_failed_queue_releases_request_id_reservation(client, monkeypatch):
     fake = WritableFakeRedis()
     fake.fail_rpush = True
-    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
-        "/api/goals",
+        "/api/projects/shop/goals",
         json={
             "goal": "retryable work",
             "atomic": True,
@@ -339,16 +354,18 @@ def test_request_id_duplicate_rejects_atomic_mode_mismatch(client, monkeypatch):
             "id": "existing",
             "goal": "original work",
             "status": "queued",
+            "project_id": "shop",
             "atomic": "false",
         }
     })
     fake.values["sid:goal-requests:same-request"] = "existing"
-    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
-        "/api/goals/submit-atomic",
+        "/api/projects/shop/goals",
         json={
             "goal": "original work",
+            "atomic": True,
             "request_id": "same-request",
         },
     )
@@ -362,14 +379,15 @@ def test_request_id_duplicate_returns_persisted_atomic_mode(client, monkeypatch)
             "id": "existing",
             "goal": "original work",
             "status": "queued",
+            "project_id": "shop",
             "atomic": "true",
         }
     })
     fake.values["sid:goal-requests:same-request"] = "existing"
-    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "redis", with_shop(fake))
 
     response = client.post(
-        "/api/goals",
+        "/api/projects/shop/goals",
         json={
             "goal": "original work",
             "atomic": True,

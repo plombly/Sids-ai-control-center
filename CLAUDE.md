@@ -402,6 +402,18 @@ SID app groundwork (2026-10-01; SID's decisions in memory "sid-app"):
   --no-pub". Setup re-runs when dependency manifests change
   (setup_fingerprint), not only when its command changes.
 
+Product boundaries (v1.0, 2026-10-01; memory "v1-product-decisions"):
+the built-in project ("sid") and any project with registry field
+view_only="1" (the app, sid-app) are built from the host by the system
+builder (Claude: scripts/submit-goal.py, job-review.py), never from inside:
+apps/api/managed.py refuses every API write that targets them (goals,
+assistant, settings, files, builds, env, undo, delete, job actions,
+previews, legacy /api/goals), for the dashboard and phones alike; their
+pages are view-only (overview/activity/builds/history, notice, no
+controls) and the home page never offers their approvals or stuck jobs.
+SID_BUILTIN_PROJECT=0 (production) removes the built-in project from the
+API entirely.
+
 Operations (host timers, units in deploy/systemd/):
 - `sid-ai-backup.timer` daily 03:30: scripts/backup-sid.py ->
   /var/backups/sid-ai/snapshots/<UTC stamp>/ (repo bundle, Redis RDB, pg

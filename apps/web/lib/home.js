@@ -48,9 +48,15 @@ export function statusMarkup({ health, workers = [], jobs = [], projects = [] })
 
 // --- needs you ---------------------------------------------------------------------------
 
-export function needsYou({ approvals = [], jobs = [], dismissed = new Set() }) {
-  const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass');
-  const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id));
+// Projects the LAIka builder manages (LAIka itself, its app): nothing to
+// approve or answer for them here.
+export const viewOnlyIds = (projects = []) => new Set(['sid', ...projects.filter(project => project.view_only).map(project => project.id)]);
+const workable = (projects = []) => projects.filter(project => !project.view_only && project.id !== 'sid');
+
+export function needsYou({ approvals = [], jobs = [], dismissed = new Set(), viewOnly = new Set(['sid']) }) {
+  const mine = job => !viewOnly.has(job.project_id || 'sid');
+  const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass' && mine(job));
+  const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id) && mine(job));
   return { ready, stuck };
 }
 
@@ -130,9 +136,10 @@ export function recentMarkup(goals = [], names = {}, now = Date.now() / 1000) {
 // --- new work ----------------------------------------------------------------------------
 
 export function projectSelectMarkup(projects = [], chosen = '') {
-  const options = (projects.length ? projects : [{ id: 'sid', name: 'SID AI Command Center' }])
-    .map(project => `<option value="${escValue(project.id)}"${project.id === chosen ? ' selected' : ''}>${esc(project.name || project.id)}</option>`)
-    .join('');
+  const choices = workable(projects);
+  const options = choices.length
+    ? choices.map(project => `<option value="${escValue(project.id)}"${project.id === chosen ? ' selected' : ''}>${esc(project.name || project.id)}</option>`).join('')
+    : '<option value="" disabled selected>Create a project first</option>';
   return `<label class="composer-project">Project <select id="home-goal-project">${options}</select></label>`;
 }
 
@@ -164,7 +171,7 @@ function draw(state) {
   if (typeof document === 'undefined' || !document.getElementById('home')) return;
   const get = key => (Array.isArray(state?.[key]?.data) ? state[key].data : []);
   const names = Object.fromEntries(projects.map(project => [project.id, project.id === 'sid' ? 'SID' : project.name || project.id]));
-  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set() });
+  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set(), viewOnly: viewOnlyIds(projects) });
   const count = items.ready.length + items.stuck.length;
   paint('home-status', statusMarkup({ health, workers: get('workers'), jobs: get('jobs'), projects }));
   paint('home-needs-count', count ? String(count) : '');
@@ -185,12 +192,13 @@ async function refreshSide() {
   } catch {}
   // Only the project options change; whatever is typed in the box stays.
   const select = document.getElementById('home-goal-project');
-  const ids = projects.map(project => project.id).join(',');
-  if (select && projects.length && select.dataset.ids !== ids) {
+  const ids = workable(projects).map(project => project.id).join(',');
+  if (select && select.dataset.ids !== ids) {
     const chosen = select.value;
-    select.innerHTML = projects.map(project => `<option value="${escValue(project.id)}">${esc(project.name || project.id)}</option>`).join('');
+    // projectSelectMarkup's <option>s, without its <label>/<select> wrapper.
+    select.innerHTML = projectSelectMarkup(projects).replace(/^.*?<select[^>]*>|<\/select>.*$/g, '');
     select.dataset.ids = ids;
-    if (chosen && projects.some(project => project.id === chosen)) select.value = chosen;
+    if (chosen && workable(projects).some(project => project.id === chosen)) select.value = chosen;
   }
   draw(lastState);
 }

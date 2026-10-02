@@ -101,7 +101,7 @@ export function kindRequest(values) {
 
 const BUILD_STATES = { queued: 'Waiting to start', running: 'Building…', succeeded: 'Ready', failed: 'Failed' };
 
-export function buildsMarkup(id, data, now = Date.now() / 1000) {
+export function buildsMarkup(id, data, now = Date.now() / 1000, viewOnly = false) {
   const recipe = data?.recipe || {};
   const builds = Array.isArray(data?.builds) ? data.builds : [];
   const pending = data?.requested || builds.some(build => /^(queued|running)$/.test(build.status));
@@ -110,7 +110,7 @@ export function buildsMarkup(id, data, now = Date.now() / 1000) {
     : `<p class="subtle">${esc(recipe.label || 'Build')}${recipe.command ? `: <code>${esc(recipe.command)}</code>` : ''}${recipe.image ? ` in <code>${esc(recipe.image)}</code>` : ''}</p>${
         recipe.needs ? `<p class="subtle">Needs ${esc(recipe.needs)}.</p>` : ''
       }${recipe.note ? `<p class="subtle">${esc(recipe.note)}</p>` : ''}`;
-  const button = recipe.unsupported
+  const button = recipe.unsupported || viewOnly
     ? ''
     : `<button type="button" class="primary" data-build-start="${esc(id)}"${pending ? ' disabled' : ''}>${pending ? 'Building…' : 'Build now'}</button>`;
   const rows = builds

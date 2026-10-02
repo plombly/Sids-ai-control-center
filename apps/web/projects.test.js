@@ -149,7 +149,9 @@ test('SID: labelled as this system, no GitHub push form, shows its host setup', 
   assert.match(page, /git@github.com:me\/sid.git/);
   assert.match(page, /main @ abc1234/);
   assert.match(page, /&lt;b&gt;/);
-  assert.match(page, /data-assist-start/);
+  // View only: no goal box, no importance control, read-only notice.
+  assert.doesNotMatch(page, /data-assist-start|id="project-importance"/);
+  assert.match(page, /View only\./);
   assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }, 'settings'), /project-push-form/);
   assert.match(systemInfoMarkup(null), /not reported yet/);
 });
@@ -196,4 +198,15 @@ test('activity timeline: icons by kind, job details, times', () => {
   assert.match(html, /10 min ago/);
   assert.match(activityMarkup([]), /Nothing has happened/);
   assert.match(projectDetailMarkup({ id: 'shop', status: 'active' }, 'activity'), /href="#\/projects\/shop\/activity" class="active"/);
+});
+
+test('builder-managed projects (the app) are view-only too', () => {
+  const app = { id: 'app', name: 'App', status: 'active', view_only: true, goals: [], jobs: [] };
+  const page = projectDetailMarkup(app, 'overview');
+  assert.match(page, /View only\./);
+  assert.doesNotMatch(page, /data-assist-start|id="project-importance"|data-build-start|data-group-new-child/);
+  assert.match(page, /href="#\/projects\/app\/builds"/);
+  assert.doesNotMatch(page, /\/app\/settings"|\/app\/files"/);
+  assert.doesNotMatch(projectDetailMarkup({ ...app, builds: { recipe: { label: 'APK' }, builds: [] } }, 'builds'), /data-build-start/);
+  assert.match(projectDetailMarkup({ id: 'shop', status: 'active', goals: [], jobs: [] }, 'overview'), /data-assist-start/);
 });

@@ -89,7 +89,7 @@ def test_detail_submission_and_patch(client):
     assert fake.hashes[f"sid:goals:{goal_id}"]["project_id"] == "alpha"
     assert json.loads(fake.queues[-1][1])["project_id"] == "alpha"
     assert test_client.patch("/api/projects/alpha", json={"importance": "low"}).json()["importance"] == "low"
-    assert test_client.patch("/api/projects/sid", json={"importance": "high"}).status_code == 200
+    assert test_client.patch("/api/projects/sid", json={"importance": "high"}).status_code == 403  # view-only
 
 
 def test_project_validation_and_protected_fields(client):
@@ -198,7 +198,8 @@ def test_same_prompt_in_two_projects_is_two_goals(client):
     test_client, fake = client
     fake.hashes["sid:projects:other"] = {"id": "other", "name": "O", "status": "active", "importance": "low"}
     fake.members.add("other")
-    first = test_client.post("/api/projects/sid/goals", json={"goal": "add a readme"}).json()
+    fake.hashes["sid:projects:alpha"]["status"] = "active"
+    first = test_client.post("/api/projects/alpha/goals", json={"goal": "add a readme"}).json()
     second = test_client.post("/api/projects/other/goals", json={"goal": "add a readme"}).json()
     assert first["id"] != second["id"] and not second.get("duplicate")
     again = test_client.post("/api/projects/other/goals", json={"goal": "add a readme"}).json()
@@ -230,9 +231,9 @@ def test_patch_build_and_run_settings(client):
     assert test_client.patch("/api/projects/alpha", json={}).status_code == 422
     fake.hashes["sid:projects:old"]["run_port"] = "8106"
     assert test_client.patch("/api/projects/alpha", json={"run_port": 8106}).status_code == 409
-    # SID's own commands are never editable from the web.
-    test_client.patch("/api/projects/sid", json={"gate_command": "true", "importance": "high"})
-    assert "gate_command" not in fake.hashes["sid:projects:sid"]
+    # The built-in project is never editable from the web.
+    assert test_client.patch("/api/projects/sid", json={"gate_command": "true"}).status_code == 403
+    assert "sid:projects:sid" not in fake.hashes
 
 
 def test_app_status_and_restart(client):
@@ -241,7 +242,7 @@ def test_app_status_and_restart(client):
     assert test_client.get("/api/projects/alpha").json()["app"]["state"] == "running"
     assert test_client.post("/api/projects/alpha/app/restart").status_code == 202
     assert "restart_at" in fake.hashes["sid:projects:alpha"]
-    assert test_client.post("/api/projects/sid/app/restart").status_code == 404
+    assert test_client.post("/api/projects/sid/app/restart").status_code == 403
 
 
 def test_sid_project_shows_its_system_info_and_real_gate(client):
@@ -345,9 +346,8 @@ def test_build_fields_are_validated(builds):
         assert client.patch("/api/projects/game", json=body).status_code == 422, body
     ok = client.patch("/api/projects/game", json={"build_image": "node:22", "build_command": "npm run dist", "build_output": "out"})
     assert ok.status_code == 200 and ok.json()["build_image"] == "node:22"
-    # SID itself only takes descriptive fields.
-    client.patch("/api/projects/sid", json={"build_command": "rm -rf /", "type": "api_service"})
-    assert "build_command" not in fake.hashes["sid:projects:sid"] and fake.hashes["sid:projects:sid"]["type"] == "api_service"
+    # The built-in project takes nothing from the web.
+    assert client.patch("/api/projects/sid", json={"build_command": "rm -rf /"}).status_code == 403
 
 
 def test_build_request_list_download_and_log(builds):
@@ -389,8 +389,7 @@ def test_internet_access_settings(builds):
     changed = client.patch("/api/projects/game", json={"gate_network": "always", "build_network": "none"}).json()
     assert (changed["gate_network"], changed["build_network"]) == ("always", "none")
     assert client.patch("/api/projects/game", json={"gate_network": "sometimes"}).status_code == 422
-    client.patch("/api/projects/sid", json={"gate_network": "always"})
-    assert "gate_network" not in fake.hashes["sid:projects:sid"]
+    assert client.patch("/api/projects/sid", json={"gate_network": "always"}).status_code == 403
 
 
 class GroupRedis(BuildRedis):
@@ -438,7 +437,7 @@ def test_attach_inherit_and_detach(groups):
 
 
 @pytest.mark.parametrize("child,parent,status", [
-    ("app", "sid", 200), ("sid", "app", 409), ("app", "app", 409), ("app", "nope", 409), ("app", "Bad!", 422), ("nope", "shop", 404),
+    ("app", "sid", 200), ("sid", "app", 403), ("app", "app", 409), ("app", "nope", 409), ("app", "Bad!", 422), ("nope", "shop", 404),
 ])
 def test_attach_rules(groups, child, parent, status):
     client, _ = groups

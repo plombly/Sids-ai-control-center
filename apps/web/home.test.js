@@ -84,3 +84,18 @@ test('a job asking for internet access gets its own card', () => {
   const stuck = needsYouMarkup({ ready: [], stuck: [{ id: 'j2', status: 'needs_human', needs_human_kind: 'build' }] }, {});
   assert.match(stuck, /data-op="extend"/);
 });
+
+test('managed projects never ask anything on the home page', async () => {
+  const { needsYou, viewOnlyIds, projectSelectMarkup } = await import('./lib/home.js');
+  const projects = [{ id: 'sid' }, { id: 'app', view_only: true }, { id: 'shop', name: 'Shop' }];
+  const jobs = [{ id: 'a', status: 'needs_human', project_id: 'app' }, { id: 'b', status: 'needs_human' },
+    { id: 'c', status: 'needs_human', project_id: 'shop' }];
+  const approvals = [{ id: 'd', status: 'awaiting_review', review_verdict: 'pass', project_id: 'sid' }];
+  const items = needsYou({ approvals, jobs, viewOnly: viewOnlyIds(projects) });
+  assert.deepEqual(items.stuck.map(job => job.id), ['c']);
+  assert.deepEqual(items.ready, []);
+  const select = projectSelectMarkup(projects);
+  assert.match(select, /value="shop"/);
+  assert.doesNotMatch(select, /value="sid"|value="app"/);
+  assert.match(projectSelectMarkup([{ id: 'sid' }]), /Create a project first/);
+});

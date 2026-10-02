@@ -73,4 +73,4 @@ def test_validation_and_limits(api):
         assert client.post("/api/projects/game/assistant", json={"idea": "x"}).status_code == 202
     assert client.post("/api/projects/game/assistant", json={"idea": "x"}).status_code == 429
     sid = client.post("/api/projects/sid/assistant", json={"idea": "x"})
-    assert sid.status_code == 429  # SID itself works the same way, but the limit is global
+    assert sid.status_code == 403  # the built-in project is view-only

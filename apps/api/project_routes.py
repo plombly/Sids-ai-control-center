@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from typing import Literal, Optional
@@ -224,6 +225,11 @@ def _group_info(project_id, data):
     return effective, group
 
 
+def _view_only(project_id):
+    import managed
+    return managed.view_only(_redis().redis, project_id)
+
+
 def _item(project_id, data=None):
     import build_routes
     main = _redis()
@@ -254,21 +260,29 @@ def _item(project_id, data=None):
         "push_remote": _text(data.get("push_remote")),
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
+        "view_only": _view_only(project_id),
         **group,
         "stats": {key: _numeric(stats.get(key)) for key in ("remaining_effort", "waiting_jobs", "running_jobs")},
     }
 
 
+# Development installs show the built-in project (LAIka itself, view-only);
+# production installs have no such project at all.
+BUILTIN_PROJECT = os.environ.get("SID_BUILTIN_PROJECT", "1") != "0"
+
+
 def _known(project_id):
     if project_id == "sid":
-        return True
+        return BUILTIN_PROJECT
     return project_id in _members(_redis())
 
 
 @router.get("/api/projects")
 def list_projects(include_archived: bool = False):
     main = _redis()
-    ids = _members(main) | {"sid"}
+    ids = _members(main) - {"sid"}
+    if BUILTIN_PROJECT:
+        ids.add("sid")
     result = []
     for project_id in ids:
         item = _item(project_id)
@@ -493,7 +507,7 @@ def history(project_id: str):
     except (TypeError, ValueError):
         data = {}
     return {"project_id": project_id, "head": data.get("head"), "changes": data.get("changes") or [],
-            "can_undo": project_id != "sid"}
+            "can_undo": not _view_only(project_id)}
 
 
 class ProjectUndo(BaseModel):
