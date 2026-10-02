@@ -159,6 +159,8 @@ async function main() {
   for (const heading of ['Started', 'Finished', 'Elapsed']) assert.match(detailMarkup, new RegExp(`<b>${heading}<\/b>`));
   assert.match(detailMarkup, /<th>Started<\/th><th>Elapsed<\/th>/);
   assert.match(detailMarkup, /1m 00s/);
+  const running = jobDetailMarkup({ id: 'run', started_at: 100, finished_at: null }, 112);
+  assert.match(running, /<b>Elapsed<\/b><span><span class="elapsed" data-elapsed-since="100">12s<\/span><\/span>/);
   for (const heading of ['Summary', 'Candidate', 'Attempts', 'Review', 'Gate', 'Related jobs']) {
     assert.match(detailMarkup, new RegExp(`<h3>${heading}</h3>`));
   }

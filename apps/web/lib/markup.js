@@ -56,7 +56,10 @@ export const approvalMarkup = j =>
 const detailValue = value => `<span>${esc(value)}</span>`;
 const detailRows = (job, fields) =>
   fields
-    .map(([label, field]) => `<div class="detail-row"><b>${esc(label)}</b>${detailValue(job[field])}</div>`)
+    .map(
+      ([label, field]) =>
+        `<div class="detail-row"><b>${esc(label)}</b>${field === '_elapsed' ? `<span>${job[field]}</span>` : detailValue(job[field])}</div>`
+    )
     .join('');
 const detailSection = (title, content) => `<section class="detail-block"><h3>${esc(title)}</h3>${content}</section>`;
 export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
