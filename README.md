@@ -104,8 +104,14 @@ LAIka has **no telemetry**. It talks only to the AI providers you sign in to,
 the package registries your projects use, and the notification services you
 configure.
 
+## License
+
+MIT: see [LICENSE](LICENSE). Security reports: [SECURITY.md](SECURITY.md).
+
 ## Contributing
 
 Every change goes through tests, an independent review and human approval;
 see [Architecture](docs/architecture.md) for the contract that keeps it safe.
-Never commit keys, tokens or credentials.
+Never commit keys, tokens or credentials: `git config core.hooksPath
+scripts/hooks` installs a pre-push check that refuses anything that looks
+like one.
