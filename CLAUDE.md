@@ -431,7 +431,7 @@ last SUPPORT_WORKERS of WORKER_COUNT.
 
 Install and the laika user (v1.0, CP6): install.sh (curl | sudo bash, or
 --source DIR|URL; --repair) installs Docker, the venv (deploy/
-requirements.lock), Node + codex/claude (deploy/versions.env), the
+requirements-host.lock; dev: requirements-dev.lock), Node + codex/claude (deploy/versions.env), the
 `laika` user, folders, secrets (created once: /etc/laika/{redis,operator,
 compose,laika}.env; /opt/laika/.env -> compose.env; compose data in
 LAIKA_DB_DIR=/var/lib/laika/db), containers, units, and prints a setup

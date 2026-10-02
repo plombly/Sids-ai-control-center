@@ -8,7 +8,7 @@ from the settings page).
 import datetime
 import json
 
-import usage_routes
+import usage_core
 
 WEEK = 7 * 86400
 
@@ -43,7 +43,7 @@ def build(now, projects, goals, jobs, events, backup=None, restore=None, apps=No
     names = dict(projects)
     start = datetime.datetime.fromtimestamp(since).strftime("%b %d")
     end = datetime.datetime.fromtimestamp(now).strftime("%b %d")
-    usage = usage_routes.summarize(jobs, goals, since)
+    usage = usage_core.summarize(jobs, goals, since)
     claude = next((row for row in usage["by_provider"] if row["provider"] == "claude"), {})
     codex = next((row for row in usage["by_provider"] if row["provider"] == "codex"), {})
 

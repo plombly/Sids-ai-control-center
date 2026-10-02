@@ -171,7 +171,7 @@ ln -sfn "$CONF/compose.env" "$LAIKA_HOME/.env"
 # --- Python ---------------------------------------------------------------------------------------
 say "Python environment"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
-"$VENV/bin/pip" install -q --disable-pip-version-check -r "$LAIKA_HOME/deploy/requirements.lock"
+"$VENV/bin/pip" install -q --disable-pip-version-check -r "$LAIKA_HOME/deploy/requirements-host.lock"
 
 # --- Node and the AI command-line tools ------------------------------------------------------------
 node_major=$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)

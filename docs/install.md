@@ -49,7 +49,7 @@ The installer takes 5–15 minutes and is safe to run again. It:
    secrets in `/etc/laika` (generated once, readable by root only), logs in
    `/var/log/laika`, backups in `/var/backups/laika`;
 4. builds a Python environment from pinned versions
-   (`deploy/requirements.lock`);
+   (`deploy/requirements-host.lock`);
 5. starts Redis, Postgres, the API and the dashboard in Docker, and
    LAIka's services in systemd;
 6. prints the dashboard address and a **one-time setup code**.
