@@ -18,6 +18,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # First start initialises the database: slow machines need longer.
+      start_period: 120s
     networks:
       - laika-internal
 
