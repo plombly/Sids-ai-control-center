@@ -403,10 +403,24 @@ def test_service_delegates_to_job_review_and_has_no_git_of_its_own():
     assert 'job_review.approve(job_id, expected_candidate=request["expected_candidate"])' in source
     for forbidden in ('"git"', '"merge"', "hdel(", "rpush("):
         assert forbidden not in source, forbidden
-    # Its only subprocess is the project CLI (host-side project management).
+    # Its only subprocesses: the project CLI (host-side project management)
+    # and starting scripts/laika-system.py as its own unit (Settings → Apply).
     calls = [line.strip() for line in source.splitlines() if "runner(" in line or "subprocess.run" in line]
     assert calls == ["def execute_project(request, runner=subprocess.run):",
-                     'result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],'], calls
+                     'result = runner(["/usr/bin/python3", str(PROJECT_CLI), *project_cli_args(request)],',
+                     "def execute_system(request, runner=subprocess.run):",
+                     'result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",'], calls
+
+
+def test_apply_settings_is_validated_and_runs_as_its_own_unit(op):
+    import subprocess
+    with pytest.raises(op.Invalid, match="what must be"):
+        op.validate({"action": "apply_settings", "request_id": "r-000001", "what": "everything"}, "1-0", 1)
+    request = op.validate({"action": "apply_settings", "request_id": "r-000001", "what": "apply"}, f"{int(1000 * 1000)}-0", 1000)
+    assert request == {"action": "apply_settings", "what": "apply", "job_id": "", "project_id": ""}
+    calls = []
+    status, message, _ = op.execute_system(request, runner=lambda argv, **k: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""))
+    assert status == "succeeded" and calls[0][-1] == "apply" and calls[0][-2].endswith("scripts/laika-system.py")
 
 
 # --- project actions (host-side project management) ----------------------------------
