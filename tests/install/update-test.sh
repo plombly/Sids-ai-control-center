@@ -78,5 +78,22 @@ fails=$(echo "$doctor" | python3 -c 'import json,sys; print(" ".join(c["name"] f
 [ -z "$fails" ] && pass "doctor: no failures after the update" || bad "doctor after update: $fails"
 out_box "ls /etc/laika/redis.env /etc/laika/compose.env >/dev/null" && pass "secrets kept" || bad "secrets lost"
 
+# A broken release (its installer fails) is rolled back by itself.
+mkdir -p "$WORK/broken/laika-9.9.10"
+tar -xf "$WORK/src.tar" -C "$WORK/broken/laika-9.9.10" --strip-components=1
+echo "9.9.10" > "$WORK/broken/laika-9.9.10/VERSION"
+printf '#!/bin/bash\necho "this release cannot install" >&2\nexit 1\n' > "$WORK/broken/laika-9.9.10/install.sh"
+tar -czf "$WORK/broken/laika-9.9.10.tar.gz" -C "$WORK/broken" laika-9.9.10
+rm -rf "$WORK/broken/laika-9.9.10"
+sha=$(sha256sum "$WORK/broken/laika-9.9.10.tar.gz" | cut -d' ' -f1)
+printf '{"version": "9.9.10", "tarball": "laika-9.9.10.tar.gz", "sha256": "%s"}\n' "$sha" > "$WORK/broken/manifest.json"
+ssh-keygen -q -Y sign -f "$KEY" -n laika-release "$WORK/broken/manifest.json"
+docker cp "$WORK/broken/." "$NAME:/root/release/" >>"$LOG" 2>&1
+out_box "UPDATE_URL=$url laika update --yes" >>"$LOG" 2>&1 && bad "a broken release reported success" || pass "a broken release reports failure"
+[ "$(out_box 'cat /opt/laika/VERSION')" = 9.9.9 ] && pass "rolled back to 9.9.9 by itself" || bad "after the broken release: $(out_box 'cat /opt/laika/VERSION')"
+doctor=$(out_box "laika doctor --json" || true)
+fails=$(echo "$doctor" | python3 -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin) if c["level"] == "fail"))' 2>/dev/null || echo unreadable)
+[ -z "$fails" ] && pass "doctor: no failures after the rollback" || bad "doctor after rollback: $fails"
+
 printf '\nupdate test on %s: %s (%d failures). Log: %s\n' "$IMAGE" "$([ $failures = 0 ] && echo PASSED || echo FAILED)" "$failures" "$LOG"
 exit $((failures > 0))
