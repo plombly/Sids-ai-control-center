@@ -87,6 +87,14 @@ def _number(value, default=None):
     return int(number) if number.is_integer() else number
 
 
+def _float_or_none(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _timestamp(value):
     return _number(value, 0) or 0
 
@@ -131,7 +139,11 @@ def _duration(data):
         return direct
     started = _number(data.get("started_at", data.get("start_time")))
     ended = _number(data.get("ended_at", data.get("completed_at", data.get("finished_at"))))
-    return ended - started if started is not None and ended is not None and ended >= started else None
+    if started is not None and ended is not None and ended >= started:
+        return ended - started
+    started = _float_or_none(data.get("started_at"))
+    finished = _float_or_none(data.get("finished_at"))
+    return finished - started if started is not None and finished is not None else None
 
 
 def _key_suffix(key):
@@ -208,6 +220,11 @@ def _job_title(data):
 
 def _job(key, data):
     data = data if isinstance(data, dict) else {}
+    started_at = _float_or_none(data.get("started_at"))
+    finished_at = _float_or_none(data.get("finished_at"))
+    elapsed_seconds = None
+    if started_at is not None:
+        elapsed_seconds = max((finished_at if finished_at is not None else time.time()) - started_at, 0)
     return {
         "id": _text(data.get("id"), _key_suffix(key)),
         "title": _job_title(data),
@@ -235,6 +252,9 @@ def _job(key, data):
         "command_count": _number(data.get("command_count")),
         "total_tokens": _number(data.get("total_tokens", data.get("tokens"))),
         "duration": _duration(data),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "elapsed_seconds": elapsed_seconds,
         "branch": _text(data.get("branch")),
         "base": _text(data.get("integration_base_commit", data.get("base", data.get("base_commit")))),
         "candidate": _text(data.get("integrated_candidate_commit", data.get("candidate", data.get("candidate_commit")))),
@@ -339,6 +359,7 @@ def _worker(key, data, jobs):
         "provider": _text(data.get("provider"), job.get("provider")),
         "model": _text(data.get("model"), job.get("model")),
         "last_seen": _number(data.get("last_seen", data.get("heartbeat"))),
+        "job_started_at": _float_or_none(data.get("job_started_at")),
         "heartbeat_age": max(int(time.time() - _timestamp(data.get("last_seen", data.get("heartbeat")))), 0) if _timestamp(data.get("last_seen", data.get("heartbeat"))) else None,
         "effective_tokens": _effective_tokens(merged),
         "cached_input_tokens": _number(merged.get("cached_input_tokens", merged.get("cached_tokens"))),
