@@ -60,7 +60,7 @@ OPERATOR = {"X-Laika-Token": "operator-secret"}
 
 def add_phone(client):
     response = client.post("/api/devices", headers=OPERATOR,
-                           json={"name": "Dylan's phone", "url": "http://10.0.0.59:8000", "server_name": "Home LAIka"})
+                           json={"name": "Alex's phone", "url": "http://192.168.1.20:8000", "server_name": "Home LAIka"})
     assert response.status_code == 201
     return response.json()
 
@@ -69,13 +69,13 @@ def test_adding_a_phone_shows_its_key_once_and_stores_only_a_hash(api):
     client, fake = api
     created = add_phone(client)
     key = created["key"]
-    assert key.startswith("laika_") and created["pairing"] == {"v": 1, "name": "Home LAIka", "url": "http://10.0.0.59:8000", "key": key}
+    assert key.startswith("laika_") and created["pairing"] == {"v": 1, "name": "Home LAIka", "url": "http://192.168.1.20:8000", "key": key}
     assert json.loads(created["pairing_text"])["key"] == key
     assert created["qr_svg"].startswith("<svg")
     stored = fake.hashes[f"laika:devices:{created['device']['id']}"]
     assert key not in json.dumps(stored) and stored["key_hash"] == device_routes.key_hash(key)
     listed = client.get("/api/devices").json()
-    assert [d["name"] for d in listed["devices"]] == ["Dylan's phone"] and "key" not in json.dumps(listed)
+    assert [d["name"] for d in listed["devices"]] == ["Alex's phone"] and "key" not in json.dumps(listed)
     # Adding devices needs the operator token.
     assert client.post("/api/devices", json={"name": "x", "url": "http://a:1"}).status_code == 401
 
@@ -87,7 +87,7 @@ def test_a_device_does_safe_writes_only(api):
     assert client.post("/api/projects/shop/goals", headers=phone, json={"goal": "x"}).status_code == 202
     answer = client.post("/api/jobs/j1/actions", headers=phone,
                          json={"action": "network_once", "request_id": "req-12345678", "expected_status": "needs_human"})
-    assert answer.status_code == 202 and answer.json()["requested_from"].startswith("device Dylan's phone")
+    assert answer.status_code == 202 and answer.json()["requested_from"].startswith("device Alex's phone")
     approve = client.post("/api/jobs/j1/actions", headers=phone,
                           json={"action": "approve", "request_id": "req-87654321", "expected_status": "needs_human",
                                 "expected_candidate": "a" * 40})
@@ -103,7 +103,7 @@ def test_revoked_or_unknown_keys_get_nothing(api):
     client, fake = api
     created = add_phone(client)
     phone = {"Authorization": f"Bearer {created['key']}"}
-    assert client.get("/api/app/info", headers=phone).json()["device"]["name"] == "Dylan's phone"
+    assert client.get("/api/app/info", headers=phone).json()["device"]["name"] == "Alex's phone"
     assert client.delete(f"/api/devices/{created['device']['id']}", headers=OPERATOR).status_code == 200
     assert client.post("/api/projects/shop/goals", headers=phone, json={"goal": "x"}).status_code == 401
     assert client.get("/api/app/info", headers=phone).json()["device"] is None

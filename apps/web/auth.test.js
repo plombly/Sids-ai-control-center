@@ -10,15 +10,15 @@ test('first-run, sign-in and user menu screens', () => {
   assert.match(setup, /Never put it on the public internet/);
   assert.match(setup, /&lt;oops&gt;/);
   assert.match(loginMarkup(), /autocomplete="current-password"[\s\S]*sudo laika reset-password/);
-  assert.match(userMenuMarkup('dylan'), /dylan[\s\S]*data-sign-out/);
+  assert.match(userMenuMarkup('alex'), /alex[\s\S]*data-sign-out/);
   assert.equal(userMenuMarkup(null), '');
 });
 
 test('access page: password form, sessions and audit log', () => {
   const html = accessMarkup(
-    [{ id: 'a'.repeat(16), user: 'dylan', ip: '10.0.0.2', agent: '<Firefox>', last_seen: 1, current: true },
-     { id: 'b'.repeat(16), user: 'dylan', ip: '10.8.0.6', agent: 'Safari', last_seen: 2 }],
-    [{ at: 3, actor: 'user dylan', method: 'PATCH', path: '/api/projects/<x>', status: 200, ip: '10.0.0.2' }]
+    [{ id: 'a'.repeat(16), user: 'alex', ip: '10.0.0.2', agent: '<Firefox>', last_seen: 1, current: true },
+     { id: 'b'.repeat(16), user: 'alex', ip: '10.8.0.6', agent: 'Safari', last_seen: 2 }],
+    [{ at: 3, actor: 'user alex', method: 'PATCH', path: '/api/projects/<x>', status: 200, ip: '10.0.0.2' }]
   );
   assert.match(html, /id="auth-password-form"/);
   assert.match(html, /this browser/);

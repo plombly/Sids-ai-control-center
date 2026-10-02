@@ -130,8 +130,8 @@ test('build & run settings: empty fields stay empty, LAIka has none', () => {
 });
 
 test('app status links to the app on this server only when running', () => {
-  const running = appStatusMarkup({ id: 'shop', run_command: 'npm start', app: { state: 'running', port: 8100, commit: 'abcdef123456' } }, '10.0.0.59');
-  assert.match(running, /href="http:\/\/10.0.0.59:8100\/"/);
+  const running = appStatusMarkup({ id: 'shop', run_command: 'npm start', app: { state: 'running', port: 8100, commit: 'abcdef123456' } }, '192.168.1.20');
+  assert.match(running, /href="http:\/\/192.168.1.20:8100\/"/);
   assert.match(running, /data-app-restart="shop"/);
   assert.match(running, /main abcdef12/);
   const crashed = appStatusMarkup({ id: 'shop', run_command: 'npm start', app: { state: 'crashed', port: 8100, log: '<err>' } }, 'h');

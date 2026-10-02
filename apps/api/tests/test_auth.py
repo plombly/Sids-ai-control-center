@@ -43,7 +43,7 @@ def api(monkeypatch):
 
 
 def setup(client):
-    return client.post("/api/setup/admin", json={"code": "abcd-2345", "username": "dylan", "password": "correct horse battery"})
+    return client.post("/api/setup/admin", json={"code": "abcd-2345", "username": "alex", "password": "correct horse battery"})
 
 
 def test_everything_is_locked_until_setup(api):
@@ -57,15 +57,15 @@ def test_everything_is_locked_until_setup(api):
 
 def test_setup_needs_the_code_creates_the_admin_and_signs_in(api):
     client, fake = api
-    bad = client.post("/api/setup/admin", json={"code": "WRONG-CODE", "username": "dylan", "password": "correct horse battery"})
+    bad = client.post("/api/setup/admin", json={"code": "WRONG-CODE", "username": "alex", "password": "correct horse battery"})
     assert bad.status_code == 403
-    short = client.post("/api/setup/admin", json={"code": "ABCD-2345", "username": "dylan", "password": "short"})
+    short = client.post("/api/setup/admin", json={"code": "ABCD-2345", "username": "alex", "password": "short"})
     assert short.status_code == 422
     assert setup(client).status_code == 200
     assert "laika:setup:code" not in fake.strings
     assert fake.hashes["laika:auth:admin"]["password"].startswith("scrypt$") and "correct horse" not in json.dumps(fake.hashes)
     assert client.get("/api/projects").status_code == 200  # the session cookie works
-    assert client.get("/api/auth/state").json() == {"setup_required": False, "admin_exists": True, "signed_in": True, "user": "dylan"}
+    assert client.get("/api/auth/state").json() == {"setup_required": False, "admin_exists": True, "signed_in": True, "user": "alex"}
     assert setup(client).status_code == 409
 
 
@@ -74,13 +74,13 @@ def test_sign_in_out_wrong_passwords_and_rate_limit(api):
     setup(client)
     client.post("/api/auth/logout")
     assert client.get("/api/projects").status_code == 401
-    assert client.post("/api/auth/login", json={"username": "dylan", "password": "nope"}).status_code == 401
-    assert client.post("/api/auth/login", json={"username": "dylan", "password": "correct horse battery"}).status_code == 200
+    assert client.post("/api/auth/login", json={"username": "alex", "password": "nope"}).status_code == 401
+    assert client.post("/api/auth/login", json={"username": "alex", "password": "correct horse battery"}).status_code == 200
     assert client.get("/api/projects").status_code == 200
     client.post("/api/auth/logout")
     for _ in range(auth.FAILS_ALLOWED):
-        client.post("/api/auth/login", json={"username": "dylan", "password": "nope"})
-    assert client.post("/api/auth/login", json={"username": "dylan", "password": "correct horse battery"}).status_code == 429
+        client.post("/api/auth/login", json={"username": "alex", "password": "nope"})
+    assert client.post("/api/auth/login", json={"username": "alex", "password": "correct horse battery"}).status_code == 429
 
 
 def test_writes_from_other_sites_are_refused_and_writes_are_audited(api):
@@ -98,7 +98,7 @@ def test_writes_from_other_sites_are_refused_and_writes_are_audited(api):
     ok = client.patch("/api/projects/shop", json={"importance": "low"}, headers={"Origin": "http://laika.lan:8080"})
     assert ok.status_code == 200
     entries = client.get("/api/audit").json()["entries"]
-    assert entries[0]["path"] == "/api/projects/shop" and entries[0]["actor"] == "user dylan" and entries[0]["status"] == 200
+    assert entries[0]["path"] == "/api/projects/shop" and entries[0]["actor"] == "user alex" and entries[0]["status"] == 200
     assert any("created" in e["actor"] for e in entries)
 
 
@@ -117,7 +117,7 @@ def test_password_change_and_sessions(api):
     client, fake = api
     setup(client)
     other = TestClient(main.app, base_url="http://laika.lan:8080")
-    other.post("/api/auth/login", json={"username": "dylan", "password": "correct horse battery"})
+    other.post("/api/auth/login", json={"username": "alex", "password": "correct horse battery"})
     assert len(client.get("/api/auth/sessions").json()["sessions"]) == 2
     assert client.post("/api/auth/password", json={"current": "nope", "new": "another long password"}).status_code == 403
     assert client.post("/api/auth/password", json={"current": "correct horse battery", "new": "another long password"}).status_code == 200

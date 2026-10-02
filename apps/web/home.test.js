@@ -53,10 +53,10 @@ test('in progress: progress bar and what is happening now', () => {
 });
 
 test('projects and recent work', () => {
-  const html = projectsMarkup([{ id: 'shop', name: 'Shop', importance: 'high', counts: { jobs_running: 1, jobs_awaiting_approval: 2 }, app: { state: 'running', port: 8100 } }], '10.0.0.59');
+  const html = projectsMarkup([{ id: 'shop', name: 'Shop', importance: 'high', counts: { jobs_running: 1, jobs_awaiting_approval: 2 }, app: { state: 'running', port: 8100 } }], '192.168.1.20');
   assert.match(html, /href="#\/projects\/shop"/);
   assert.match(html, /1 job in progress · 2 to approve/);
-  assert.match(html, /href="http:\/\/10.0.0.59:8100\/"/);
+  assert.match(html, /href="http:\/\/192.168.1.20:8100\/"/);
   assert.match(html, /\+ New project/);
   assert.doesNotMatch(html, /<a [^>]*>(?:(?!<\/a>).)*<a /s);  // no link inside a link
   const recent = recentMarkup([

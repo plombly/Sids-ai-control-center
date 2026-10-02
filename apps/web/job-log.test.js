@@ -15,7 +15,7 @@ test('approval card preview: button, starting, running link, failure', async () 
   assert.equal(previewMarkup({ id: 'j1', previewable: false }), '');
   assert.match(previewMarkup({ id: 'j1', previewable: true, preview: null }), /data-preview-start="j1">Preview/);
   assert.match(previewMarkup({ id: 'j1', previewable: true, preview: { state: 'starting' } }), /Starting preview/);
-  assert.match(previewMarkup({ id: 'j1', previewable: true, preview: { state: 'running', port: 8200 } }, '10.0.0.59'),
-    /href="http:\/\/10.0.0.59:8200\/"[^>]*>Open preview/);
+  assert.match(previewMarkup({ id: 'j1', previewable: true, preview: { state: 'running', port: 8200 } }, '192.168.1.20'),
+    /href="http:\/\/192.168.1.20:8200\/"[^>]*>Open preview/);
   assert.match(previewMarkup({ id: 'j1', previewable: true, preview: { state: 'setup_failed', error: '<npm>' } }), /&lt;npm&gt;.*Retry preview/);
 });

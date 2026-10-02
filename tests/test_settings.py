@@ -96,12 +96,12 @@ def test_setup_code_and_password_reset(capsys):
     assert len(code) == 9 and code[4] == "-"
     assert r.get("laika:setup:code") == hashlib.sha256(code.replace("-", "").encode()).hexdigest()
     assert admin.main(["x", "reset-password"], r) == 1  # no administrator yet
-    r.records["laika:auth:admin"] = {"username": "dylan", "password": "old"}
+    r.records["laika:auth:admin"] = {"username": "alex", "password": "old"}
     r.values["laika:session-ids"] = {"s1"}
-    r.records["laika:sessions:s1"] = {"user": "dylan"}
+    r.records["laika:sessions:s1"] = {"user": "alex"}
     assert admin.main(["x", "reset-password"], r) == 0
     out = capsys.readouterr().out
-    assert "user: dylan" in out and r.records["laika:auth:admin"]["password"].startswith("scrypt$")
+    assert "user: alex" in out and r.records["laika:auth:admin"]["password"].startswith("scrypt$")
     assert "laika:sessions:s1" not in r.records
     assert admin.main(["x", "setup-code"], r) == 1  # an administrator exists
 

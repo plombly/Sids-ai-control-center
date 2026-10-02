@@ -36,7 +36,7 @@ BWRAP = os.environ.get("LAIKA_BWRAP", "/usr/bin/bwrap")
 
 # Hidden from every sandbox (replaced by an empty tmpfs when present).
 HIDDEN = (
-    "/opt/laika", "/opt/sid-dev", "/var/lib/laika/worktrees",
+    "/opt/laika", "/var/lib/laika/worktrees",
     "/var/lib/laika/projects", "/var/lib/laika/project-data", "/var/lib/laika/uploads", "/var/lib/laika/trash", "/etc/laika",
     # /var/lib/laika itself stays visible for the shared venv (gates use its
     # pytest); everything per-project or private under it is hidden.
@@ -44,6 +44,8 @@ HIDDEN = (
     # The laika user's home (agent CLI logins) and Redis/Postgres data.
     "/var/lib/laika/home", "/var/lib/laika/db",
     "/root", "/home", "/srv", "/mnt", "/media",
+    # More, e.g. a development checkout of LAIka (colon-separated).
+    *(p for p in os.environ.get("LAIKA_SANDBOX_HIDE", "").split(":") if p),
 )
 # LAIka's own credentials never reach project code; AI provider keys reach
 # only the agent CLIs that need them (kind "agent").
