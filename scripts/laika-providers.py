@@ -136,10 +136,25 @@ def login_codex(r, clock=time.time):
     return 0 if ok else 1
 
 
+def wait_for_cli(name, seconds=120, clock=time.time, sleep=time.sleep):
+    """The CLI updates itself by replacing its files: for a minute or two it
+    may be missing. Wait for it rather than fail."""
+    import shutil
+    deadline = clock() + seconds
+    while not shutil.which(name):
+        if clock() > deadline:
+            return False
+        sleep(3)
+    return True
+
+
 def login_claude(r, clock=time.time):
     import pty
     publish(r, "claude", state="starting")
     r.delete("laika:provider-login:claude:code")
+    if not wait_for_cli("claude", clock=clock):
+        publish(r, "claude", state="failed", message="The Claude command-line tool is missing. Try again in a few minutes.")
+        return 1
     pid, fd = pty.fork()
     if pid == 0:
         # A wide terminal: in 80 columns the sign-in link wraps over several

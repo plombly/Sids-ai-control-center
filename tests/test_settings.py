@@ -184,3 +184,14 @@ def test_the_token_is_read_from_the_rendered_screen(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "status", lambda r, runner=None: {})
     assert helper.finish_claude(MemoryRedis(), 0, output, saver=saved.append, tester=lambda t: t == token) == 0
     assert saved == [token]
+
+
+def test_sign_in_waits_for_a_cli_that_is_updating(monkeypatch):
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_wait_test")
+    import shutil
+    seen = iter([None, None, "/usr/local/bin/claude"])
+    monkeypatch.setattr(shutil, "which", lambda name: next(seen))
+    assert helper.wait_for_cli("claude", sleep=lambda s: None) is True
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    times = iter(range(0, 1000, 50))
+    assert helper.wait_for_cli("claude", seconds=120, clock=lambda: next(times), sleep=lambda s: None) is False
