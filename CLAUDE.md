@@ -34,14 +34,14 @@ Runtime (all live, all as root):
 | Job logs | `/var/log/laika/jobs/<id>.jsonl`, `<id>-tests.log`; gate reports in `/var/log/laika/integration/` |
 | Test Python | `/var/lib/laika/venv/bin/python` (via `LAIKA_PYTHON`; `/tmp` venv is legacy — /tmp is wiped on reboot) |
 | Orchestrator unit | `laika-orchestrator.service` (`laika-orchestrator-01` is only its ORCHESTRATOR_ID, NOT a unit) |
-| Worker units | `laika-worker@01..06.service` (+ drop-in `laika-python.conf` setting LAIKA_PYTHON) |
+| Worker units | `laika-worker@01..NN.service`, started and drained by `laika-scaler.service` (target `laika:scaler:target`); run as user `laika` |
 | Operator unit | `laika-operator.service`; template in `deploy/systemd/`, installing it is the operator's call |
 | Redis | Docker `laika-redis`, host `127.0.0.1:6379`; inspect with `scripts/laika-redis-cli ...`. Password (once `scripts/enable-redis-password.sh` ran): `REDIS_PASSWORD` in root-only `/etc/laika/redis.env`, read by `services/laika_redis.py` in every host program and by compose for redis/api; never print it |
 | Postgres | Docker `laika-postgres` (only used by projects/tasks/agents API) |
-| Agent CLI | `codex-cli 0.159.0`, model `gpt-5.6-luna`, auth in `/root/.codex` |
-| Claude CLI | `claude` 2.1.285, claude.ai subscription login (shares plan limits with interactive sessions) |
+| Agent CLI | `codex` (tested 0.159.0, deploy/versions.env), model `gpt-5.6-luna`; login in `/var/lib/laika/home/.codex` (the laika user) |
+| Claude CLI | `claude` (tested 2.1.287; self-updates via root's interactive sessions), laika user's own claude.ai login in `/var/lib/laika/home/.claude` (signed in via Settings -> AI); shares plan limits with interactive sessions |
 | Role routing | `services/agent_cli.py`: planner=claude/opus, builder=codex, reviewer=claude/sonnet, repair=claude/sonnet; `ROLE_PROVIDERS`, `CLAUDE_<ROLE>_MODEL`, `CLAUDE_<ROLE>_BUDGET_USD`. Claude limit/auth errors fall back to Codex and set `laika:provider-cooldown:claude` (30 min) |
-| Write access | `LAIKA_OPERATOR_TOKEN` in `/etc/laika/operator.env` (root 600, never print it); API (:8000) needs `X-Laika-Token` on every non-GET; nginx injects it for the dashboard (:8080) only for requests from OTHER machines, so the browser needs nothing (single-operator LAN, by the operator's choice), while code running on this server (project tests, agents) gets no token: the web container uses host networking and lists the server's own addresses at start (apps/web/laika-local-addrs.sh). Web approve is enabled in the installed operator unit and refused by the API when no token is configured |
+| Write access | Dashboard sign-in (apps/api/auth.py: admin account, sessions, audit log; `laika setup-code` / `laika reset-password`). The API listens on 127.0.0.1:8000 only; nginx (:8080) adds no credentials. `LAIKA_OPERATOR_TOKEN` (/etc/laika/operator.env, root 600, never print it) still authorizes host scripts; phones use per-device keys |
 
 Redis keys: `laika:goals:<id>` (hash; `laika:goals:<id>:planning` is a STRING lock
 — never hash-command it), `laika:jobs:<id>` (hash), queues `laika:goals` / `laika:jobs`
@@ -586,71 +586,16 @@ exhausted jobs were reintegrated, hit genuine cherry-pick conflicts, and were re
 Merged merges reviewed under the old partial-diff reviewer (worth a skeptical
 look if touching their code): `4b87827f`, `358966df`, `17b11696`.
 
-## Current gaps (the work ahead)
+## Status (2026-10-02)
 
-Web v2 was supposed to be a 4-job goal (`a9bb98ee`). Only its backend job
-merged. The UI, stale-recovery, and tests jobs never ran: `a70c8fdc`,
-`1fa04294`, `4a616f01` sit in `blocked_failed_dependency`. `a70c8fdc` depends
-only on merged `358966df`, so `reopen` would accept it, but that revives the old
-plan that Plan B replaces; the operator decides. The later single
-job `17b11696` was hand-salvaged. What exists vs missing:
-
-- Working: goal submit (normal/atomic, request_id idempotency), approval-ready
-  read model, worker idle/busy, Copy for ChatGPT, handoff zip, Stop/Start.
-- Broken or incomplete:
-  - List endpoints default to 8 items, so history silently truncates.
-  - Repository panel is always "unknown" (API container has no git).
-- Missing: Web approve/reject/extend/reintegrate/reopen buttons (the backend
-  for them is Plan A), add worker,
-  queue management, goal/job drill-down UI, persisted command/tool events,
-  prompts in UI, reviewer findings in UI, provider controls, auth.
-- `apps/web/app.js` / `styles.css` were reformatted with prettier (print width
-  120, single quotes in JS). Keep them readable and dependency-free, and keep
-  `apps/web/app.test.js` passing (the gate runs it). Mechanical rewrites belong
-  to a deterministic tool, not a builder agent: an agent reformat (job d14f4ccc)
-  changed string literals twice and was rejected.
-
-## Plan (in order)
-
-**A. Host-side action service. IMPLEMENTED on `dev/claude`, pending LAIka's
-merge + unit install (see "Web operator actions" above).** A small service
-on the host (NOT in Docker) that executes operator actions requested from the
-Web by calling the same functions as `scripts/job-review.py`. Suggested shape:
-the API writes validated requests to a Redis stream/list
-(`laika:operator-requests`) with job id, action, the exact candidate commit the
-human saw, and a request id. The host service validates and executes each
-request, records the result (`laika:operator-results:<request_id>`), and is
-idempotent per request id. Approval MUST re-check everything
-`_approve_unlocked` checks and refuse if the candidate the human confirmed
-≠ `integrated_candidate_commit`. New systemd unit (e.g.
-`laika-operator.service`). Full tests for every action and every refusal
-path. Don't break the CLI.
-
-**B. Web v2 UI features.** Approval UI with exact-candidate confirmation,
-needs_human actions, drill-down views (job lineage, candidates, integration +
-review state, findings, tests, tokens, runtime), persisted dismiss/archive
-(audit-preserving), un-truncated history with paging, redaction fix. Prefer
-submitting these to LAIka itself as small `--atomic` goals once A is merged;
-that exercises the pipeline. Write the goals narrowly.
-
-**C. Claude CLI provider.** Install `@anthropic-ai/claude-code` if missing.
-Implement an adapter beside `apps/api/providers/codex.py` behind the existing
-`Provider` interface. Worker execution currently hard-codes `codex exec`
-(`run_codex`, planner in the orchestrator), so factor that behind a provider
-selection per job/worker. Use non-interactive print mode with JSON output.
-Verify flags with `claude --help`; do not guess. Include model selection,
-auth detection, and Codex<->Claude cross-review (a reviewer of the opposite
-provider). Keep the UI provider-agnostic.
-
-**D. Public repo prep.** Git history is already clean of secrets. Still needed:
-- Add a LICENSE.
-- Remove hard-coded `HOME=/root` (worker `run_codex`, orchestrator planner).
-- Replace the `gpt-5.6-luna` defaults in scripts with env config.
-- Write a generic setup guide.
-
-**Deferred by the owner until fully operational (do not do unasked):** secret
-rotation, binding :8000/:8080 to localhost, API auth. Mention it when
-relevant, but it's the operator's decision.
+v1.0 checkpoints CP1-CP9 are done (see the sections above) and LAIka
+1.0.0 is built. Plans A-D of the original roadmap are complete. The
+public repository is github.com/plombly/LAIka (fresh history; publish
+only through scripts/laika-release.py export/publish, never push this
+repository there). Later work, in the owner's todo file: building and
+shipping the LAIka App, Fedora/RHEL support, off-site backups, Tailscale,
+removing the old /opt/sid-venv. Deferred by the owner (do not do unasked):
+secret rotation.
 
 ## Style
 

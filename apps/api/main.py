@@ -17,9 +17,15 @@ import os
 from database import init_database
 from schemas import DismissalsRequest, GoalAccepted, GoalSubmit, OperatorActionRequest, PromptSubmit, WorkerAction
 
+# Interactive API docs only when asked for (LAIKA_API_DOCS=1): a production
+# API has no reason to describe itself.
+_DOCS = os.environ.get("LAIKA_API_DOCS") == "1"
 app = FastAPI(
     title="LAIka",
-    version="0.1.0"
+    version="1.0",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
 )
 
 DATABASE_URL = os.environ["DATABASE_URL"]
