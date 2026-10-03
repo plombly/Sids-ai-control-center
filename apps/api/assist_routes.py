@@ -11,7 +11,7 @@ import secrets
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import goal_assist
@@ -125,7 +125,7 @@ def cancel(session_id: str):
 
 
 @router.post("/api/assistant/{session_id}/submit", status_code=202)
-def submit(session_id: str, payload: AssistSubmit):
+def submit(session_id: str, payload: AssistSubmit, request: Request):
     """Submit the (possibly edited) brief as a goal of the session's project."""
     session = _session(session_id)
     if session.get("status") == "submitted":
@@ -134,7 +134,7 @@ def submit(session_id: str, payload: AssistSubmit):
         raise HTTPException(status_code=409, detail="There is no finished brief to submit")
     result = projects.submit_project_goal(
         session.get("project_id") or "laika",
-        projects.ProjectGoal(goal=payload.goal, atomic=payload.atomic, request_id=payload.request_id))
+        projects.ProjectGoal(goal=payload.goal, atomic=payload.atomic, request_id=payload.request_id), request)
     goal_assist.save(_redis(), session_id, status="submitted", goal_id=result.get("id") or "",
                      submitted=json.dumps({"edited": payload.goal.strip() != (session.get("brief") or {}).get("goal", "").strip()}))
     return result

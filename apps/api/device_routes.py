@@ -92,11 +92,24 @@ class DeviceCreate(BaseModel):
     server_name: Optional[str] = Field(default=None, max_length=60, pattern=r"^[^\r\n]*$")
 
 
+def _owner(request):
+    """Whose phone this is: the signed-in person ("" = the first administrator,
+    as for phones paired before LAIka 1.1 or with the operator token)."""
+    ctx = getattr(request.state, "ctx", None)
+    return "" if ctx is None or ctx.name == "operator" else ctx.name
+
+
+def _mine(request, record):
+    ctx = getattr(request.state, "ctx", None)
+    return ctx is None or ctx.is_admin or (record.get("owner") or "") == ctx.name
+
+
 @router.get("/api/devices")
-def list_devices():
+def list_devices(request: Request):
     redis = _main().redis
     records = [redis.hgetall(f"laika:devices:{device_id}") or {} for device_id in sorted(redis.smembers("laika:devices") or [])]
-    items = [_view(r) for r in records if r and not r.get("revoked_at")]
+    items = [{**_view(r), "owner": r.get("owner") or ""} for r in records
+             if r and not r.get("revoked_at") and _mine(request, r)]
     return {"devices": sorted(items, key=lambda d: -d["created_at"]), "server_name": server_name()}
 
 
@@ -108,13 +121,15 @@ def create_device(payload: DeviceCreate, request: Request):
     device_id = secrets.token_hex(6)
     key = KEY_PREFIX + secrets.token_urlsafe(32)
     now = time.time()
-    if payload.server_name and payload.server_name.strip():
+    ctx = getattr(request.state, "ctx", None)
+    if payload.server_name and payload.server_name.strip() and (ctx is None or ctx.is_admin):
         import settings_schema
         cleaned, errors = settings_schema.validate({"SERVER_NAME": payload.server_name})
         if not errors:
             settings_schema.save(redis, cleaned)
     redis.hset(f"laika:devices:{device_id}", mapping={"id": device_id, "name": payload.name.strip(),
-                                                    "key_hash": key_hash(key), "created_at": str(now)})
+                                                    "key_hash": key_hash(key), "created_at": str(now),
+                                                    "owner": _owner(request)})
     redis.set(f"laika:device-key:{key_hash(key)}", device_id)
     redis.sadd("laika:devices", device_id)
     pairing = {"v": 1, "name": server_name(), "url": payload.url.rstrip("/"), "key": key}
@@ -143,7 +158,7 @@ def revoke_device(device_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Device not found")
     redis = _main().redis
     record = redis.hgetall(f"laika:devices:{device_id}") or {}
-    if not record:
+    if not record or not _mine(request, record):
         raise HTTPException(status_code=404, detail="Device not found")
     redis.delete(f"laika:device-key:{record.get('key_hash', '')}")
     redis.hset(f"laika:devices:{device_id}", mapping={"revoked_at": str(time.time())})

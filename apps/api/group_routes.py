@@ -35,6 +35,7 @@ def _sub_request_id(request_id, number):
 def approve_all(goal_id: str, payload: ApproveAll, request: Request, response: Response):
     import re
     import main
+    import access
     import managed
     from schemas import OperatorActionRequest
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", goal_id) or not main._hash(f"laika:goals:{goal_id}"):
@@ -46,6 +47,8 @@ def approve_all(goal_id: str, payload: ApproveAll, request: Request, response: R
             problems.append(f"{job_id}: not a change of this goal")
         elif managed.view_only(main.redis, main._text(job.get("project_id"), "laika")):
             problems.append(f"{job_id}: {managed.MESSAGE}")
+        elif not access.may(main.redis, getattr(request.state, "ctx", None), main._text(job.get("project_id"), "laika"), "approve"):
+            problems.append(f"{job_id}: you need approve access to its project")
         elif not re.fullmatch(SHA, candidate or ""):
             problems.append(f"{job_id}: the candidate must be a full commit id")
         elif not main._approval_ready(job):

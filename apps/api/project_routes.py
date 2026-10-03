@@ -4,7 +4,7 @@ import re
 import time
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 
@@ -241,6 +241,15 @@ def _view_only(project_id):
     return managed.view_only(_redis().redis, project_id)
 
 
+def _my_access(project_id):
+    """What the person asking may do here: admin, approve, build or view."""
+    import access
+    ctx = access.CURRENT.get()
+    if ctx is None or ctx.is_admin:
+        return "admin"
+    return access.level_name((access.levels(_redis().redis, ctx) or {}).get(project_id, 0))
+
+
 def _item(project_id, data=None):
     import build_routes
     main = _redis()
@@ -272,6 +281,7 @@ def _item(project_id, data=None):
         "created_at": _numeric(data.get("created_at")) or 0,
         "counts": _counts(project_id),
         "view_only": _view_only(project_id),
+        "my_access": _my_access(project_id),
         **group,
         "stats": {key: _numeric(stats.get(key)) for key in ("remaining_effort", "waiting_jobs", "running_jobs")},
     }
@@ -323,7 +333,7 @@ def get_project(project_id: str, limit: int = Query(25, ge=1, le=100)):
 
 
 @router.post("/api/projects/{project_id}/goals", status_code=202)
-def submit_project_goal(project_id: str, payload: ProjectGoal):
+def submit_project_goal(project_id: str, payload: ProjectGoal, request: Request = None):
     project_id = _id(project_id)
     if not _known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -333,6 +343,9 @@ def submit_project_goal(project_id: str, payload: ProjectGoal):
     main = _redis()
     result = main._submit_goal(payload, project_id=project_id)
     result["project_id"] = project_id
+    ctx = getattr(getattr(request, "state", None), "ctx", None)
+    if ctx is not None and result.get("id") and main.redis.hgetall(f"laika:goals:{result['id']}"):
+        main.redis.hset(f"laika:goals:{result['id']}", mapping={"submitted_by": ctx.name})  # usage per person
     return result
 
 
@@ -461,7 +474,9 @@ def _operator_request(action, request_id, fields):
         return main._operator_result(existing)
     if not main.redis.hsetnx(key, "request_id", request_id):
         raise HTTPException(status_code=409, detail="A request with this id is already being submitted")
-    main.redis.hset(key, mapping={**fields, "status": "pending", "created_at": str(time.time())})
+    import access
+    main.redis.hset(key, mapping={**fields, "status": "pending", "created_at": str(time.time()),
+                                  "requested_by": access.current_name()})
     try:
         main.redis.xadd(main.OPERATOR_STREAM, fields, maxlen=main.OPERATOR_STREAM_MAXLEN, approximate=True)
     except Exception:

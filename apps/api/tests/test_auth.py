@@ -63,9 +63,9 @@ def test_setup_needs_the_code_creates_the_admin_and_signs_in(api):
     assert short.status_code == 422
     assert setup(client).status_code == 200
     assert "laika:setup:code" not in fake.strings
-    assert fake.hashes["laika:auth:admin"]["password"].startswith("scrypt$") and "correct horse" not in json.dumps(fake.hashes)
+    assert fake.hashes["laika:users:alex"]["password"].startswith("scrypt$") and "correct horse" not in json.dumps(fake.hashes)
     assert client.get("/api/projects").status_code == 200  # the session cookie works
-    assert client.get("/api/auth/state").json() == {"setup_required": False, "admin_exists": True, "signed_in": True, "user": "alex"}
+    assert client.get("/api/auth/state").json() == {"setup_required": False, "admin_exists": True, "signed_in": True, "user": "alex", "role": "admin"}
     assert setup(client).status_code == 409
 
 
@@ -123,7 +123,7 @@ def test_password_change_and_sessions(api):
     assert client.post("/api/auth/password", json={"current": "correct horse battery", "new": "another long password"}).status_code == 200
     assert other.get("/api/projects").status_code == 401  # signed out everywhere else
     assert client.get("/api/projects").status_code == 200
-    assert auth.verify_password("another long password", fake.hashes["laika:auth:admin"]["password"])
+    assert auth.verify_password("another long password", fake.hashes["laika:users:alex"]["password"])
 
 
 def test_setup_info_and_done(api):

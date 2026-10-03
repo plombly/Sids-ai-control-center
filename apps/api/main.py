@@ -49,6 +49,7 @@ async def require_operator_token(request: Request, call_next):
     """Who may do what (apps/api/auth.py): sessions, device keys, the operator
     token; LAIka itself and its app are view-only (managed.py); every write
     is audited."""
+    import access
     import auth
     import device_routes
     import managed
@@ -64,6 +65,13 @@ async def require_operator_token(request: Request, call_next):
     actor, status, body = auth.actor_for(request, token_ok, request.state.device)
     if status:
         return JSONResponse(status_code=status, content=body)
+    # Teams (access.py): what this person may see and do.
+    ctx = getattr(request.state, "ctx", None)
+    access.CURRENT.set(ctx)
+    if actor != "public":
+        denied = access.check(redis, ctx, request.method, request.url.path)
+        if denied:
+            return JSONResponse(status_code=denied[0], content={"detail": denied[1]})
     device = request.state.device
     if write and not token_ok and device is not None:
         if not device_routes.device_may_write(request.method, request.url.path):
@@ -75,6 +83,11 @@ async def require_operator_token(request: Request, call_next):
     response = await call_next(request)
     if write and actor not in ("public",):
         auth.audit(redis, request, response.status_code, actor)
+    if (not write and ctx is not None and not ctx.is_admin and request.url.path in access.FILTERED
+            and response.status_code == 200 and response.headers.get("content-type", "").startswith("application/json")):
+        raw = b"".join([chunk async for chunk in response.body_iterator])
+        visible = access.levels(redis, ctx) or {}
+        return JSONResponse(status_code=200, content=access.prune(redis, request.url.path, json.loads(raw), visible))
     return response
 
 
@@ -1072,6 +1085,11 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
     device = getattr(request.state, "device", None)
     if device is not None and not _token_ok(request) and payload.action not in device_routes.DEVICE_JOB_ACTIONS:
         raise HTTPException(status_code=403, detail="Approvals are made on the dashboard, not from a device")
+    import access
+    if payload.action in ("approve", "queue_approve", "dequeue_approve") and not access.may(
+            redis, getattr(request.state, "ctx", None), _text(_job_record(job_id)[1].get("project_id"), "laika"),
+            "approve"):
+        raise HTTPException(status_code=403, detail="You need approve access to this project")
     fields = {
         "request_id": payload.request_id,
         "job_id": job_id,
@@ -1114,7 +1132,8 @@ def request_job_action(job_id: str, payload: OperatorActionRequest, request: Req
     if device is not None:
         requested_from = f"device {device.get('name')} ({device.get('id')}) {requested_from}".strip()
     now = str(time.time())
-    redis.hset(key, mapping={**fields, "status": "pending", "requested_from": requested_from, "created_at": now})
+    redis.hset(key, mapping={**fields, "status": "pending", "requested_from": requested_from, "created_at": now,
+                             "requested_by": access.current_name()})
     try:
         redis.xadd(OPERATOR_STREAM, {**fields, "requested_from": requested_from},
                    maxlen=OPERATOR_STREAM_MAXLEN, approximate=True)
@@ -1129,6 +1148,10 @@ def get_operator_request(request_id: str):
     if not _OPERATOR_REQUEST_ID.fullmatch(request_id):
         raise HTTPException(status_code=422, detail="Invalid request id")
     data = _hash(f"laika:operator-results:{request_id}")
+    import access
+    ctx = access.CURRENT.get()
+    if data and ctx is not None and not ctx.is_admin and data.get("requested_by") != ctx.name:
+        data = {}  # members follow their own requests only
     if not data:
         raise HTTPException(status_code=404, detail="Operator request not found")
     return _operator_result(data)
@@ -1283,6 +1306,7 @@ from provider_routes import router as provider_router
 from scale_routes import router as scale_router
 from group_routes import router as group_router
 from system_routes import router as system_router
+from users_routes import router as users_router
 from assist_routes import router as assist_router
 
 app.include_router(agent_router)
@@ -1302,4 +1326,5 @@ app.include_router(provider_router)
 app.include_router(scale_router)
 app.include_router(group_router)
 app.include_router(system_router)
+app.include_router(users_router)
 app.include_router(assist_router)

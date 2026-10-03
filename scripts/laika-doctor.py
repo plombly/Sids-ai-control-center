@@ -343,7 +343,7 @@ def check_backups(client=None, now=None):
 def check_admin(client=None):
     try:
         client = client or redis_client()
-        exists = bool(client.hgetall("laika:auth:admin"))
+        exists = bool(client.smembers("laika:users")) or bool(client.hgetall("laika:auth:admin"))
     except Exception:
         return warn("setup", "cannot check (Redis unreachable)")
     if not exists:

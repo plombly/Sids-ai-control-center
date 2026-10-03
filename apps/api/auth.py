@@ -1,4 +1,7 @@
-"""Sign-in for the dashboard: one administrator account, sessions, audit log.
+"""Sign-in for the dashboard: user accounts, sessions, audit log.
+
+Accounts and what each may do: apps/api/access.py (administrators and
+members with per-project access); accounts are managed in users_routes.py.
 
 LAIka is only ever reached over your LAN or VPN, but other people and other
 programs on that network must not be able to drive it. So:
@@ -15,7 +18,7 @@ programs on that network must not be able to drive it. So:
   are refused; repeated failed sign-ins from one address are slowed down.
 - Every write is recorded in the audit log (laika:audit, newest first).
 
-Redis: laika:auth:admin (hash), laika:sessions:<sha256> (hash, TTL),
+Redis: laika:users / laika:users:<name> (access.py), laika:sessions:<sha256> (hash, TTL),
 laika:session-ids (set), laika:auth:fails:<ip> (counter, TTL),
 laika:setup:code (sha256 of the code, TTL), laika:audit (list, capped).
 """
@@ -38,6 +41,7 @@ FAILS_ALLOWED = 10
 FAILS_WINDOW = 900
 AUDIT_KEEP = 5000
 PUBLIC = {"/health", "/api/auth/state", "/api/auth/login", "/api/setup/state", "/api/setup/admin"}
+PUBLIC_PREFIXES = ("/api/invites/",)  # accepting an invite (users_routes.py)
 MIN_PASSWORD = 10
 
 
@@ -68,12 +72,36 @@ def verify_password(password, stored):
 
 
 def admin(redis):
-    return redis.hgetall("laika:auth:admin") or {}
+    """Whether any account exists (the first administrator is made in setup)."""
+    import access
+    return access.any_user(redis)
 
 
 def create_admin(redis, username, password):
-    redis.hset("laika:auth:admin", mapping={"username": username, "password": hash_password(password),
-                                            "created_at": str(time.time())})
+    import access
+    access.save_user(redis, username.lower(), username=username, password=hash_password(password), role="admin",
+                     access={}, created_at=time.time())
+
+
+def account_for(redis, username):
+    """The usable account of a username (any capitals), or None."""
+    import access
+    access.migrate(redis)
+    user = access.get_user(redis, (username or "").strip().lower())
+    if not user or user["disabled"] or not user.get("password"):
+        return None
+    return user
+
+
+def end_sessions(redis, user=None, keep=None):
+    """Sign out everywhere (user: only that person's sessions; keep: one session id)."""
+    for sid in list(redis.smembers("laika:session-ids") or []):
+        if sid == keep:
+            continue
+        if user is not None and (redis.hget(f"laika:sessions:{sid}", "user") or "").lower() != user.lower():
+            continue
+        redis.delete(f"laika:sessions:{sid}")
+        redis.srem("laika:session-ids", sid)
 
 
 # --- sessions -------------------------------------------------------------------------------
@@ -102,6 +130,10 @@ def session_for(redis, request):
     sid = _sid(token)
     record = redis.hgetall(f"laika:sessions:{sid}") or {}
     if not record:
+        return None
+    if not account_for(redis, record.get("user")):  # removed, disabled or reset since
+        redis.delete(f"laika:sessions:{sid}")
+        redis.srem("laika:session-ids", sid)
         return None
     now = time.time()
     if now - float(record.get("last_seen") or 0) > 60:
@@ -158,8 +190,10 @@ def auth_state(request: Request):
     redis = _main().redis
     account = admin(redis)
     session = session_for(redis, request) if account else None
+    user = account_for(redis, session.get("user")) if session else None
     return {"setup_required": not account and setup_lock_enabled(), "admin_exists": bool(account),
-            "signed_in": bool(session), "user": session.get("user") if session else None}
+            "signed_in": bool(session), "user": user.get("username") if user else None,
+            "role": user.get("role") if user else None}
 
 
 @router.post("/api/auth/login")
@@ -169,18 +203,17 @@ def login(payload: Login, request: Request, response: Response):
     fails_key = f"laika:auth:fails:{ip}"
     if int(redis.get(fails_key) or 0) >= FAILS_ALLOWED:
         raise HTTPException(status_code=429, detail="Too many failed sign-ins from this address. Try again in 15 minutes.")
-    account = admin(redis)
     # Usernames ignore case (phones capitalize the first letter): the account
     # keeps the spelling it was created with, any capitals sign in.
-    ok = bool(account) and hmac.compare_digest(payload.username.strip().lower(), account.get("username", "").lower()) \
-        and verify_password(payload.password, account.get("password", ""))
+    account = account_for(redis, payload.username)
+    ok = bool(account) and verify_password(payload.password, account.get("password", ""))
     if not ok:
         redis.incr(fails_key)
         redis.expire(fails_key, FAILS_WINDOW)
         audit(redis, request, 401, f"sign-in failed: {payload.username.strip()[:40]}")
         raise HTTPException(status_code=401, detail="Wrong username or password")
     redis.delete(fails_key)
-    new_session(redis, request, response, account["username"])
+    new_session(redis, request, response, account["name"])
     audit(redis, request, 200, f"user {account['username']} signed in")
     return {"signed_in": True, "user": account["username"]}
 
@@ -198,16 +231,14 @@ def logout(request: Request, response: Response):
 
 @router.post("/api/auth/password")
 def change_password(payload: PasswordChange, request: Request):
+    import access
     redis = _main().redis
-    account = admin(redis)
+    current = session_for(redis, request)
+    account = account_for(redis, current.get("user")) if current else None
     if not account or not verify_password(payload.current, account.get("password", "")):
         raise HTTPException(status_code=403, detail="Current password is wrong")
-    redis.hset("laika:auth:admin", "password", hash_password(payload.new))
-    current = session_for(redis, request)
-    for sid in list(redis.smembers("laika:session-ids") or []):  # sign out everywhere else
-        if not current or sid != current["id"]:
-            redis.delete(f"laika:sessions:{sid}")
-            redis.srem("laika:session-ids", sid)
+    access.save_user(redis, account["name"], password=hash_password(payload.new))
+    end_sessions(redis, user=account["name"], keep=current["id"])  # sign out your other browsers
     return {"changed": True}
 
 
@@ -215,12 +246,15 @@ def change_password(payload: PasswordChange, request: Request):
 def sessions(request: Request):
     redis = _main().redis
     current = session_for(redis, request)
+    ctx = getattr(request.state, "ctx", None)
     items = []
     for sid in sorted(redis.smembers("laika:session-ids") or []):
         record = redis.hgetall(f"laika:sessions:{sid}") or {}
         if not record:
             redis.srem("laika:session-ids", sid)
             continue
+        if ctx is not None and not ctx.is_admin and (record.get("user") or "").lower() != ctx.name:
+            continue  # members see their own browsers only
         items.append({"id": sid[:16], "user": record.get("user"), "ip": record.get("ip"), "agent": record.get("agent"),
                       "created_at": float(record.get("created_at") or 0), "last_seen": float(record.get("last_seen") or 0),
                       "current": bool(current and current["id"] == sid)})
@@ -228,10 +262,14 @@ def sessions(request: Request):
 
 
 @router.delete("/api/auth/sessions/{short_id}")
-def end_session(short_id: str):
+def end_session(short_id: str, request: Request):
     redis = _main().redis
+    ctx = getattr(request.state, "ctx", None)
     for sid in list(redis.smembers("laika:session-ids") or []):
         if sid.startswith(short_id) and len(short_id) == 16:
+            owner = (redis.hget(f"laika:sessions:{sid}", "user") or "").lower()
+            if ctx is not None and not ctx.is_admin and owner != ctx.name:
+                break
             redis.delete(f"laika:sessions:{sid}")
             redis.srem("laika:session-ids", sid)
             return {"ended": True}
@@ -310,7 +348,7 @@ def setup_admin(payload: AdminSetup, request: Request, response: Response):
         raise HTTPException(status_code=403, detail="Wrong or expired setup code. Run 'sudo laika setup-code' on the server for a new one.")
     create_admin(redis, payload.username, payload.password)
     redis.delete("laika:setup:code")
-    new_session(redis, request, response, payload.username)
+    new_session(redis, request, response, payload.username.lower())
     audit(redis, request, 200, f"administrator {payload.username} created")
     return {"signed_in": True, "user": payload.username}
 
@@ -321,25 +359,36 @@ def actor_for(request, token_ok, device):
     """(actor description, error status or 0, error body)."""
     redis = _main().redis
     path = request.url.path
-    if path in PUBLIC or path.startswith("/docs") or path == "/openapi.json":
+    import access
+    request.state.ctx = None
+    if path in PUBLIC or path.startswith(PUBLIC_PREFIXES) or path.startswith("/docs") or path == "/openapi.json":
         return "public", 0, None
     try:
         account_exists = bool(admin(redis))
     except Exception:
         if not setup_lock_enabled():
+            request.state.ctx = access.ADMIN
             return "open", 0, None
         return "", 503, {"detail": "LAIka's database is not reachable"}
     if not account_exists:
         if setup_lock_enabled():
             return "", 401, {"detail": "Set up LAIka first", "setup_required": True}
+        request.state.ctx = access.ADMIN
         return "open", 0, None  # tests / explicitly unlocked installs
     if token_ok:
+        request.state.ctx = access.ADMIN
         return "operator token", 0, None
     if device is not None:
+        # A phone acts for the person who paired it (1.0 phones: the first administrator).
+        owner = account_for(redis, device["owner"]) if device.get("owner") else next(iter(access.active_admins(redis)), None)
+        if owner is None:
+            return "", 401, {"detail": "This phone's owner no longer has an account"}
+        request.state.ctx = access.context_for(owner)
         return f"device {device.get('name')}", 0, None
     session = session_for(redis, request)
     if session:
         if request.method not in ("GET", "HEAD", "OPTIONS") and not same_origin(request):
             return "", 403, {"detail": "Request from another site refused"}
+        request.state.ctx = access.context_for(account_for(redis, session.get("user")))
         return f"user {session.get('user')}", 0, None
     return "", 401, {"detail": "Sign in required", "signed_in": False}

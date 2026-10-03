@@ -14,7 +14,7 @@ import secrets
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 
 import project_catalog
@@ -113,7 +113,7 @@ def request_build(project_id: str):
 
 
 @router.post("/api/projects/{project_id}/builds/all", status_code=202)
-def request_group_build(project_id: str):
+def request_group_build(project_id: str, request: Request):
     """Build every project of this project's group (parent and children) that
     can be built; the others are listed with the reason."""
     project_id = _project(project_id)
@@ -123,6 +123,9 @@ def request_group_build(project_id: str):
         if member == "laika" or projects._view_only(member) or not projects._known(member):
             skipped.append({"id": member, "reason": "managed by the LAIka builder"})
             continue
+        import access
+        if not access.may(projects._redis().redis, getattr(request.state, "ctx", None), member, "build"):
+            continue  # not theirs to build (and not theirs to know about)
         try:
             started.append(_start_build(member))
         except HTTPException as exc:

@@ -101,9 +101,13 @@ def test_setup_code_and_password_reset(capsys):
     r.records["laika:sessions:s1"] = {"user": "alex"}
     assert admin.main(["x", "reset-password"], r) == 0
     out = capsys.readouterr().out
-    assert "user: alex" in out and r.records["laika:auth:admin"]["password"].startswith("scrypt$")
+    # The 1.0 administrator became the first user account.
+    assert "user: alex" in out and r.records["laika:users:alex"]["password"].startswith("scrypt$")
+    assert r.records["laika:users:alex"]["role"] == "admin" and "laika:auth:admin" not in r.records
     assert "laika:sessions:s1" not in r.records
     assert admin.main(["x", "setup-code"], r) == 1  # an administrator exists
+    assert admin.main(["x", "reset-password", "nobody"], r) == 1
+    assert admin.main(["x", "reset-password", "ALEX"], r) == 0  # any capitals
 
 
 def test_provider_helper_reads_cli_output_without_leaking_details():
