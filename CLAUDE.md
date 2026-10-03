@@ -458,8 +458,9 @@ minus EXCLUDE: CLAUDE.md, *-todo.md, docs/stress-*, docs/smoke-test.md,
 laika-migrate-user.sh), scan --range (pre-push; --private adds the
 maintainer's patterns from /etc/laika/release-forbidden.txt, never in the
 repo), build --ref TAG (tarball + manifest.json + ssh-keygen -Y sign with
-/root/laika-release-key/release_ed25519; public half deploy/
-release-key.pub), export --to DIR (fresh one-commit repo for the public
+/root/laika-release-key/release_ed25519, which is NOT kept on the server:
+the owner copies it in for a release and it is shredded afterwards; public
+half deploy/release-key.pub), export --to DIR (fresh one-commit repo for the public
 remote, laika.public=true so its hook also checks private patterns).
 scripts/hooks/pre-push via core.hooksPath. A deliberate fake secret in a
 test needs "release-scan: allow" on its line. scripts/laika-update.py
