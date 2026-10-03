@@ -602,6 +602,11 @@ users CRUD + invites (laika:invites:<sha256>, 24 h). Web: lib/access.js
 (can(), my_access), lib/users.js (Settings -> Users), invite page in
 auth.js, body[data-role=member] .admin-only hidden.
 
+CI (public repo, .github/workflows/ci.yml) runs as an ORDINARY user on
+GitHub: rehearse it non-root (a node:22 container, `su node`), never as
+root. Host tests must not assume root/HOME=/root nor touch live paths
+(tests/conftest.py points LAIKA_PROJECT_DATA at a temp dir).
+
 ## Status (2026-10-02)
 
 v1.0 checkpoints CP1-CP9 are done (see the sections above) and LAIka
