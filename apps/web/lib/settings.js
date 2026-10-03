@@ -5,6 +5,9 @@ import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
 import { loadSettings, navMarkup, sectionMarkup, systemMarkup } from './system-settings.js';
 import { accessData } from './auth.js';
+import { isAdmin, loadMe, currentMe } from './access.js';
+import { usersData } from './users.js';
+import { MEMBER_SECTIONS } from './system-settings.js';
 import { providerCard } from './setup-wizard.js';
 
 const MODE_LABELS = [['ping', 'Post + ping me'], ['post', 'Post'], ['off', 'Off']];
@@ -61,13 +64,19 @@ const say = (id, message) => {
 let currentSection = 'general';
 
 async function load(section = currentSection) {
-  currentSection = section;
   const container = root();
   if (!container) return;
+  if (!currentMe()) await loadMe();
+  const admin = isAdmin();
+  if (!admin && !MEMBER_SECTIONS.includes(section)) section = 'access';
+  currentSection = section;
   try {
-    const settings = await loadSettings(true);
+    // The server-wide settings are the administrators'; members never load them.
+    const settings = admin ? await loadSettings(true) : null;
     let body;
-    if (section === 'notifications') {
+    if (section === 'users') {
+      body = await usersData();
+    } else if (section === 'notifications') {
       data = await requestJSON('/api/notifications');
       body = `${targetsMarkup(data.targets)}${rulesMarkup(data)}`;
     } else if (section === 'phones') {
@@ -89,7 +98,7 @@ async function load(section = currentSection) {
     } else {
       body = sectionMarkup(settings, section, settings.values, settings.pending) || sectionMarkup(settings, 'general', settings.values, settings.pending);
     }
-    container.innerHTML = `<div class="settings-page settings-layout"><div class="page-head"><h2>Settings</h2></div>${navMarkup(settings, section)}<div class="settings-body">${body}</div></div>`;
+    container.innerHTML = `<div class="settings-page settings-layout"><div class="page-head"><h2>Settings</h2></div>${navMarkup(settings, section, admin)}<div class="settings-body">${body}</div></div>`;
     if (section === 'workers') window.dispatchEvent(new CustomEvent('laika:worker-scale-refresh'));
     window.dispatchEvent(new CustomEvent('laika:settings-loaded'));
   } catch (error) {

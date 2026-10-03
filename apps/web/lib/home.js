@@ -11,6 +11,7 @@ import { nestProjects } from './project-groups.js';
 import { previewMarkup } from './markup.js';
 import { elapsedMarkup } from './elapsed.js';
 import { approveAllMarkup } from './group-actions.js';
+import { can } from './access.js';
 
 const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
 const FINISHED_GOAL = { completed: 'done', failed: 'failed', planning_failed: 'failed' };
@@ -52,12 +53,15 @@ export function statusMarkup({ health, workers = [], jobs = [], projects = [] })
 // Projects the LAIka builder manages (LAIka itself, its app): nothing to
 // approve or answer for them here.
 export const viewOnlyIds = (projects = []) => new Set(['laika', ...projects.filter(project => project.view_only).map(project => project.id)]);
-const workable = (projects = []) => projects.filter(project => !project.view_only && project.id !== 'laika');
+const workable = (projects = []) => projects.filter(project => !project.view_only && project.id !== 'laika' && can(project, 'build'));
 
-export function needsYou({ approvals = [], jobs = [], dismissed = new Set(), viewOnly = new Set(['laika']) }) {
+export function needsYou({ approvals = [], jobs = [], dismissed = new Set(), viewOnly = new Set(['laika']), projects = [] }) {
   const mine = job => !viewOnly.has(job.project_id || 'laika');
-  const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass' && mine(job));
-  const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id) && mine(job));
+  // Teams: approvals for people who may approve, stuck work for builders.
+  const byId = new Map(projects.map(project => [project.id, project]));
+  const may = (job, level) => can(byId.get(job.project_id || 'laika') || {}, level);
+  const ready = approvals.filter(job => job.status === 'awaiting_review' && job.review_verdict === 'pass' && mine(job) && may(job, 'approve'));
+  const stuck = jobs.filter(job => job.status === 'needs_human' && !dismissed.has(job.id) && mine(job) && may(job, 'build'));
   return { ready, stuck };
 }
 
@@ -172,7 +176,7 @@ function draw(state) {
   if (typeof document === 'undefined' || !document.getElementById('home')) return;
   const get = key => (Array.isArray(state?.[key]?.data) ? state[key].data : []);
   const names = Object.fromEntries(projects.map(project => [project.id, project.id === 'laika' ? 'LAIka' : project.name || project.id]));
-  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set(), viewOnly: viewOnlyIds(projects) });
+  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: state?.dismissed || new Set(), viewOnly: viewOnlyIds(projects), projects });
   const count = items.ready.length + items.stuck.length;
   paint('home-status', statusMarkup({ health, workers: get('workers'), jobs: get('jobs'), projects }));
   paint('home-needs-count', count ? String(count) : '');

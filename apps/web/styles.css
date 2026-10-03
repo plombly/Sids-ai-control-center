@@ -2510,3 +2510,55 @@ body {
     font-size: 16px;
   }
 }
+
+/* Teams: controls only administrators can use (lib/access.js sets the role). */
+body[data-role="member"] .admin-only {
+  display: none !important;
+}
+
+/* Settings → Users (lib/users.js) */
+.user-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.user-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-soft, var(--line));
+}
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.grant-list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0;
+}
+.grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.grant-row select {
+  width: auto;
+}
+.invite-box .invite-link {
+  flex: 1;
+  min-width: 0;
+}
+/* Tables keep whole words and scroll sideways in their own box: wrapping
+   anywhere (for long ids elsewhere) would crush columns to one letter. */
+table {
+  overflow-wrap: normal;
+}
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}

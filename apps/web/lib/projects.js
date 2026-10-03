@@ -6,6 +6,7 @@ import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from '.
 import { assistantMarkup } from './goal-assistant.js';
 import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
 import { buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
+import { can } from './access.js';
 
 const requestId = newRequestId;
 
@@ -52,8 +53,10 @@ const GOAL_DONE = /^(completed|failed|planning_failed|cancelled)$/;
 // Builder-managed projects (LAIka itself, its app) are view-only here.
 const isViewOnly = project => project?.view_only === true || project?.id === 'laika';
 
-export function tabsMarkup(id, tab, viewOnly = id === 'laika') {
-  const tabs = id === 'laika' ? ['overview', 'activity', 'history'] : viewOnly ? ['overview', 'activity', 'builds', 'history'] : ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
+export function tabsMarkup(id, tab, viewOnly = id === 'laika', project = null) {
+  const all = id === 'laika' ? ['overview', 'activity', 'history'] : viewOnly ? ['overview', 'activity', 'builds', 'history'] : ['overview', 'activity', 'files', 'builds', 'history', 'settings'];
+  // A project's settings and secrets are for people with approve access.
+  const tabs = project && !can(project, 'approve') ? all.filter(key => key !== 'settings') : all;
   return `<nav class="project-tabs" aria-label="Project sections">${tabs
     .map(key => `<a href="#/projects/${encodeURIComponent(id)}${key === 'overview' ? '' : `/${key}`}" class="${key === tab ? 'active' : ''}"${key === tab ? ' aria-current="page"' : ''}>${TAB_LABELS[key]}</a>`)
     .join('')}</nav>`;
@@ -97,7 +100,7 @@ function overviewMarkup(project) {
     // An at-a-glance review: what the builder changed, nothing to act on.
     return `${viewOnlyNotice()}${id === 'laika' ? systemInfoMarkup(project.system) : ''}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
   }
-  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' ? '' : assistantMarkup(`project:${id}`, { label: `What should LAIka do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'laika' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' || !can(project, 'build') ? '' : assistantMarkup(`project:${id}`, { label: `What should LAIka do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'laika' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
@@ -179,7 +182,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
     ? `<a class="button" href="http://${escValue(globalThis.location?.hostname || 'localhost')}:${escValue(app.port)}/" target="_blank" rel="noopener">Open app</a>`
     : '';
   const body =
-    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events, undefined, project, Boolean(project.activity?.group)) : tab === 'builds' ? buildsMarkup(id, project.builds, undefined, isViewOnly(project), buildAllMarkup(project, isViewOnly(project))) : tab === 'files' ? '' : overviewMarkup(project);
+    tab === 'history' ? historyMarkup(project.history) : tab === 'settings' ? settingsMarkup(project) : tab === 'activity' ? activityMarkup(project.activity?.events, undefined, project, Boolean(project.activity?.group)) : tab === 'builds' ? buildsMarkup(id, project.builds, undefined, isViewOnly(project) || !can(project, 'build'), buildAllMarkup(project, isViewOnly(project) || !can(project, 'build'))) : tab === 'files' ? '' : overviewMarkup(project);
   const importance = isViewOnly(project)
     ? `<span class="subtle">Importance ${esc(project.importance || 'medium')}</span>`
     : `<label class="importance-select"${project.parent ? ` title="Follows ${escValue(project.parent_name || project.parent)}"` : ''}>Importance <select id="project-importance" data-project="${esc(id)}"${project.parent ? ' disabled' : ''}><option value="high"${
@@ -187,7 +190,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
       }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
         project.importance === 'low' ? ' selected' : ''
       }>low</option></select></label>`;
-  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'laika' ? 'LAIka · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${tabsMarkup(id, tab, isViewOnly(project))}<div class="project-tab-body">${body}</div></section>`;
+  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'laika' ? 'LAIka · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${tabsMarkup(id, tab, isViewOnly(project), project)}<div class="project-tab-body">${body}</div></section>`;
 }
 
 const APP_STATES = {

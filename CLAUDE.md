@@ -587,6 +587,21 @@ exhausted jobs were reintegrated, hit genuine cherry-pick conflicts, and were re
 Merged merges reviewed under the old partial-diff reviewer (worth a skeptical
 look if touching their code): `4b87827f`, `358966df`, `17b11696`.
 
+Teams (1.1, 2026-10-03): apps/api/access.py is the single policy. Accounts
+laika:users (+ laika:users:<lower name>: username, password, role
+admin|member, access JSON {project: view|build|approve}, disabled, invite);
+the 1.0 laika:auth:admin is migrated on first use. rule() classifies every
+path (SIGNED_IN, PROJECT_RULES with level; anything else admin-only);
+main's middleware runs access.check() and, for members, prunes the list
+responses in access.FILTERED. Members get 404 for projects they cannot
+see. Parent grants cover children; view_only/builtin projects are admin
+only. Endpoints that check more: job actions (approve*), approve-all,
+builds/all, usage, operator-requests (requested_by), sessions, devices
+(owner). access.CURRENT (contextvar) = who is asking. users_routes.py:
+users CRUD + invites (laika:invites:<sha256>, 24 h). Web: lib/access.js
+(can(), my_access), lib/users.js (Settings -> Users), invite page in
+auth.js, body[data-role=member] .admin-only hidden.
+
 ## Status (2026-10-02)
 
 v1.0 checkpoints CP1-CP9 are done (see the sections above) and LAIka

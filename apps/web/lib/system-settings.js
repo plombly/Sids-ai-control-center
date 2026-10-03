@@ -8,12 +8,18 @@ import { esc, escValue } from './format.js';
 export const EXTRA_SECTIONS = [
   { id: 'notifications', label: 'Notifications', help: 'Where alerts go and what each event does.' },
   { id: 'phones', label: 'Phones & apps', help: 'Pair the LAIka app and revoke lost phones.' },
+  { id: 'users', label: 'Users', help: 'Who uses this LAIka and what each person may do.' },
   { id: 'access', label: 'Access', help: 'Your password, signed-in browsers and the audit log.' },
   { id: 'system', label: 'System', help: 'Version, branding and where things live.' }
 ];
 
-export function navMarkup(schema, current) {
-  const sections = [...(schema?.sections || []).slice(0, 2), ...EXTRA_SECTIONS.slice(0, 1), ...(schema?.sections || []).slice(2), ...EXTRA_SECTIONS.slice(1)];
+// Sections members may open (their own phones and sign-ins); the rest are the
+// administrators' (apps/api/access.py).
+export const MEMBER_SECTIONS = ['access', 'phones'];
+
+export function navMarkup(schema, current, admin = true) {
+  const every = [...(schema?.sections || []).slice(0, 2), ...EXTRA_SECTIONS.slice(0, 1), ...(schema?.sections || []).slice(2), ...EXTRA_SECTIONS.slice(1)];
+  const sections = admin ? every : EXTRA_SECTIONS.filter(section => MEMBER_SECTIONS.includes(section.id));
   return `<nav class="settings-nav" aria-label="Settings sections">${sections
     .map(section => `<a href="#/settings/${escValue(section.id)}"${section.id === current ? ' class="active" aria-current="page"' : ''}>${esc(section.label)}</a>`)
     .join('')}</nav>`;
@@ -120,7 +126,7 @@ if (typeof document !== 'undefined') {
     if (!node) return;
     const state = await requestJSON('/api/system/update').catch(() => null);
     if (!state?.version) return;
-    node.innerHTML = ` · LAIka ${esc(state.version)}${state.available?.newer ? ` · <a href="#/settings/system">update to ${esc(state.available.latest)}</a>` : ''}`;
+    node.innerHTML = ` · LAIka ${esc(state.version)}${state.available?.newer ? `<span class="admin-only"> · <a href="#/settings/system">update to ${esc(state.available.latest)}</a></span>` : ''}`;
   };
   setTimeout(footer, 2000);
   setInterval(footer, 30 * 60 * 1000);

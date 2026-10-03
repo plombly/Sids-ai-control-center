@@ -84,6 +84,25 @@ importance and test-internet settings, has a **Whole group** activity
 view, can **Build the whole group** at once, and appears as one entry in
 the weekly digest.
 
+## Teams
+
+Several people can share one LAIka, and its AI accounts. **Settings →
+Users** (administrators) lists everyone and adds people: choose their role
+and, for members, their access to each project, and send them the one-time
+invite link it shows.
+
+| | Can |
+| --- | --- |
+| **Administrator** | everything: settings, users, AI accounts, workers, updates, every project |
+| **Approve** (a project) | everything in that project: goals, files, builds, previews, approving, undo, the project's settings and secrets |
+| **Build** | goals, the goal assistant, files and app data, builds, previews, answering stuck jobs |
+| **View** | see the project: goals, jobs, live logs, history, activity, files, the app |
+
+Access to a parent project covers all its children. Members only see the
+projects they were given, and the dashboard only shows them what they can
+use. Everyone works with this server's AI accounts: nobody needs their own
+subscription or keys. Goals record who gave them.
+
 ## Notifications and the digest
 
 **Settings → Notifications**: a Discord webhook and/or an ntfy topic, what

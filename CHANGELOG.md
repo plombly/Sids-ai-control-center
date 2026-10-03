@@ -2,6 +2,25 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.1.0 (not released yet)
+
+Teams: several people can share one LAIka, and its AI accounts.
+
+- **People and roles.** Settings → Users: administrators add people with a
+  one-time invite link (24 hours; each person chooses their own password),
+  change their role or access, disable them (signed out at once), send a
+  new link to reset a sign-in, or remove them. LAIka always keeps at least
+  one administrator. The 1.0 administrator becomes the first account.
+- **Per-project access:** View, Build or Approve; access to a parent covers
+  its children. Members see only their projects; the dashboard shows only
+  what they can use; the server checks every request, and anything not
+  explicitly allowed for members is administrator-only.
+- **Shared AI accounts:** everyone works with the server's Claude and Codex
+  sign-ins; goals record who gave them.
+- **Phones** act for the person who paired them.
+- `laika reset-password` takes a username.
+- Tables on phones keep whole words and scroll sideways.
+
 ## 1.0.2
 
 - **Sign-in on phones:** usernames ignore capitals, and phones no longer

@@ -20,17 +20,28 @@ it anyway, you take full responsibility for the consequences.
 
 ## Signing in
 
-- One administrator account, created with a one-time setup code that only
-  someone with root on the server can print (`sudo laika setup-code`).
-  Until it exists, LAIka answers nothing but the setup page.
+- The first administrator account is created with a one-time setup code
+  that only someone with root on the server can print
+  (`sudo laika setup-code`). Until it exists, LAIka answers nothing but the
+  setup page.
+- More people join through **Settings → Users** (administrators): each gets
+  a one-time invite link (24 hours) and chooses their own password, so
+  nobody else ever knows it. **Administrators** can do everything;
+  **members** only what they are given per project (see
+  [Using LAIka](using.md#teams)). Every request is checked on the server;
+  anything not explicitly allowed for members is administrator-only, and
+  members cannot even tell that other projects exist.
 - Passwords are stored as scrypt hashes. Sessions are HttpOnly,
   SameSite=Strict cookies; writes from other websites are refused.
 - Failed sign-ins and setup codes are rate-limited per address.
 - **Settings → Access** lists signed-in browsers (end any of them),
-  changes the password (signing out every other browser) and shows the
-  audit log of every change. Forgot the password:
-  `sudo laika reset-password` on the server.
+  changes the password (signing out every other browser) and, for
+  administrators, shows the audit log of every change with who made it.
+  Forgot a password: an administrator sends a new invite link from
+  Settings → Users, or on the server `sudo laika reset-password [USER]`.
 - Phones use their own key per device, revocable in **Settings → Phones**.
+  A phone acts for the person who paired it, with that person's access,
+  and stops working when they are removed.
   Phones can submit goals and answer questions, but never approve changes
   or change settings.
 

@@ -4,6 +4,7 @@
 import { requestJSON } from './api.js';
 import { esc, escValue } from './format.js';
 import { currentBrand, logoHtml, wordmarkHtml } from './brand.js';
+import { loadMe } from './access.js';
 
 export function setupMarkup(message = '') {
   return `<form id="auth-setup-form" class="auth-card" autocomplete="off">${logoHtml(72, 'auth-logo')}<h1>Welcome to ${wordmarkHtml()}</h1><p class="subtle">Create the administrator account. You need the setup code the installer printed; run <code>sudo laika setup-code</code> on the server for a new one.</p><label class="field">Setup code<input name="code" required autocomplete="one-time-code" placeholder="ABCD-2345" autocapitalize="characters" autocorrect="off" spellcheck="false"></label><label class="field">Username<input name="username" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" pattern="[A-Za-z0-9._-]{2,40}"></label><label class="field">Password<input name="password" type="password" required minlength="10" autocomplete="new-password"></label><label class="field">Repeat the password<input name="repeat" type="password" required minlength="10" autocomplete="new-password"></label><button type="submit" class="primary">Create account</button><span class="form-status" role="status">${message ? esc(message) : ''}</span><p class="subtle auth-note">${esc(currentBrand().name)} is meant for your own network or VPN only. Never put it on the public internet.</p></form>`;
@@ -20,6 +21,19 @@ export function screenFor(state) {
   return '';
 }
 
+// Joining with an invite link (#/invite/<token>): choose your password.
+export function inviteMarkup(username, message = '') {
+  if (!username) {
+    return `<div class="auth-card">${logoHtml(72, 'auth-logo')}<h1>This invite link no longer works</h1><p class="subtle">It was used already or is more than a day old. Ask whoever invited you for a new one.</p><a class="button" href="#/">Sign in instead</a></div>`;
+  }
+  return `<form id="auth-invite-form" class="auth-card">${logoHtml(72, 'auth-logo')}<h1>Welcome to ${wordmarkHtml()}</h1><p class="subtle">You were invited as <b>${esc(username)}</b>. Choose your password (10 characters or more).</p><label class="field">Password<input name="password" type="password" required minlength="10" autocomplete="new-password"></label><label class="field">Repeat the password<input name="repeat" type="password" required minlength="10" autocomplete="new-password"></label><button type="submit" class="primary">Join</button><span class="form-status" role="status">${message ? esc(message) : ''}</span></form>`;
+}
+
+export const inviteToken = (hash = globalThis.location?.hash || '') => {
+  const match = /^#\/invite\/([A-Za-z0-9_-]{10,100})$/.exec(hash);
+  return match ? match[1] : '';
+};
+
 export const userMenuMarkup = user => (user ? `<span class="subtle">${esc(user)}</span><button type="button" class="detail-button" data-sign-out>Sign out</button>` : '');
 
 function when(seconds) {
@@ -31,15 +45,16 @@ export function accessMarkup(sessions = [], entries = []) {
   const rows = sessions
     .map(item => `<li class="device-row"><span><b>${esc(item.user)}</b>${item.current ? ' <span class="pill ok">this browser</span>' : ''}<span class="subtle"> · ${esc(item.ip || '')} · last used ${esc(when(item.last_seen))}</span><br><span class="subtle">${esc((item.agent || '').slice(0, 90))}</span></span>${item.current ? '' : `<button type="button" class="danger-button" data-end-session="${escValue(item.id)}">Sign out</button>`}</li>`)
     .join('');
-  const log = entries
+  const log = (entries || [])
     .map(entry => `<tr><td class="subtle">${esc(when(entry.at))}</td><td>${esc(entry.actor)}</td><td><code>${esc(entry.method)} ${esc(entry.path)}</code></td><td>${esc(entry.status)}</td><td class="subtle">${esc(entry.ip || '')}</td></tr>`)
     .join('');
-  return `<form id="auth-password-form" class="settings-card"><h3>Your password</h3><label class="field">Current password<input name="current" type="password" required autocomplete="current-password"></label><label class="field">New password (10 characters or more)<input name="new" type="password" required minlength="10" autocomplete="new-password"></label><div class="settings-actions"><button type="submit">Change password</button><span class="form-status" role="status"></span></div><p class="subtle">Changing it signs out every other browser.</p></form><div class="settings-card"><h3>Signed-in browsers</h3><ul class="device-list">${rows || '<li class="subtle">None</li>'}</ul></div><div class="settings-card"><h3>Audit log</h3><p class="subtle">Every change made through LAIka: who, what and when (newest first).</p><div class="table-wrap"><table class="job-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Result</th><th>From</th></tr></thead><tbody>${log || '<tr><td colspan="5" class="subtle">Nothing yet</td></tr>'}</tbody></table></div></div>`;
+  return `<form id="auth-password-form" class="settings-card"><h3>Your password</h3><label class="field">Current password<input name="current" type="password" required autocomplete="current-password"></label><label class="field">New password (10 characters or more)<input name="new" type="password" required minlength="10" autocomplete="new-password"></label><div class="settings-actions"><button type="submit">Change password</button><span class="form-status" role="status"></span></div><p class="subtle">Changing it signs out every other browser.</p></form><div class="settings-card"><h3>Signed-in browsers</h3><ul class="device-list">${rows || '<li class="subtle">None</li>'}</ul></div>${entries === null ? '' : `<div class="settings-card"><h3>Audit log</h3><p class="subtle">Every change made through LAIka: who, what and when (newest first).</p><div class="table-wrap"><table class="job-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Result</th><th>From</th></tr></thead><tbody>${log || '<tr><td colspan="5" class="subtle">Nothing yet</td></tr>'}</tbody></table></div></div>`}`;
 }
 
 export async function accessData() {
-  const [sessions, audit] = await Promise.all([requestJSON('/api/auth/sessions'), requestJSON('/api/audit?limit=200')]);
-  return accessMarkup(sessions.sessions, audit.entries);
+  // The audit log is the administrators'; everyone manages their own sign-ins.
+  const [sessions, audit] = await Promise.all([requestJSON('/api/auth/sessions'), requestJSON('/api/audit?limit=200').catch(() => null)]);
+  return accessMarkup(sessions.sessions, audit ? audit.entries : null);
 }
 
 if (typeof document !== 'undefined') {
@@ -61,6 +76,12 @@ if (typeof document !== 'undefined') {
     if (node) node.textContent = message;
   };
   async function check() {
+    const token = inviteToken();
+    if (token) {
+      const invite = await requestJSON(`/api/invites/${encodeURIComponent(token)}`).catch(() => ({ valid: false }));
+      show(`invite:${token}`, inviteMarkup(invite.valid ? invite.username : ''));
+      return;
+    }
     try {
       const state = await requestJSON('/api/auth/state');
       const menu = document.getElementById('user-menu');
@@ -70,6 +91,7 @@ if (typeof document !== 'undefined') {
       else if (kind === 'login') show(kind, loginMarkup());
       else {
         show('', '');
+        if (state.signed_in) loadMe();
         if (state.signed_in && !location.hash.startsWith('#/setup')) {
           const setup = await requestJSON('/api/setup/state').catch(() => ({ done: true }));
           if (setup.done === false) location.hash = '#/setup';
@@ -78,13 +100,21 @@ if (typeof document !== 'undefined') {
     } catch {}
   }
   window.addEventListener('laika:auth-required', check);
+  window.addEventListener('hashchange', () => {
+    if (inviteToken()) check();
+  });
   document.addEventListener('submit', async event => {
     const form = event.target;
-    if (!['auth-setup-form', 'auth-login-form', 'auth-password-form'].includes(form?.id)) return;
+    if (!['auth-setup-form', 'auth-login-form', 'auth-password-form', 'auth-invite-form'].includes(form?.id)) return;
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form).entries());
     try {
-      if (form.id === 'auth-setup-form') {
+      if (form.id === 'auth-invite-form') {
+        if (values.password !== values.repeat) return say(form, 'The passwords do not match');
+        await requestJSON(`/api/invites/${encodeURIComponent(inviteToken())}`, { method: 'POST', body: JSON.stringify({ password: values.password }) });
+        location.hash = '#/';
+        location.reload();
+      } else if (form.id === 'auth-setup-form') {
         if (values.password !== values.repeat) return say(form, 'The passwords do not match');
         await requestJSON('/api/setup/admin', { method: 'POST', body: JSON.stringify({ code: values.code, username: values.username, password: values.password }) });
         location.hash = '#/setup';

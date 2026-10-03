@@ -533,7 +533,7 @@ def history(project_id: str):
     except (TypeError, ValueError):
         data = {}
     return {"project_id": project_id, "head": data.get("head"), "changes": data.get("changes") or [],
-            "can_undo": not _view_only(project_id)}
+            "can_undo": not _view_only(project_id) and _my_access(project_id) in ("approve", "admin")}
 
 
 class ProjectUndo(BaseModel):
