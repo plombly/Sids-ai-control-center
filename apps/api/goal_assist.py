@@ -101,6 +101,14 @@ Questions format:
     )
     group = f"\n{group_note.strip()}\n" if group_note else ""
     return f"""Project: "{project_name}" ({project_id}). Type: {kind_line}.{group}
+How LAIka runs projects (facts: never ask about them; state them in the brief when they matter):
+- A project with a run command runs on this server with PORT (assigned by LAIka, 8100-8199) and
+  HOST=0.0.0.0 in its environment: servers must listen on $PORT on 0.0.0.0, never a fixed port.
+- People open apps from other computers at http://<this server's address>:<port>, never localhost:
+  anything that calls another app (a page calling an API) takes that address from configuration.
+- Each project in a group is its own repository: say which project (by name) each part goes in;
+  paths are relative to that project's repository root.
+- Tests run offline with the project's test command; dependencies come from its setup command.
 Your working directory is the project's code at its latest main. Use Read/Grep/Glob briefly
 (a handful of lookups) to ground the brief in the real code: name the files, functions, routes
 or screens involved. Do not plan the jobs; the planner does that.

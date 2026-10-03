@@ -161,3 +161,10 @@ def test_apps_service_starts_queued_turns_only(monkeypatch):
     for session in ("b" * 16, "c" * 16, "../etc"):
         module.launch_assist(session)
     assert len(started) == 1 and started[0][-1] == "b" * 16 and started[0][-2].endswith("scripts/laika-assist.py")
+
+
+def test_the_assistant_knows_how_laika_runs_projects():
+    prompt = goal_assist.build_prompt("Shop", "shop", {"type": "web_app"}, [{"from": "you", "idea": "a page and an API"}])
+    assert "listen on $PORT on 0.0.0.0, never a fixed port" in prompt
+    assert "never localhost" in prompt
+    assert "say which project (by name) each part goes in" in prompt
