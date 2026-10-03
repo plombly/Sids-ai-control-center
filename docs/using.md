@@ -100,8 +100,13 @@ invite link it shows.
 
 Access to a parent project covers all its children. Members only see the
 projects they were given, and the dashboard only shows them what they can
-use. Everyone works with this server's AI accounts: nobody needs their own
-subscription or keys. Goals record who gave them.
+use. Only administrators create, delete and restore projects. Everyone
+works with this server's AI accounts: nobody needs their own subscription
+or keys. Goals record who gave them.
+
+Project apps and previews listen on their own ports (8100–8299): anyone
+on your network who knows the address can open an app, whatever their
+LAIka access. Put real secrets behind the app's own sign-in.
 
 ## Notifications and the digest
 

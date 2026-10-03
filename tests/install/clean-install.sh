@@ -131,6 +131,23 @@ out_box "ps -o user= -C python | sort | uniq -c" >> "$LOG"
 workers_as=$(out_box "ps -eo user=,args= | grep '[w]orker/worker.py' | awk '{print \$1}' | sort -u | tr '\n' ' '")
 [ "$(echo $workers_as)" = laika ] && pass "workers run as laika" || bad "workers run as: ${workers_as:-none}"
 
+step "teams: an invited member sees only their project"
+made=$(api "-X POST http://127.0.0.1:8080/api/users -d '{\"username\": \"Sam\", \"access\": {\"demo\": \"view\"}}'")
+token=$(echo "$made" | python3 -c 'import json,sys; print(json.load(sys.stdin)["invite"]["token"])' 2>/dev/null || true)
+member() { out_box "curl -s -m 10 -c /root/jar2 -b /root/jar2 -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:8080' $*"; }
+if [ -n "$token" ]; then
+  member "-X POST http://127.0.0.1:8080/api/invites/$token -d '{\"password\": \"another long password\"}'" | grep -q '"signed_in":true' \
+    && pass "invite accepted" || bad "invite not accepted"
+  seen=$(member "http://127.0.0.1:8080/api/projects" | python3 -c 'import json,sys; print(sorted(p["id"] for p in json.load(sys.stdin)))' 2>/dev/null)
+  [ "$seen" = "['demo']" ] && pass "member sees only demo" || bad "member sees: $seen"
+  code=$(out_box "curl -s -o /dev/null -w '%{http_code}' -b /root/jar2 http://127.0.0.1:8080/api/settings")
+  [ "$code" = 403 ] && pass "member cannot open settings" || bad "member settings: $code"
+  code=$(out_box "curl -s -o /dev/null -w '%{http_code}' -b /root/jar2 -X POST -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:8080' http://127.0.0.1:8080/api/projects/demo/builds")
+  [ "$code" = 403 ] && pass "a viewer cannot build" || bad "viewer build: $code"
+else
+  bad "could not add a user: $made"
+fi
+
 step "repair is harmless"
 in_box "laika repair --yes" && pass "laika repair" || bad "laika repair"
 api "http://127.0.0.1:8080/api/auth/state" | grep -q '"signed_in":true' && pass "still signed in after repair (secrets kept)" || bad "repair changed secrets"
