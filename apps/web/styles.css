@@ -1816,6 +1816,16 @@ pre {
 .settings-row {
   grid-template-columns: 200px 190px minmax(0, 1fr) auto;
 }
+/* After the desktop columns above, or they win on phones (the notification
+   address rows were ~500 px wide on a 390 px screen). */
+@media (max-width: 640px) {
+  .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-row > span {
+    white-space: normal;
+  }
+}
 .settings-row > span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2478,4 +2488,25 @@ body.auth-locked .live-status {
 .group-toggle button.active {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--text);
+}
+
+
+/* Phones and tablets. A page must never be wider than the screen: iPhone
+   Safari then opens it zoomed in and leaves the zooming out to you. Long
+   unbroken text (commit ids, links, paths) wraps instead of widening it. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+body {
+  overflow-wrap: anywhere;
+}
+/* iPhones zoom in on any form field with text under 16 px when it is tapped. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
