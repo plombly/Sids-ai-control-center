@@ -8,6 +8,11 @@
     laika-release.py export --ref REF --to DIR
                                                a fresh repository (one commit,
                                                no history) to publish
+    laika-release.py github --dir OUT_DIR [--repo OWNER/NAME]
+                                               the GitHub release for a built
+                                               version (gh): tag v<version>,
+                                               the three files, notes from
+                                               CHANGELOG.md
     laika-release.py publish --ref REF --repo DIR
                                                the next release as one commit
                                                (and tag) on a clone of the
@@ -168,6 +173,26 @@ def publish_into(repo, ref, files, version):
     return 0
 
 
+def changelog_notes(text, version):
+    """The CHANGELOG.md section of one version (without its heading)."""
+    match = re.search(rf"^## {re.escape(version)}\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    return match.group(1).strip() if match else ""
+
+
+def github_release(out, repo, runner=subprocess.run):
+    manifest = json.loads((out / "manifest.json").read_text())
+    version = manifest["version"]
+    notes = changelog_notes((ROOT / "CHANGELOG.md").read_text(), version)
+    install = ("Install on Ubuntu 22.04/24.04/26.04 or Debian 12/13: "
+               "`curl -fsSL https://raw.githubusercontent.com/plombly/LAIka/main/install.sh | sudo bash`. "
+               "Update an existing server with `sudo laika update` or Settings → System. "
+               "LAN/VPN only: never expose LAIka to the internet.")
+    files = [str(out / manifest["tarball"]), str(out / "manifest.json"), str(out / "manifest.json.sig")]
+    argv = ["gh", "release", "create", f"v{version}", "--repo", repo, "--verify-tag", "--latest",
+            "--title", f"LAIka {version}", "--notes", f"{install}\n\n{notes}".strip(), *files]
+    return runner(argv).returncode
+
+
 def all_patterns():
     return SECRETS + private_patterns()
 
@@ -185,6 +210,9 @@ def main(argv):
     build.add_argument("--out", default="release")
     build.add_argument("--key", default=os.environ.get("LAIKA_RELEASE_KEY", "/root/laika-release-key/release_ed25519"))
     build.add_argument("--notes", default="")
+    github = sub.add_parser("github")
+    github.add_argument("--dir", required=True)
+    github.add_argument("--repo", default="plombly/LAIka")
     publish = sub.add_parser("publish")
     publish.add_argument("--ref", default="HEAD")
     publish.add_argument("--repo", required=True)
@@ -193,6 +221,8 @@ def main(argv):
     export.add_argument("--to", required=True)
     args = parser.parse_args(argv)
 
+    if args.command == "github":
+        return github_release(Path(args.dir), args.repo)
     if args.command == "scan":
         findings = scan_range(args.range, all_patterns() if args.private else SECRETS)
         for item in findings:

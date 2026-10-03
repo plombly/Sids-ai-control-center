@@ -86,3 +86,16 @@ def test_publish_adds_one_commit_on_the_public_history(rel, tmp_path):
     assert run("tag").stdout.strip() == f"v{version}"
     with pytest.raises(SystemExit, match="already published"):
         rel.publish_into(public, "HEAD", files, version)
+
+
+def test_github_release_uses_the_built_files_and_the_changelog(rel, tmp_path, monkeypatch):
+    import json as _json
+    (tmp_path / "manifest.json").write_text(_json.dumps({"version": "1.0.0", "tarball": "laika-1.0.0.tar.gz"}))
+    calls = []
+    assert rel.github_release(tmp_path, "o/r", runner=lambda argv: calls.append(argv) or subprocess.CompletedProcess(argv, 0)) == 0
+    argv = calls[0]
+    assert argv[:6] == ["gh", "release", "create", "v1.0.0", "--repo", "o/r"] and "--verify-tag" in argv
+    assert argv[argv.index("--title") + 1] == "LAIka 1.0.0"
+    assert "The first public release." in argv[argv.index("--notes") + 1]
+    assert argv[-3:] == [str(tmp_path / f) for f in ("laika-1.0.0.tar.gz", "manifest.json", "manifest.json.sig")]
+    assert rel.changelog_notes("## 1.1.0\nnew\n\n## 1.0.0\nold\n", "1.1.0") == "new"
