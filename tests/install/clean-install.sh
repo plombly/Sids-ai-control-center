@@ -98,7 +98,7 @@ fails=$(echo "$doctor" | python3 -c 'import json,sys; print(" ".join(c["name"] f
 [ -z "$fails" ] && pass "doctor: no failures" || bad "doctor failures: $fails"
 
 if out_box "command -v firewall-cmd" >/dev/null; then
-  ports=$(out_box "firewall-cmd --list-ports")
+  ports=$(out_box 'firewall-cmd --zone="$(firewall-cmd --get-default-zone)" --list-ports')
   case " $ports " in *" 8080/tcp "*"8100-8299/tcp"*|*"8100-8299/tcp"*" 8080/tcp "*) pass "firewalld opened 8080 and 8100-8299 ($ports)" ;;
     *) bad "firewalld ports: ${ports:-none}" ;; esac
 fi
@@ -168,7 +168,7 @@ state=$(api "-X POST http://127.0.0.1:8080/api/auth/login -d '{\"username\": \"t
 echo "$state" | grep -q '"user"' && pass "the old administrator still signs in" || bad "after reinstall: $state"
 
 if out_box "command -v firewall-cmd" >/dev/null; then
-  ports=$(out_box "firewall-cmd --list-ports")
+  ports=$(out_box 'firewall-cmd --zone="$(firewall-cmd --get-default-zone)" --list-ports')
   case "$ports" in *8080*) pass "ports open again after reinstall" ;; *) bad "ports after reinstall: ${ports:-none}" ;; esac
 fi
 

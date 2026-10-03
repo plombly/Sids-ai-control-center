@@ -118,9 +118,12 @@ def test_fedora_and_rhel_family_are_supported(doc):
 
 def test_firewalld_must_let_the_dashboard_and_apps_through(doc, monkeypatch):
     monkeypatch.setattr(doc.shutil, "which", lambda name: "/usr/bin/firewall-cmd")
-    def runner(ports, state=0):
-        return lambda argv, **k: subprocess.CompletedProcess(argv, state if argv[1] == "--state" else 0, ports, "")
+    def runner(ports, state=0, active="public (default)\n  interfaces: eth0\ndocker\n  interfaces: docker0\n"):
+        def run(argv, **k):
+            out = {"--state": "", "--get-default-zone": "public\n", "--get-active-zones": active}.get(argv[1], ports)
+            return subprocess.CompletedProcess(argv, state if argv[1] == "--state" else 0, out, "")
+        return run
     assert doc.check_firewall(runner("ssh 8080/tcp 8100-8299/tcp"))["level"] == "ok"
     result = doc.check_firewall(runner("8080/tcp"))
-    assert result["level"] == "fail" and "8100-8299/tcp" in result["detail"]
+    assert result["level"] == "fail" and "8100-8299/tcp in 'public'" in result["detail"] and "docker" not in result["detail"]
     assert doc.check_firewall(runner("", state=252))["level"] == "ok"           # firewalld not running

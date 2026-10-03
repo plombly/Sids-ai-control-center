@@ -629,7 +629,7 @@ access.levels (the same rules as the dashboard).
 Fedora/RHEL (1.2): install.sh FAMILY=fedora installs iptables-nft (legacy
 iptables breaks Docker on nft-only kernels), skips curl when curl-minimal
 provides it, adds python3.11 when python3 < 3.10 ($PYTHON), opens 8080 and
-8100-8299 in firewalld's default zone; doctor check_firewall. The
+8100-8299 in firewalld's default zone and every active zone except docker; doctor check_firewall. The
 clean-install test runs firewalld in Fedora/RHEL machines.
 
 ## Style

@@ -256,12 +256,16 @@ ln -sfn "$LAIKA_HOME/scripts/laika" /usr/local/bin/laika
 
 # --- firewall ---------------------------------------------------------------------------------------
 # firewalld (Fedora / RHEL) blocks everything not listed: open the dashboard
-# and the ports project apps and previews run on, in the default zone. Ubuntu
+# and the ports project apps and previews run on, in the default zone and
+# every zone the server's network interfaces are in (not Docker's). Ubuntu
 # and Debian have no firewall on by default; ufw users open them themselves.
 if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-  zone=$(firewall-cmd --get-default-zone)
-  say "Firewall: opening 8080 (dashboard) and 8100-8299 (apps, previews) in firewalld's '$zone' zone"
-  firewall-cmd -q --permanent --zone="$zone" --add-port=8080/tcp --add-port=8100-8299/tcp
+  zones=$( (firewall-cmd --get-default-zone; firewall-cmd --get-active-zones 2>/dev/null | awk '/^[^ \t]/ {print $1}') \
+    | grep -vx docker | sort -u)
+  for zone in $zones; do
+    say "Firewall: opening 8080 (dashboard) and 8100-8299 (apps, previews) in firewalld's '$zone' zone"
+    firewall-cmd -q --permanent --zone="$zone" --add-port=8080/tcp --add-port=8100-8299/tcp
+  done
   firewall-cmd -q --reload
 fi
 

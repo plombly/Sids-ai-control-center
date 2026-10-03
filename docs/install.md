@@ -23,8 +23,8 @@ Other systems are refused unless you set `LAIKA_FORCE_OS=1`.
 - **Python:** RHEL 9's Python is 3.9, so the installer adds the system's own
   Python 3.11 package for LAIka.
 - **Firewall:** if firewalld is running, the installer opens **8080** (the
-  dashboard) and **8100–8299** (project apps and previews) in its default
-  zone, and says so. `laika uninstall` closes them again, and `laika doctor`
+  dashboard) and **8100–8299** (project apps and previews) in the zones of the server's
+  network (not Docker's), and says so. `laika uninstall` closes them again, and `laika doctor`
   checks them.
 - **SELinux** may stay enforcing: LAIka's containers use Docker's own
   labels. Its use with SELinux enforcing on a physical machine has not yet

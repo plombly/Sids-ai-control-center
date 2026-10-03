@@ -334,13 +334,18 @@ def check_firewall(runner=run):
     """firewalld (Fedora / RHEL): the dashboard and app ports must be open."""
     if not shutil.which("firewall-cmd") or runner(["firewall-cmd", "--state"]).returncode:
         return ok("firewall", "no firewalld running")
-    ports = set(runner(["firewall-cmd", "--list-ports"]).stdout.split())
-    missing = [port for port in ("8080/tcp", "8100-8299/tcp") if port not in ports]
+    # The default zone and every zone an interface is in, except Docker's.
+    zones = {runner(["firewall-cmd", "--get-default-zone"]).stdout.strip()}
+    zones |= {line.split()[0] for line in runner(["firewall-cmd", "--get-active-zones"]).stdout.splitlines()
+              if line.strip() and not line[0].isspace()}
+    zones -= {"", "docker"}
+    missing = []
+    for zone in sorted(zones):
+        ports = set(runner(["firewall-cmd", f"--zone={zone}", "--list-ports"]).stdout.split())
+        missing += [f"{port} in '{zone}'" for port in ("8080/tcp", "8100-8299/tcp") if port not in ports]
     if missing:
-        return fail("firewall", f"firewalld blocks {', '.join(missing)}",
-                    "sudo firewall-cmd --permanent --add-port=8080/tcp --add-port=8100-8299/tcp && sudo firewall-cmd --reload"
-                    " (or sudo laika repair)")
-    return ok("firewall", "firewalld allows 8080 and 8100-8299")
+        return fail("firewall", f"firewalld blocks {', '.join(missing)}", "sudo laika repair opens them")
+    return ok("firewall", f"firewalld allows 8080 and 8100-8299 ({', '.join(sorted(zones))})")
 
 
 def check_backups(client=None, now=None):
