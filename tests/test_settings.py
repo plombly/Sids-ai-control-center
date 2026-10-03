@@ -199,3 +199,17 @@ def test_sign_in_waits_for_a_cli_that_is_updating(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     times = iter(range(0, 1000, 50))
     assert helper.wait_for_cli("claude", seconds=120, clock=lambda: next(times), sleep=lambda s: None) is False
+
+
+def test_a_revoked_token_shows_as_not_signed_in():
+    import subprocess
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_revoked_test")
+    token = "sk-ant-oat01-" + "r" * 60
+    def runner(argv, **kwargs):
+        if argv[:2] == ["claude", "-p"]:
+            return subprocess.CompletedProcess(argv, 1, json.dumps({"is_error": True, "result": "OAuth token revoked"}), "")
+        return subprocess.CompletedProcess(argv, 0, json.dumps({"loggedIn": True}), "")
+    info = helper.claude_status(runner, token=token)
+    assert info["signed_in"] is False and "sign in again" in info["method"]
+    good = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, json.dumps({"is_error": False, "result": "OK", "loggedIn": True}), "")
+    assert helper.claude_status(good, token=token)["signed_in"] is True

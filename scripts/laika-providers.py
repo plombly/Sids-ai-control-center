@@ -70,8 +70,13 @@ def claude_status(runner=run, token=None):
         data = None
     if data is None and not token:
         return {"installed": result.returncode != 127, "signed_in": False}
-    info = {"installed": result.returncode != 127, "signed_in": bool(token) or bool((data or {}).get("loggedIn")),
-            "method": "long-lived token" if token else (data or {}).get("authMethod") or "",
+    # A saved token can have been revoked or have expired: ask Claude (one
+    # tiny call; status is only refreshed when someone looks, at most every
+    # 10 minutes).
+    works = token_works(token, runner) if token else False
+    info = {"installed": result.returncode != 127, "signed_in": works or (not token and bool((data or {}).get("loggedIn"))),
+            "method": ("long-lived token" if works else "long-lived token no longer works: sign in again") if token
+            else (data or {}).get("authMethod") or "",
             "plan": (data or {}).get("subscriptionType") or ""}
     if token:
         try:
