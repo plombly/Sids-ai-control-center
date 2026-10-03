@@ -1,6 +1,10 @@
+import pwd as _pwd
 import pytest
 
 from laika_testing import MemoryRedis, ROOT, load_module
+
+# The account running the tests (root on a server, "runner" on CI).
+OWN_HOME = _pwd.getpwuid(__import__("os").getuid()).pw_dir
 
 
 module = load_module(ROOT / "services/worker/worker.py")
@@ -59,9 +63,9 @@ def test_run_codex_keeps_process_home(run_fake_codex, monkeypatch, tmp_path):
 
 def test_run_codex_falls_back_to_root_when_home_missing(run_fake_codex, monkeypatch):
     monkeypatch.delenv("HOME", raising=False)
-    assert run_fake_codex()["HOME"] == "/root"
+    assert run_fake_codex()["HOME"] == OWN_HOME
 
 
 def test_run_codex_falls_back_to_root_when_home_empty(run_fake_codex, monkeypatch):
     monkeypatch.setenv("HOME", "")
-    assert run_fake_codex()["HOME"] == "/root"
+    assert run_fake_codex()["HOME"] == OWN_HOME

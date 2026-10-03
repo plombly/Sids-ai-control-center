@@ -36,13 +36,18 @@ def test_layout_and_secrets_report_owner_and_mode_only(doc, tmp_path):
     good = tmp_path / "good"
     good.mkdir(mode=0o700)
     os.chmod(good, 0o700)
-    assert doc.check_layout([(good, "root", "root", 0o700)])["level"] == "ok"
-    result = doc.check_layout([(good, "root", "root", 0o2770), (tmp_path / "gone", "root", "root", 0o700)])
-    assert result["level"] == "fail" and "expected root:root 2770" in result["detail"] and "gone missing" in result["detail"]
+    import grp
+    import pwd
+    me = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(os.getgid()).gr_name
+    assert doc.check_layout([(good, me, group, 0o700)])["level"] == "ok"
+    result = doc.check_layout([(good, me, group, 0o2770), (tmp_path / "gone", me, group, 0o700)])
+    assert result["level"] == "fail" and f"expected {me}:{group} 2770" in result["detail"] and "gone missing" in result["detail"]
     for name in doc.SECRETS:
         (tmp_path / name).write_text("REDIS_PASSWORD=very-secret\n")
         os.chmod(tmp_path / name, 0o600)
-    assert doc.check_secrets(tmp_path)["level"] == "ok"
+    if os.getuid() == 0:  # the secrets check wants root-owned files
+        assert doc.check_secrets(tmp_path)["level"] == "ok"
     os.chmod(tmp_path / "redis.env", 0o644)
     result = doc.check_secrets(tmp_path)
     assert result["level"] == "fail" and "very-secret" not in json.dumps(result)

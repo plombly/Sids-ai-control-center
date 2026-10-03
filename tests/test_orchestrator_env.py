@@ -1,9 +1,13 @@
+import pwd as _pwd
 import json
 import types
 
 import pytest
 
 from laika_testing import MemoryRedis, ROOT, load_module
+
+# The account running the tests (root on a server, "runner" on CI).
+OWN_HOME = _pwd.getpwuid(__import__("os").getuid()).pw_dir
 
 
 @pytest.fixture
@@ -49,7 +53,7 @@ def test_planner_uses_root_when_home_is_unset(orchestrator, monkeypatch):
 
     module.run_codex_planner("goal")
 
-    assert captured["env"]["HOME"] == "/root"
+    assert captured["env"]["HOME"] == OWN_HOME
 
 
 def test_planner_uses_root_when_home_is_empty(orchestrator, monkeypatch):
@@ -58,4 +62,4 @@ def test_planner_uses_root_when_home_is_empty(orchestrator, monkeypatch):
 
     module.run_codex_planner("goal")
 
-    assert captured["env"]["HOME"] == "/root"
+    assert captured["env"]["HOME"] == OWN_HOME

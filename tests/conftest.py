@@ -7,6 +7,10 @@ import pytest
 
 # Tests never read the live server's stored settings (services/laika_env.py).
 os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
+# ...and never write into the live server's data (apps' data folders): a
+# throwaway folder for the whole run (CI runners cannot write there anyway).
+import tempfile  # noqa: E402
+os.environ.setdefault("LAIKA_PROJECT_DATA", tempfile.mkdtemp(prefix="laika-test-data-"))
 
 from laika_testing import (  # noqa: F401  (re-exported for fixtures below)
     BASE, INTEGRATED, JOB, ROOT, FakeGit, MemoryRedis, load_module, make_builder,

@@ -41,3 +41,8 @@ test('steps only send their own settings', () => {
   assert.deepEqual(stepChanges('backups', { BACKUP_TIME: '02:00', BACKUP_KEEP: '7' }), { BACKUP_TIME: '02:00', BACKUP_KEEP: '7', BACKUP_REMOTE: '' });
   assert.deepEqual(stepChanges('notify', { discord_webhook: 'x' }), {});
 });
+
+test('the sign-in card says which app the provider will name', () => {
+  assert.match(providerCard('claude', 'Claude', {}), /authorize <b>Claude Code<\/b>: that is the tool LAIka uses/);
+  assert.match(providerCard('codex', 'Codex', {}), /OpenAI's own sign-in page, which asks you to authorize <b>Codex<\/b>/);
+});
