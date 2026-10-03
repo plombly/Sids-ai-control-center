@@ -110,6 +110,18 @@ LAIka access. Put real secrets behind the app's own sign-in.
 
 ## Notifications and the digest
 
-**Settings → Notifications**: a Discord webhook and/or an ntfy topic, what
-to send for each event (ping, post or nothing), quiet hours, and a weekly
-digest of what got done.
+**Settings → My notifications** (everyone): your own Discord webhook and/or
+ntfy topic, what to send for each event (ping, post or nothing), quiet
+hours, and a weekly digest of your projects. You only hear about projects
+you can see:
+
+| Event | Who gets it |
+| --- | --- |
+| A change is ready for approval | people with **Approve** on that project |
+| A job is stuck, an app crashed | **Build** and up |
+| A goal finished or failed | whoever gave it (choose "every goal in my projects" for all of them) |
+| A backup failed, health turned red | administrators |
+
+**Settings → Server notifications** (administrators): the server's own
+channel, for example a team Discord channel. It gets every event, and the
+dashboard address used in all messages is set here.

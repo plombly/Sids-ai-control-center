@@ -2,6 +2,24 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.2.0 (not released yet)
+
+- **Fedora and RHEL.** Fedora 41+ and RHEL / AlmaLinux / Rocky Linux 9 and
+  10 are supported, with the same clean-machine tests as Ubuntu and Debian.
+  - RHEL 9 gets Python 3.11 from its own packages.
+  - Docker's packages and the nftables-based iptables are installed.
+  - If firewalld is running, the installer opens 8080 and 8100–8299 (and
+    the uninstaller closes them); `laika doctor` checks the ports.
+- **Notifications for everyone.** Settings → My notifications: each person
+  sets their own Discord webhook or ntfy topic, which events they want,
+  quiet hours and a weekly digest.
+  - They only hear about projects they can see, at the level each event
+    needs: approvals for Approve, stuck jobs and app problems for Build,
+    their own goals (or every goal), and backups and health for
+    administrators.
+  - The server's channel stays, as Settings → Server notifications.
+  - Removing a person removes their notification settings.
+
 ## 1.1.1
 
 - Settings → AI explains that Claude's and OpenAI's sign-in pages ask you to

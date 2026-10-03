@@ -6,7 +6,8 @@ import { requestJSON, newRequestId } from './api.js';
 import { esc, escValue } from './format.js';
 
 export const EXTRA_SECTIONS = [
-  { id: 'notifications', label: 'Notifications', help: 'Where alerts go and what each event does.' },
+  { id: 'notifications', label: 'Server notifications', help: "The administrators' channel: every event, backups and health." },
+  { id: 'my-notifications', label: 'My notifications', help: 'Your own Discord or ntfy: what you hear about your projects.' },
   { id: 'phones', label: 'Phones & apps', help: 'Pair the LAIka app and revoke lost phones.' },
   { id: 'users', label: 'Users', help: 'Who uses this LAIka and what each person may do.' },
   { id: 'access', label: 'Access', help: 'Your password, signed-in browsers and the audit log.' },
@@ -15,10 +16,10 @@ export const EXTRA_SECTIONS = [
 
 // Sections members may open (their own phones and sign-ins); the rest are the
 // administrators' (apps/api/access.py).
-export const MEMBER_SECTIONS = ['access', 'phones'];
+export const MEMBER_SECTIONS = ['my-notifications', 'access', 'phones'];
 
 export function navMarkup(schema, current, admin = true) {
-  const every = [...(schema?.sections || []).slice(0, 2), ...EXTRA_SECTIONS.slice(0, 1), ...(schema?.sections || []).slice(2), ...EXTRA_SECTIONS.slice(1)];
+  const every = [...(schema?.sections || []).slice(0, 2), ...EXTRA_SECTIONS.slice(0, 2), ...(schema?.sections || []).slice(2), ...EXTRA_SECTIONS.slice(2)];
   const sections = admin ? every : EXTRA_SECTIONS.filter(section => MEMBER_SECTIONS.includes(section.id));
   return `<nav class="settings-nav" aria-label="Settings sections">${sections
     .map(section => `<a href="#/settings/${escValue(section.id)}"${section.id === current ? ' class="active" aria-current="page"' : ''}>${esc(section.label)}</a>`)

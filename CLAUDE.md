@@ -613,10 +613,24 @@ v1.0 checkpoints CP1-CP9 are done (see the sections above) and LAIka
 1.0.0 is built. Plans A-D of the original roadmap are complete. The
 public repository is github.com/plombly/LAIka (fresh history; publish
 only through scripts/laika-release.py export/publish, never push this
-repository there). Later work, in the owner's todo file: building and
-shipping the LAIka App, Fedora/RHEL support, off-site backups, Tailscale,
-removing the old /opt/sid-venv. Deferred by the owner (do not do unasked):
-secret rotation.
+repository there). Released: 1.0.0-1.0.2, 1.1.0 (teams), 1.1.1. 1.2.0
+(in progress): Fedora/RHEL support and per-person notifications. Later:
+the LAIka App, off-site backups (the owner keeps them local for now),
+Tailscale. Deferred by the owner (do not do unasked): secret rotation.
+
+Per-person notifications (1.2): targets /etc/laika/notify/people/<name>.env
+(root-only, write-only via /api/me/notifications), settings
+laika:notify:settings:<name> (+ "goals": mine|all), sent/initialized keys
+laika:notify:sent:<name> / laika:notify:initialized:<name> (deleted while
+the person has no target, so adding one never floods), personal digest
+laika:digest:last:<name>. Who gets what: notify_core.EVENT_LEVEL via
+access.levels (the same rules as the dashboard).
+
+Fedora/RHEL (1.2): install.sh FAMILY=fedora installs iptables-nft (legacy
+iptables breaks Docker on nft-only kernels), skips curl when curl-minimal
+provides it, adds python3.11 when python3 < 3.10 ($PYTHON), opens 8080 and
+8100-8299 in firewalld's default zone; doctor check_firewall. The
+clean-install test runs firewalld in Fedora/RHEL machines.
 
 ## Style
 

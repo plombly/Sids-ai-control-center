@@ -29,3 +29,18 @@ test('rules: one select per event, quiet hours, digest schedule', () => {
     digest: { day: 'mon', time: '08:00' }
   });
 });
+
+test('my notifications: own endpoints and ids, no dashboard address, a goals choice', () => {
+  const html = targetsMarkup({ ntfy: true, ntfy_hint: '…opic' }, 'mine');
+  assert.match(html, /<form id="my-targets-form"/);
+  assert.match(html, /data-notify-test="mine"/);
+  assert.match(html, /data-kind="mine" data-target-clear="ntfy_url"/);
+  assert.doesNotMatch(html, /dashboard_url/);
+  assert.match(targetsMarkup({}), /name="dashboard_url"/);
+  const rules = rulesMarkup({ settings: { goals: 'all' }, events: [], days: ['sun'] }, 'mine');
+  assert.match(rules, /<form id="my-rules-form"/);
+  assert.match(rules, /<option value="all" selected>Every goal in my projects/);
+  assert.doesNotMatch(rulesMarkup({ settings: {}, events: [], days: ['sun'] }), /name="goals"/);
+  const form = { entries: [['goals', 'all']] };
+  assert.equal(rulesFromForm(form, []).goals, 'all');
+});

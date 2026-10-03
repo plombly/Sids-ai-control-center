@@ -43,8 +43,8 @@ dashboard that works on desktop, tablet and phone.
 
 ## Requirements
 
-- A Linux server or VM: **Ubuntu 22.04, 24.04 or 26.04, or Debian 12 or 13**
-  (x86_64 or arm64). Fedora 40+ and RHEL 9 compatibles are experimental.
+- A Linux server or VM (x86_64 or arm64): **Ubuntu 22.04, 24.04 or 26.04,
+  Debian 12 or 13, Fedora 41+, or RHEL / AlmaLinux / Rocky Linux 9 or 10**.
 - 2 CPUs and 4 GB memory minimum; 4+ CPUs, 8 GB and 40 GB disk recommended.
 - Internet access for the server (to install, and for the AI providers).
 - A Claude Pro/Max subscription or Anthropic API key, and/or a ChatGPT plan
