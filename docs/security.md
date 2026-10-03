@@ -72,8 +72,11 @@ the latest main. See [Architecture](architecture.md).
 ## No telemetry
 
 LAIka sends nothing anywhere except to the AI providers you sign in to,
-package registries your projects use, git remotes you configure, and the
-notification services you set up.
+package registries your projects use, git remotes you configure, the
+notification services you set up, and its update address once a day
+(asking only whether a newer release exists; it can be turned off).
+Releases are signed: the installer and the updater refuse a release whose
+signature or checksum does not match.
 
 ## Reporting a problem
 

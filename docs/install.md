@@ -27,14 +27,24 @@ API key). Both work best: by default Claude plans and reviews, Codex builds.
 ## Install
 
 ```sh
-curl -fsSL https://<release-url>/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plombly/LAIka/main/install.sh | sudo bash
+```
+
+This downloads the latest release, checks its signature against LAIka's
+release key (built into the installer) and its checksum, and only then
+installs it. Prefer to read the script first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/plombly/LAIka/main/install.sh -o install.sh
+less install.sh
+sudo bash install.sh                      # latest release
+sudo bash install.sh --version 1.0.0      # a specific release
 ```
 
 From a local copy (a release archive or a git checkout):
 
 ```sh
-sudo bash install.sh --source /path/to/laika      # a folder
-sudo bash install.sh --source https://…/laika.git --ref v1.0.0
+sudo bash install.sh --source /path/to/laika
 ```
 
 The installer takes 5–15 minutes and is safe to run again. It:

@@ -79,3 +79,11 @@ def test_a_git_checkout_is_never_replaced(up, monkeypatch, tmp_path):
     monkeypatch.setattr(up, "HOME", tmp_path)
     with pytest.raises(SystemExit, match="git checkout"):
         up.apply(MemoryRedis())
+
+
+def test_the_installer_trusts_the_same_release_key_as_the_updater():
+    import re
+    script = (ROOT / "install.sh").read_text()
+    embedded = re.search(r'^RELEASE_KEY="([^"]+)"', script, re.M).group(1)
+    assert embedded == (ROOT / "deploy/release-key.pub").read_text().strip()
+    assert "releases/latest/download/" in (ROOT / "deploy/release.env").read_text()

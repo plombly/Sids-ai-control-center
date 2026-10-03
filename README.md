@@ -55,7 +55,7 @@ dashboard that works on desktop, tablet and phone.
 On the server, as root:
 
 ```sh
-curl -fsSL https://<release-url>/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plombly/LAIka/main/install.sh | sudo bash
 ```
 
 or from a copy of this repository:
@@ -101,8 +101,9 @@ sudo laika uninstall       # remove LAIka (keeps your data unless --purge)
 ## Privacy
 
 LAIka has **no telemetry**. It talks only to the AI providers you sign in to,
-the package registries your projects use, and the notification services you
-configure.
+the package registries your projects use, the notification services you
+configure, and, once a day, GitHub to see whether a new release is out
+(Settings → General → Check for updates turns that off).
 
 ## License
 

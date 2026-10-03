@@ -8,6 +8,10 @@
     laika-release.py export --ref REF --to DIR
                                                a fresh repository (one commit,
                                                no history) to publish
+    laika-release.py publish --ref REF --repo DIR
+                                               the next release as one commit
+                                               (and tag) on a clone of the
+                                               public repository
 
 What ships: every tracked file except development-only ones (EXCLUDE).
 Nothing ships, and nothing is pushed by the pre-push hook, while the scan
@@ -140,6 +144,30 @@ def sign(path, key):
     return Path(str(path) + ".sig")
 
 
+RELEASE_ENV = {"GIT_AUTHOR_NAME": "LAIka", "GIT_AUTHOR_EMAIL": "release@laika.invalid",
+               "GIT_COMMITTER_NAME": "LAIka", "GIT_COMMITTER_EMAIL": "release@laika.invalid"}
+
+
+def publish_into(repo, ref, files, version):
+    """Replace the public clone's files with this release's and commit it on
+    top of the public history (never touching it otherwise)."""
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True,
+                                    env={**os.environ, **RELEASE_ENV})
+    if subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout.strip():
+        raise SystemExit(f"{repo} has uncommitted changes")
+    if subprocess.run(["git", "-C", str(repo), "rev-parse", "-q", "--verify", f"refs/tags/v{version}"],
+                      capture_output=True).returncode == 0:
+        raise SystemExit(f"v{version} is already published; bump VERSION first")
+    run("rm", "-rq", "--ignore-unmatch", ".")
+    with tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", ref, "--", *files)), mode="r:") as tar:
+        tar.extractall(repo, filter="data") if sys.version_info >= (3, 12) else tar.extractall(repo)
+    run("add", "-A")
+    run("commit", "-q", "-m", f"LAIka {version}")
+    run("tag", f"v{version}")
+    print(f"committed LAIka {version} on {repo} and tagged v{version}; review, then push with tags")
+    return 0
+
+
 def all_patterns():
     return SECRETS + private_patterns()
 
@@ -157,6 +185,9 @@ def main(argv):
     build.add_argument("--out", default="release")
     build.add_argument("--key", default=os.environ.get("LAIKA_RELEASE_KEY", "/root/laika-release-key/release_ed25519"))
     build.add_argument("--notes", default="")
+    publish = sub.add_parser("publish")
+    publish.add_argument("--ref", default="HEAD")
+    publish.add_argument("--repo", required=True)
     export = sub.add_parser("export")
     export.add_argument("--ref", default="HEAD")
     export.add_argument("--to", required=True)
@@ -182,6 +213,8 @@ def main(argv):
         return 1
 
     version = version_at(args.ref)
+    if args.command == "publish":
+        return publish_into(Path(args.repo), args.ref, files, version)
     if args.command == "export":
         target = Path(args.to)
         if target.exists() and any(target.iterdir()):
@@ -189,8 +222,7 @@ def main(argv):
         target.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(git("archive", "--format=tar", args.ref, "--", *files)), mode="r:") as tar:
             tar.extractall(target, filter="data") if sys.version_info >= (3, 12) else tar.extractall(target)
-        env = {**os.environ, "GIT_AUTHOR_NAME": "LAIka", "GIT_AUTHOR_EMAIL": "release@laika.invalid",
-               "GIT_COMMITTER_NAME": "LAIka", "GIT_COMMITTER_EMAIL": "release@laika.invalid"}
+        env = {**os.environ, **RELEASE_ENV}
         for step in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", f"LAIka {version}"],
                      ["tag", f"v{version}"],
                      # A public repository: pushes are scanned for private patterns too.

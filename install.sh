@@ -1,8 +1,12 @@
 #!/bin/bash
 # LAIka installer.
 #
-#   curl -fsSL <release>/install.sh | sudo bash
-#   sudo bash install.sh [--source DIR|GIT_URL] [--ref TAG] [--repair] [--yes]
+#   curl -fsSL https://raw.githubusercontent.com/plombly/LAIka/main/install.sh | sudo bash
+#   sudo bash install.sh [--version X.Y.Z] [--source DIR|GIT_URL [--ref TAG]] [--repair] [--yes]
+#
+# Without --source it installs the latest release (or --version): the
+# release manifest must carry a valid signature from LAIka's release key
+# (built into this script) and the download must match its SHA-256.
 #
 # Installs everything LAIka needs on a fresh Ubuntu 22.04 / 24.04 / 26.04 or
 # Debian 12 / 13 server (Fedora 40+ and RHEL-compatible 9 are experimental):
@@ -24,9 +28,13 @@ LOGS=/var/log/laika
 BACKUPS=/var/backups/laika
 VENV=$DATA/venv
 USER_NAME=laika
-# Where LAIka's code comes from: a release repository (set when 1.0 is
-# published) or a local copy (--source DIR).
+# Where LAIka's code comes from: a signed release (default), a local copy
+# (--source DIR) or a git repository (--source URL, development).
 SOURCE=${LAIKA_SOURCE:-}
+RELEASES=${LAIKA_RELEASE_URL:-https://github.com/plombly/LAIka/releases}
+VERSION_WANTED=""
+# The release signing key (the same as deploy/release-key.pub).
+RELEASE_KEY="laika-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA4NpoKtYVSyFHXnvE9wVPIrVAt7yaeJyXt22Btybf7A"
 REF=${LAIKA_REF:-}
 REPAIR=0
 ASSUME_YES=${LAIKA_YES:-0}
@@ -35,6 +43,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --source) SOURCE=$2; shift 2 ;;
     --ref) REF=$2; shift 2 ;;
+    --version) VERSION_WANTED=$2; shift 2 ;;
     --repair) REPAIR=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -76,7 +85,7 @@ apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-instal
 if [ "$FAMILY" = debian ]; then
   say "System packages"
   apt-get update -q >/dev/null
-  apt_install ca-certificates curl gnupg git python3 python3-venv python3-pip bubblewrap openssl \
+  apt_install ca-certificates curl gnupg git python3 python3-venv python3-pip bubblewrap openssl openssh-client \
     util-linux iproute2 iptables rsync tar xz-utils procps
   if ! command -v docker >/dev/null; then
     say "Docker (from docker.com)"
@@ -92,7 +101,7 @@ if [ "$FAMILY" = debian ]; then
   fi
 else
   say "System packages"
-  dnf -y -q install ca-certificates curl git python3 python3-pip bubblewrap openssl util-linux iproute \
+  dnf -y -q install ca-certificates curl git python3 python3-pip bubblewrap openssl openssh-clients util-linux iproute \
     iptables rsync tar xz procps-ng dnf-plugins-core >/dev/null
   if ! command -v docker >/dev/null; then
     say "Docker (from docker.com)"
@@ -119,10 +128,27 @@ elif [ -d "$SOURCE" ]; then
   else
     cp -a "$SOURCE/." "$LAIKA_HOME/"
   fi
-else
-  [ -n "$SOURCE" ] || die "Tell the installer where LAIka's code is: --source DIR or --source GIT_URL."
-  say "Downloading LAIka ${REF:-(latest)}"
+elif [ -n "$SOURCE" ]; then
+  say "Downloading LAIka ${REF:-(latest)} with git"
   git clone -q --depth 1 ${REF:+--branch "$REF"} "$SOURCE" "$LAIKA_HOME"
+else
+  if [ -n "$VERSION_WANTED" ]; then base="$RELEASES/download/v$VERSION_WANTED/"; else base="$RELEASES/latest/download/"; fi
+  say "Downloading LAIka ${VERSION_WANTED:-(latest release)}"
+  work=$(mktemp -d)
+  curl -fsSL "${base}manifest.json" -o "$work/manifest.json" || die "Could not download the release manifest from $base"
+  curl -fsSL "${base}manifest.json.sig" -o "$work/manifest.json.sig" || die "Could not download the release signature"
+  printf '%s\n' "$RELEASE_KEY" > "$work/allowed_signers"
+  ssh-keygen -Y verify -f "$work/allowed_signers" -I laika-release -n laika-release -s "$work/manifest.json.sig" \
+    < "$work/manifest.json" >/dev/null 2>&1 || die "The release is not signed by LAIka's release key. Nothing was installed."
+  tarball=$(python3 -c 'import json,re,sys; t=json.load(open(sys.argv[1]))["tarball"]; print(t if re.fullmatch(r"laika-[0-9A-Za-z.-]+\.tar\.gz", t) else "")' "$work/manifest.json")
+  want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$work/manifest.json")
+  [ -n "$tarball" ] || die "The release manifest names an unexpected file."
+  curl -fsSL "${base}$tarball" -o "$work/$tarball" || die "Could not download $tarball"
+  [ "$(sha256sum "$work/$tarball" | cut -d' ' -f1)" = "$want" ] || die "The download does not match the signed release. Nothing was installed."
+  mkdir -p "$work/x" && tar -xzf "$work/$tarball" -C "$work/x" --no-same-owner
+  [ -f "$work/x/${tarball%.tar.gz}/install.sh" ] || die "The release does not look like LAIka."
+  mv "$work/x/${tarball%.tar.gz}" "$LAIKA_HOME"
+  rm -rf "$work"
 fi
 [ -f "$LAIKA_HOME/docker-compose.yml" ] || die "$LAIKA_HOME does not contain LAIka."
 # shellcheck disable=SC1091

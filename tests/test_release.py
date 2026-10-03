@@ -66,3 +66,23 @@ def test_scan_range_sees_added_lines_and_messages(rel, tmp_path, monkeypatch):
     monkeypatch.setattr(rel, "ROOT", repo)
     assert rel.scan_range("HEAD~1..HEAD", rel.SECRETS) == ["a.txt:1: GitHub token"]
     assert rel.scan_range("HEAD~1", rel.SECRETS) == []
+
+
+def test_publish_adds_one_commit_on_the_public_history(rel, tmp_path):
+    public = tmp_path / "public"
+    run = lambda *a: subprocess.run(["git", "-C", str(public), *a], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(public)], check=True)
+    run("config", "user.email", "t@t")
+    run("config", "user.name", "t")
+    (public / "old.txt").write_text("from an earlier release\n")
+    run("add", "old.txt")
+    run("commit", "-qm", "LAIka 0.9.0")
+    files = rel.shipped("HEAD")
+    version = rel.version_at("HEAD")
+    assert rel.publish_into(public, "HEAD", files, version) == 0
+    log = run("log", "--format=%s").stdout.split("\n")
+    assert log[:2] == [f"LAIka {version}", "LAIka 0.9.0"]
+    assert not (public / "old.txt").exists() and (public / "install.sh").is_file() and not (public / "CLAUDE.md").exists()
+    assert run("tag").stdout.strip() == f"v{version}"
+    with pytest.raises(SystemExit, match="already published"):
+        rel.publish_into(public, "HEAD", files, version)

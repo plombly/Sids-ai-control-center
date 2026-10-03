@@ -81,7 +81,15 @@ CHECKS = [
 ]
 
 
+# Continuous integration has no running LAIka to diagnose: it skips only
+# what it names here (LAIKA_GATE_SKIP=local-diagnostic), and says so.
+SKIP = {name.strip() for name in os.getenv("LAIKA_GATE_SKIP", "").split(",") if name.strip()}
+
+
 def run_check(name, command):
+    if name in SKIP:
+        return {"name": name, "passed": True, "returncode": 0, "duration_seconds": 0,
+                "stdout": f"SKIP: {name} (LAIKA_GATE_SKIP)\n", "stderr": ""}
     started = time.time()
 
     result = subprocess.run(
