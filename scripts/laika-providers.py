@@ -224,23 +224,44 @@ def save_token(token, path=None):
 SIGNIN_LOG = Path(os.environ.get("LAIKA_SIGNIN_LOG", "/var/log/laika/claude-signin.log"))
 
 
-def keep_transcript(output, path=None):
+def keep_transcript(output, path=None, notes=()):
     """What the CLI showed, tokens masked, for diagnosing a failed sign-in."""
     try:
-        Path(path or SIGNIN_LOG).write_text(ANY_SECRET.sub("[token]", plain(output))[-20000:])
+        text = ANY_SECRET.sub("[token]", plain(output))[-20000:]
+        extra = ANY_SECRET.sub("[token]", "\n".join(notes))
+        Path(path or SIGNIN_LOG).write_text(text + ("\n--- notes ---\n" + extra + "\n" if notes else ""))
     except OSError:
         pass
 
 
-def token_works(token, runner=run):
-    """One tiny Claude call with the token: it really signs in."""
+def token_works(token, runner=run, note=None):
+    """One tiny Claude call with the token: it really signs in. note(text)
+    receives Claude's answer for the transcript (never the token)."""
     env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}
     result = runner(["claude", "-p", "Reply with the single word OK.", "--model", "haiku", "--output-format", "json"],
                     timeout=90, env=env)
     try:
-        return result.returncode == 0 and not json.loads(result.stdout or "{}").get("is_error")
+        answer = json.loads(result.stdout or "{}")
     except ValueError:
-        return False
+        answer = {"result": (result.stdout + result.stderr)[-300:]}
+    if note:
+        note(f"test call: exit {result.returncode}, is_error {answer.get('is_error')}, "
+             f"status {answer.get('api_error_status')}, {str(answer.get('result', ''))[:200]}")
+    return result.returncode == 0 and not answer.get("is_error")
+
+
+def token_shape(token):
+    """Safe to log: the public prefix and the length, never the secret part."""
+    kind = re.match(r"sk-ant-([A-Za-z0-9]+)-", token)
+    return f"type {kind.group(1) if kind else '?'}, {len(token)} characters"
+
+
+def token_candidates(output):
+    """Every reading of the screen, longest first (control codes can sit
+    inside what the terminal shows as one token)."""
+    readings = {output, plain(output), ANSI.sub("", output), re.sub(r"\x1b\[[0-9;?<>=]*[A-Za-z~]", "", output)}
+    found = {match for text in readings for match in TOKEN_IN_OUTPUT.findall(text)}
+    return sorted(found, key=len, reverse=True)
 
 
 FAILED = "Sign-in did not finish. Try again; details for support are in /var/log/laika/claude-signin.log."
@@ -250,18 +271,23 @@ def finish_claude(r, exit_code, output, check=None, saver=save_token, tester=tok
     """The CLI printed the long-lived token: check that it works, save it
     (never publish it), end any Claude pause. Messages never carry CLI output
     (it can hold the token); the masked transcript goes to SIGNIN_LOG."""
-    keep_transcript(output)
-    found = TOKEN_IN_OUTPUT.findall(output) or TOKEN_IN_OUTPUT.findall(plain(output))
+    notes = []
+    found = token_candidates(output)
     if found:
-        if not tester(found[-1]):
+        notes.append("token on screen: " + ", ".join(token_shape(t) for t in found))
+        working = next((t for t in found if tester(t, note=notes.append)), None) if tester is token_works \
+            else next((t for t in found if tester(t)), None)
+        keep_transcript(output, notes=notes)
+        if not working:
             publish(r, "claude", state="failed", message="Claude did not accept the new token. Try again.")
             status(r)
             return 1
-        saver(found[-1])
+        saver(working)
         r.delete("laika:provider-cooldown:claude")
         publish(r, "claude", state="done", message="Signed in for a year.")
         status(r)
         return 0
+    keep_transcript(output, notes=["no token on screen"])
     publish(r, "claude", state="failed", message=FAILED)
     status(r)
     return 1

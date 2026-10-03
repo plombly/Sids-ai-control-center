@@ -135,7 +135,9 @@ def test_claude_sign_in_saves_a_working_token_and_never_shows_one(tmp_path, monk
         assert saved == [token] and tested == [token]
         stored = json.dumps(r.values) + json.dumps(r.records)
         assert token not in stored and "sk-ant" not in stored
-        assert token not in (tmp_path / "signin.log").read_text() and "[token]" in (tmp_path / "signin.log").read_text()
+        log = (tmp_path / "signin.log").read_text()
+        assert token not in log and "[token]" in log
+        assert f"type {token.split('-')[2]}, {len(token)} characters" in log
     assert r.get("laika:provider-cooldown:claude") is None
     # A token Claude does not accept is not saved.
     saved = []
