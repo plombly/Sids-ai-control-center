@@ -36,7 +36,9 @@ PROVIDERS_ENV = Path(os.environ.get("LAIKA_PROVIDERS_DIR", "/etc/laika/providers
 LOGIN_TIMEOUT = 900
 URL = re.compile(r"https://[^\s\"'<>]+")
 CODE = re.compile(r"\b[A-Z0-9]{4,5}-[A-Z0-9]{4,5}\b")
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
+# Terminal control codes: CSI (incl. private <, >, =, ? forms), OSC, charset
+# selection and lone escapes.
+ANSI = re.compile(r"\x1b\[[<>=?]?[0-9;]*[A-Za-z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>78]")
 
 
 def redis_client():
@@ -128,7 +130,8 @@ def login_codex(r, clock=time.time):
         publish(r, "codex", state="failed", message="Sign-in timed out")
         return 1
     ok = process.returncode == 0
-    publish(r, "codex", state="done" if ok else "failed", message="" if ok else ANSI.sub("", output)[-300:])
+    shown = re.sub(r"\bsk-\S+", "[key]", ANY_SECRET.sub("[token]", plain(output)))[-300:]
+    publish(r, "codex", state="done" if ok else "failed", message="" if ok else shown)
     status(r)
     return 0 if ok else 1
 
@@ -200,7 +203,10 @@ def login_claude(r, clock=time.time):
     return finish_claude(r, os.waitstatus_to_exitcode(code_status), output)
 
 
-TOKEN_IN_OUTPUT = re.compile(r"sk-ant-oat\d+-[A-Za-z0-9_-]{20,}")
+# Any Anthropic credential (seen: sk-ant-oat01-…, sk-ant-at01-…): matched
+# to save it, and to make sure none is ever shown or logged.
+TOKEN_IN_OUTPUT = re.compile(r"sk-ant-[A-Za-z0-9]+-[A-Za-z0-9_-]{20,}")
+ANY_SECRET = re.compile(r"sk-ant-\S*")
 
 
 def save_token(token, path=None):
@@ -221,29 +227,44 @@ SIGNIN_LOG = Path(os.environ.get("LAIKA_SIGNIN_LOG", "/var/log/laika/claude-sign
 def keep_transcript(output, path=None):
     """What the CLI showed, tokens masked, for diagnosing a failed sign-in."""
     try:
-        Path(path or SIGNIN_LOG).write_text(TOKEN_IN_OUTPUT.sub("[token]", plain(output))[-20000:])
+        Path(path or SIGNIN_LOG).write_text(ANY_SECRET.sub("[token]", plain(output))[-20000:])
     except OSError:
         pass
 
 
-def finish_claude(r, exit_code, output, check=None, saver=save_token):
-    """The CLI printed the long-lived token: save it (never publish it), end
-    any Claude pause, report. Nothing printed: report what it said."""
+def token_works(token, runner=run):
+    """One tiny Claude call with the token: it really signs in."""
+    env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}
+    result = runner(["claude", "-p", "Reply with the single word OK.", "--model", "haiku", "--output-format", "json"],
+                    timeout=90, env=env)
+    try:
+        return result.returncode == 0 and not json.loads(result.stdout or "{}").get("is_error")
+    except ValueError:
+        return False
+
+
+FAILED = "Sign-in did not finish. Try again; details for support are in /var/log/laika/claude-signin.log."
+
+
+def finish_claude(r, exit_code, output, check=None, saver=save_token, tester=token_works):
+    """The CLI printed the long-lived token: check that it works, save it
+    (never publish it), end any Claude pause. Messages never carry CLI output
+    (it can hold the token); the masked transcript goes to SIGNIN_LOG."""
     keep_transcript(output)
-    clean = plain(output)
-    found = TOKEN_IN_OUTPUT.findall(clean)
+    found = TOKEN_IN_OUTPUT.findall(output) or TOKEN_IN_OUTPUT.findall(plain(output))
     if found:
+        if not tester(found[-1]):
+            publish(r, "claude", state="failed", message="Claude did not accept the new token. Try again.")
+            status(r)
+            return 1
         saver(found[-1])
         r.delete("laika:provider-cooldown:claude")
         publish(r, "claude", state="done", message="Signed in for a year.")
         status(r)
         return 0
-    signed_in = (check or claude_status)().get("signed_in")
-    ok = exit_code == 0 and signed_in
-    tail = TOKEN_IN_OUTPUT.sub("[token]", clean)[-300:]
-    publish(r, "claude", state="done" if ok else "failed", message="" if ok else tail)
+    publish(r, "claude", state="failed", message=FAILED)
     status(r)
-    return 0 if ok else 1
+    return 1
 
 
 def read_env(path=PROVIDERS_ENV):

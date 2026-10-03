@@ -321,7 +321,7 @@ def agent_messages(log_path):
 # so a new sign-in takes effect without restarting anything. The everyday
 # `claude auth login` session renews itself and that renewal proved fragile
 # on a server where many processes share one login.
-CLAUDE_TOKEN = re.compile(r"^sk-ant-oat\d+-[A-Za-z0-9_-]{20,}$")
+CLAUDE_TOKEN = re.compile(r"^sk-ant-[A-Za-z0-9]+-[A-Za-z0-9_-]{20,}$")
 
 
 def claude_token_file(home=None):
