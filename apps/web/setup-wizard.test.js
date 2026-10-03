@@ -23,6 +23,7 @@ test('the safety step warns about public addresses', () => {
 
 test('provider cards: status, device code, Claude code box, saved key', () => {
   assert.match(providerCard('claude', 'Claude', { signed_in: true, plan: 'pro' }), /Signed in · pro/);
+  assert.match(providerCard('claude', 'Claude', { signed_in: true, method: 'long-lived token', token_expires: 1822000000 }), /Signed in · long-lived token · until /);
   assert.match(providerCard('codex', 'Codex', { installed: false }), /Not installed/);
   const codex = providerCard('codex', 'Codex', {}, { state: 'waiting', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345' });
   assert.match(codex, /href="https:\/\/auth\.openai\.com\/codex\/device"[\s\S]*ABCD-12345/);

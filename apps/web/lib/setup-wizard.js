@@ -28,8 +28,9 @@ const field = (label, name, value, extra = '') =>
   `<label class="field">${esc(label)}<input name="${escValue(name)}" value="${escValue(value)}"${extra}></label>`;
 
 export function providerCard(name, label, info = {}, login = null, keySaved = false) {
+  const until = info?.token_expires ? ` · until ${opt(new Date(info.token_expires * 1000).toLocaleDateString())}` : '';
   const status = info?.signed_in
-    ? `<span class="pill ok">Signed in${info.plan ? ` · ${opt(info.plan)}` : info.method ? ` · ${opt(info.method)}` : ''}</span>`
+    ? `<span class="pill ok">Signed in${info.plan ? ` · ${opt(info.plan)}` : info.method ? ` · ${opt(info.method)}` : ''}${until}</span>`
     : info?.installed === false
       ? '<span class="pill bad">Not installed</span>'
       : '<span class="pill warn">Not signed in</span>';

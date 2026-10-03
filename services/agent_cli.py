@@ -201,6 +201,9 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
     if wrap is not None:
         command = wrap(command)
     env = {**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir}
+    token = claude_token(env["HOME"])
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     started = time.time()
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -311,6 +314,27 @@ def agent_messages(log_path):
             if text:
                 messages.append(text)
     return messages
+
+
+# The long-lived Claude sign-in (claude setup-token, made from Settings -> AI
+# by scripts/laika-providers.py): one token for a year, read on every run,
+# so a new sign-in takes effect without restarting anything. The everyday
+# `claude auth login` session renews itself and that renewal proved fragile
+# on a server where many processes share one login.
+CLAUDE_TOKEN = re.compile(r"^sk-ant-oat\d+-[A-Za-z0-9_-]{20,}$")
+
+
+def claude_token_file(home=None):
+    return Path(home or os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir) / ".config/laika/claude-token"
+
+
+def claude_token(home=None):
+    """The saved long-lived Claude token, or "" (never logged)."""
+    try:
+        token = claude_token_file(home).read_text().strip()
+    except OSError:
+        return ""
+    return token if CLAUDE_TOKEN.fullmatch(token) else ""
 
 
 # Concurrency cap: every pipeline process shares these slots, so a large

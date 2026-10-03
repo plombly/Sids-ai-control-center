@@ -126,8 +126,8 @@ def test_a_claude_sign_in_is_judged_by_the_cli_afterwards(monkeypatch):
     monkeypatch.setattr(helper, "status", lambda r, runner=None: {})
     assert helper.finish_claude(r, 0, "", check=lambda: {"signed_in": True}) == 0
     assert json.loads(r.get("laika:provider-login:claude"))["state"] == "done"
-    # Exit code lost or non-zero, but the CLI is signed in: still a success.
-    assert helper.finish_claude(r, 1, "", check=lambda: {"signed_in": True}) == 0
+    # No token printed and the CLI failed: a failure, even if an older login exists.
+    assert helper.finish_claude(r, 1, "", check=lambda: {"signed_in": True}) == 1
     assert helper.finish_claude(r, 1, "\x1b[1mInvalid code\x1b[0m", check=lambda: {"signed_in": False}) == 1
     failed = json.loads(r.get("laika:provider-login:claude"))
     assert failed["state"] == "failed" and failed["message"] == "Invalid code"
@@ -144,3 +144,38 @@ def test_host_tools_share_files_with_the_laika_group_but_keep_stricter_masks():
         assert os.umask(0o022) == 0o077
     finally:
         os.umask(before)
+
+
+def test_claude_sign_in_saves_the_long_lived_token_and_never_publishes_it(tmp_path, monkeypatch):
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_token_test")
+    r = MemoryRedis()
+    r.values["laika:provider-cooldown:claude"] = "claude unavailable"
+    monkeypatch.setattr(helper, "status", lambda r, runner=None: {})
+    token = "sk-ant-oat01-" + "A1b2_C3-d4" * 9
+    output = ("Paste code here if prompted >\r\n\x1b[1C\x1b[32m✓\x1b[39m\x1b[1CLong-lived\x1b[1Ctoken:\r\n"
+              + token + "\r\nStore\x1b[1Cthis\x1b[1Ctoken\r\n")
+    saved = []
+    assert helper.finish_claude(r, 0, output, saver=saved.append) == 0
+    assert saved == [token]
+    published = r.get("laika:provider-login:claude")
+    assert json.loads(published)["state"] == "done" and token not in published
+    assert r.get("laika:provider-cooldown:claude") is None
+    path = tmp_path / ".config/laika/claude-token"
+    helper.save_token(token, path)
+    assert path.read_text().strip() == token and oct(path.stat().st_mode)[-3:] == "600"
+    # A failure message never carries a token either.
+    assert helper.finish_claude(r, 1, "bad " + token + " nope", check=lambda: {"signed_in": False}, saver=saved.append) == 0
+    saved.clear()
+    assert helper.finish_claude(r, 1, "\x1b[31mInvalid code\x1b[39m", check=lambda: {"signed_in": False}, saver=saved.append) == 1
+    assert json.loads(r.get("laika:provider-login:claude"))["message"] == "Invalid code" and saved == []
+
+
+def test_claude_runs_use_the_saved_token(tmp_path, monkeypatch):
+    agent_cli = load_module(ROOT / "services/agent_cli.py", "agent_cli_token_test")
+    assert agent_cli.claude_token(tmp_path) == ""
+    (tmp_path / ".config/laika").mkdir(parents=True)
+    (tmp_path / ".config/laika/claude-token").write_text("not a token\n")
+    assert agent_cli.claude_token(tmp_path) == ""
+    token = "sk-ant-oat01-" + "x" * 40
+    (tmp_path / ".config/laika/claude-token").write_text(token + "\n")
+    assert agent_cli.claude_token(tmp_path) == token

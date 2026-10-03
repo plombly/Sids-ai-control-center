@@ -5,9 +5,12 @@
                                         signed in (laika:providers:status)
     laika-providers.py login codex     Codex device sign-in: publishes the
                                         link and code to show in the browser
-    laika-providers.py login claude    Claude subscription sign-in: publishes
-                                        the link, waits for the code the
-                                        browser sends back, finishes sign-in
+    laika-providers.py login claude    Claude subscription sign-in (claude
+                                        setup-token: a long-lived token made
+                                        for servers, one year): publishes the
+                                        link, waits for the code the browser
+                                        sends back, saves the token where only
+                                        the laika user can read it
     laika-providers.py apply-keys      sign Codex in with the OpenAI API key
                                         saved from the web (providers.env)
 
@@ -47,21 +50,34 @@ def publish(r, provider, **fields):
     r.set(f"laika:provider-login:{provider}", json.dumps({"at": time.time(), **fields}), ex=3600)
 
 
-def run(argv, timeout=30, stdin=None):
+def run(argv, timeout=30, stdin=None, env=None):
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=stdin)
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=stdin, env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(argv, 127, "", str(exc))
 
 
-def claude_status(runner=run):
-    result = runner(["claude", "auth", "status", "--json"])
+def claude_status(runner=run, token=None):
+    import agent_cli
+    token = agent_cli.claude_token() if token is None else token
+    env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token} if token else None
+    result = runner(["claude", "auth", "status", "--json"], **({"env": env} if env else {}))
     try:
         data = json.loads(result.stdout)
     except ValueError:
+        data = None
+    if data is None and not token:
         return {"installed": result.returncode != 127, "signed_in": False}
-    return {"installed": True, "signed_in": bool(data.get("loggedIn")), "method": data.get("authMethod") or "",
-            "plan": data.get("subscriptionType") or ""}
+    info = {"installed": result.returncode != 127, "signed_in": bool(token) or bool((data or {}).get("loggedIn")),
+            "method": "long-lived token" if token else (data or {}).get("authMethod") or "",
+            "plan": (data or {}).get("subscriptionType") or ""}
+    if token:
+        try:
+            made = agent_cli.claude_token_file().stat().st_mtime
+            info["token_expires"] = made + 365 * 86400
+        except OSError:
+            pass
+    return info
 
 
 def codex_status(runner=run):
@@ -79,9 +95,15 @@ def status(r, runner=run):
     return report
 
 
+def plain(text):
+    """Terminal output as text: cursor-forward codes (how the CLI draws
+    spaces) become spaces, every other control code goes."""
+    return ANSI.sub("", re.sub(r"\x1b\[\d*C", " ", text))
+
+
 def parse_prompt(text):
     """(url, code) found in a CLI's sign-in output so far."""
-    clean = ANSI.sub("", text)
+    clean = plain(text)
     url = next(iter(URL.findall(clean)), "")
     code = next(iter(CODE.findall(clean)), "")
     return url, code
@@ -117,7 +139,13 @@ def login_claude(r, clock=time.time):
     r.delete("laika:provider-login:claude:code")
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvp("claude", ["claude", "auth", "login", "--claudeai"])
+        # A wide terminal: in 80 columns the sign-in link wraps over several
+        # lines and the page could show only its first part.
+        import fcntl
+        import struct
+        import termios
+        fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 60, 2000, 0, 0))
+        os.execvp("claude", ["claude", "setup-token"])
     output, shown, sent, deadline = "", False, False, clock() + LOGIN_TIMEOUT
     ended = False  # the CLI closed its terminal: it has finished, one way or the other
     while clock() < deadline and not ended:
@@ -156,12 +184,36 @@ def login_claude(r, clock=time.time):
     return finish_claude(r, os.waitstatus_to_exitcode(code_status), output)
 
 
-def finish_claude(r, exit_code, output, check=None):
-    """Report a finished Claude sign-in by what the CLI says now, not only by
-    its exit code (a closed terminal once looked like a timeout)."""
+TOKEN_IN_OUTPUT = re.compile(r"sk-ant-oat\d+-[A-Za-z0-9_-]{20,}")
+
+
+def save_token(token, path=None):
+    """Only the laika user can read it (0600 in its own home)."""
+    import agent_cli
+    path = Path(path or agent_cli.claude_token_file())
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_name(path.name + ".new")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(token + "\n")
+    os.replace(temp, path)
+
+
+def finish_claude(r, exit_code, output, check=None, saver=save_token):
+    """The CLI printed the long-lived token: save it (never publish it), end
+    any Claude pause, report. Nothing printed: report what it said."""
+    clean = plain(output)
+    found = TOKEN_IN_OUTPUT.findall(clean)
+    if found:
+        saver(found[-1])
+        r.delete("laika:provider-cooldown:claude")
+        publish(r, "claude", state="done", message="Signed in for a year.")
+        status(r)
+        return 0
     signed_in = (check or claude_status)().get("signed_in")
-    ok = exit_code == 0 or signed_in
-    publish(r, "claude", state="done" if ok else "failed", message="" if ok else ANSI.sub("", output)[-300:])
+    ok = exit_code == 0 and signed_in
+    tail = TOKEN_IN_OUTPUT.sub("[token]", clean)[-300:]
+    publish(r, "claude", state="done" if ok else "failed", message="" if ok else tail)
     status(r)
     return 0 if ok else 1
 
