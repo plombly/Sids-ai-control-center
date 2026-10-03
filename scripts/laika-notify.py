@@ -14,6 +14,11 @@ hours that hold non-urgent events until they end. Events:
 The first run only records what already exists; events while nothing is
 configured or switched off are recorded too, so turning things on later
 never floods you. `--test` sends a test message (with a ping).
+
+The server's channel gets every event. Each person with their own targets
+(Settings → My notifications) also gets the events of the projects they may
+see, at the level each event needs (notify_core.EVENT_LEVEL), with their own
+settings, quiet hours and record of what was sent (laika:notify:sent:<name>).
 """
 
 import json
@@ -31,6 +36,7 @@ import laika_env  # noqa: E402,F401  (Settings → environment, before any confi
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/api"))
 import notify_core  # noqa: E402  (apps/api/notify_core.py, shared with the API)
+import access  # noqa: E402  (apps/api/access.py: who may see which project)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 SENT_KEY = "laika:notify:sent"  # zset: event key -> time sent
@@ -62,6 +68,18 @@ def _hashes(r, pattern):
             yield key.split(":")[2], r.hgetall(key)
 
 
+class Event(tuple):
+    """(key, type, title, message, link), plus the project and who gave the goal."""
+    project = ""
+    owner = ""
+
+
+def _event(key, kind, title, message, link, project="", owner=""):
+    event = Event((key, kind, title, message, link))
+    event.project, event.owner = project, owner
+    return event
+
+
 def _title(job):
     text = (job.get("title") or job.get("prompt") or job.get("id") or "").strip().splitlines()
     text = text[0] if text else ""
@@ -82,36 +100,36 @@ def events(r, dashboard):
                 and job.get("review_verdict") == "pass" and job.get("integration_status") == "passed"
                 and job.get("reviewed_commit") and job.get("reviewed_commit") == job.get("integrated_candidate_commit")
                 and job_id not in queued):
-            found.append((f"approval:{job_id}:{job['integrated_candidate_commit']}", "approval",
-                          f"Ready for approval · {project}", _title(job), f"{dashboard}/#/"))
+            found.append(_event(f"approval:{job_id}:{job['integrated_candidate_commit']}", "approval",
+                                f"Ready for approval · {project}", _title(job), f"{dashboard}/#/", project))
         elif job.get("status") == "needs_human":
             kind = job.get("needs_human_kind") or "repair"
             if kind == "network":
                 reason = (job.get("network_request_reason") or "").strip().splitlines()
-                found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
-                              f"Wants internet access · {project}",
-                              f"{_title(job)}: its tests need the internet" + (f" ({reason[0][:160]})" if reason else "")
-                              + ". Allow it once, always, or keep tests offline.", link))
+                found.append(_event(f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
+                                    f"Wants internet access · {project}",
+                                    f"{_title(job)}: its tests need the internet" + (f" ({reason[0][:160]})" if reason else "")
+                                    + ". Allow it once, always, or keep tests offline.", link, project))
             else:
-                found.append((f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
-                              f"Needs you · {project}", f"{_title(job)} (gave up after {kind} attempts)", link))
+                found.append(_event(f"needs_human:{job_id}:{job.get('updated_at', '')[:10]}", "needs_human",
+                                    f"Needs you · {project}", f"{_title(job)} (gave up after {kind} attempts)", link, project))
     for goal_id, goal in _hashes(r, "laika:goals:*"):
         status = goal.get("status")
         if status in FINAL_GOAL:
             project = goal.get("project_id") or "laika"
             text = (goal.get("summary") or goal.get("prompt") or goal_id).strip().splitlines()[0][:90]
             kind = "goal_done" if status == "completed" else "goal_failed"
-            found.append((f"goal:{goal_id}:{status}", kind, f"Goal {FINAL_GOAL[status]} · {project}", text,
-                          f"{dashboard}/#/projects/{project}"))
+            found.append(_event(f"goal:{goal_id}:{status}", kind, f"Goal {FINAL_GOAL[status]} · {project}", text,
+                                f"{dashboard}/#/projects/{project}", project, (goal.get("submitted_by") or "").lower()))
     for key in r.scan_iter("laika:app-status:*"):
         app = r.hgetall(key)
         state = app.get("state")
         if state in APP_PROBLEMS:
             project = key.split(":", 2)[2]
-            found.append((f"app:{project}:{state}:{app.get('commit', '')}", "app_problem",
-                          f"App {APP_PROBLEMS[state]} · {project}",
-                          (app.get("error") or "See the log on its project page")[:200],
-                          f"{dashboard}/#/projects/{project}"))
+            found.append(_event(f"app:{project}:{state}:{app.get('commit', '')}", "app_problem",
+                                f"App {APP_PROBLEMS[state]} · {project}",
+                                (app.get("error") or "See the log on its project page")[:200],
+                                f"{dashboard}/#/projects/{project}", project))
     try:
         backup = json.loads(r.get("laika:backup:last") or "{}")
     except ValueError:
@@ -136,16 +154,57 @@ def send(config, title, message, link, mode="post", opener=urllib.request.urlope
                             log=lambda line: print(line, flush=True))
 
 
-def run(r, config, now=None, sender=send, settings=None, clock=None):
+def run(r, config, now=None, sender=send, settings=None, clock=None, person_targets=None):
+    """The server's channel, then each person's own."""
     now = time.time() if now is None else now
     settings = settings or notify_core.load_settings(r)
     current = events(r, config["DASHBOARD_URL"])
-    r.zremrangebyscore(SENT_KEY, "-inf", now - KEEP_SECONDS)
-    first_run = not r.exists(READY_KEY)
-    has_target = bool(config.get("NTFY_URL") or config.get("DISCORD_WEBHOOK"))
+    result = deliver(r, config, current, settings, SENT_KEY, READY_KEY, now, sender, clock)
+    result["people"] = run_people(r, config, current, now, sender, clock, person_targets)
+    return result
+
+
+def for_person(r, user, settings, current):
+    """The events this person may receive and asked for."""
+    ctx = access.context_for(user)
+    levels = access.levels(r, ctx)
+    mine = []
+    for event in current:
+        kind = event[1]
+        if not notify_core.may_receive(kind, getattr(event, "project", ""), ctx.is_admin, levels, access.LEVELS):
+            continue
+        if kind in ("goal_done", "goal_failed") and settings["goals"] == "mine" and getattr(event, "owner", "") != user["name"]:
+            continue
+        mine.append(event)
+    return mine
+
+
+def run_people(r, config, current, now, sender=send, clock=None, person_targets=None):
+    load = person_targets or (lambda name: notify_core.load_targets(person=name))
+    results = {}
+    for user in access.all_users(r):
+        name = user["name"]
+        sent_key, ready_key = f"{SENT_KEY}:{name}", f"{READY_KEY}:{name}"
+        targets = load(name) if not user["disabled"] and user.get("password") else {}
+        if not notify_core.has_target(targets):
+            r.delete(ready_key)  # when they add one, start fresh: no flood of old events
+            continue
+        settings = notify_core.load_settings(r, name)
+        personal = {**targets, "DASHBOARD_URL": config["DASHBOARD_URL"]}
+        outcome = deliver(r, personal, for_person(r, user, settings, current), settings, sent_key, ready_key,
+                          now, sender, clock)
+        if outcome["sent"] or outcome["held"] or outcome["first_run"]:
+            results[name] = outcome
+    return results
+
+
+def deliver(r, config, current, settings, sent_key, ready_key, now, sender=send, clock=None):
+    r.zremrangebyscore(sent_key, "-inf", now - KEEP_SECONDS)
+    first_run = not r.exists(ready_key)
+    has_target = notify_core.has_target(config)
     sent, held = [], []
     for key, kind, title, message, link in current:
-        if r.zscore(SENT_KEY, key) is not None:
+        if r.zscore(sent_key, key) is not None:
             continue
         mode = notify_core.mode_for(settings, kind, clock)
         if not first_run and has_target and mode == "hold":
@@ -157,9 +216,9 @@ def run(r, config, now=None, sender=send, settings=None, clock=None):
             if not sender(config, title, message, link, mode):
                 continue  # try again next minute
             sent.append(key)
-        r.zadd(SENT_KEY, {key: now})
+        r.zadd(sent_key, {key: now})
     if first_run:
-        r.set(READY_KEY, str(now))
+        r.set(ready_key, str(now))
     return {"events": len(current), "sent": sent, "held": held, "first_run": first_run}
 
 
@@ -175,7 +234,7 @@ def main(argv=None):
         return 0 if ok else 1
     r = redis_lib.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
     result = run(r, config)
-    if result["sent"] or result["first_run"]:
+    if result["sent"] or result["first_run"] or result["people"]:
         print(f"[laika-notify] {json.dumps(result)}", flush=True)
     return 0
 

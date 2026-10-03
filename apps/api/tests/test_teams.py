@@ -144,3 +144,26 @@ def test_a_phone_acts_for_whoever_paired_it(team):
     assert [d["owner"] for d in sam.get("/api/devices").json()["devices"]] == ["sam"]
     admin.delete("/api/users/sam")
     assert phone.get("/api/projects").status_code == 401                 # removed with its owner
+
+
+def test_everyone_sets_their_own_notifications(team):
+    admin, fake = team
+    sam = join(invite(admin, "sam", grants={"shop": "build"}))
+    mine = sam.get("/api/me/notifications").json()
+    kinds = {event["type"] for event in mine["events"]}
+    assert "approval" in kinds and "health_red" not in kinds and mine["settings"]["goals"] == "mine"
+    assert sam.post("/api/me/notifications/test").status_code == 409                       # nowhere to send yet
+    assert sam.put("/api/me/notifications/targets", json={"dashboard_url": "http://x"}).status_code == 422
+    saved = sam.put("/api/me/notifications/targets", json={"ntfy_url": "https://ntfy.sh/sams-topic"}).json()
+    assert saved["targets"]["ntfy"] is True and "sams-topic" not in json.dumps(saved)        # write-only
+    assert sam.put("/api/me/notifications/settings", json={"goals": "all", "events": {"approval": "off"}}).json()[
+        "settings"]["events"]["approval"] == "off"
+    assert admin.get("/api/me/notifications").json()["targets"]["ntfy"] is False           # their own, not Sam's
+    assert "health_red" in {e["type"] for e in admin.get("/api/me/notifications").json()["events"]}
+    preview = sam.get("/api/me/notifications/digest-preview")
+    assert preview.status_code == 200 and "Blog" not in preview.json()["text"]
+    assert sam.get("/api/notifications").status_code == 403                                  # the server's stay admin-only
+    import notify_core
+    assert notify_core.load_targets(person="sam")
+    admin.delete("/api/users/sam")
+    assert notify_core.load_targets(person="sam") == {} and fake.get("laika:notify:settings:sam") is None

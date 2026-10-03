@@ -40,3 +40,34 @@ def test_settings_are_cleaned_and_quiet_hours_wrap_midnight():
     assert not notify_core.in_quiet_hours(saved, at(7, 0)) and not notify_core.in_quiet_hours(saved, at(12, 0))
     assert notify_core.mode_for(saved, "approval", at(23, 0)) == "hold"
     assert notify_core.mode_for(saved, "health_red", at(23, 0)) == "ping"  # urgent
+
+
+def test_personal_targets_are_separate_files_without_the_dashboard_address(tmp_path):
+    notify_core.save_targets({"NTFY_URL": "https://ntfy.sh/sam-topic"}, tmp_path, person="sam")
+    assert notify_core.load_targets(tmp_path, person="sam") == {"NTFY_URL": "https://ntfy.sh/sam-topic"}
+    assert stat.S_IMODE((tmp_path / "people" / "sam.env").stat().st_mode) == 0o600
+    for bad in ({"DASHBOARD_URL": "http://x"}, {"NTFY_URL": "https://ntfy.sh/a\nDISCORD_WEBHOOK=evil"}):
+        try:
+            notify_core.save_targets(bad, tmp_path, person="sam")
+            raise AssertionError(f"accepted {bad}")
+        except ValueError:
+            pass
+    for name in ("..", "../x", "a/b", ""):
+        try:
+            notify_core.env_file(tmp_path, name)
+            raise AssertionError(f"accepted {name!r}")
+        except ValueError:
+            pass
+    notify_core.remove_person("sam", tmp_path)
+    assert notify_core.load_targets(tmp_path, person="sam") == {}
+
+
+def test_who_may_receive_what():
+    levels = {"view": 1, "build": 2, "approve": 3}
+    may = lambda kind, have: notify_core.may_receive(kind, "shop", False, {"shop": have}, levels)
+    assert may("approval", 3) and not may("approval", 2)
+    assert may("needs_human", 2) and not may("needs_human", 1)
+    assert may("goal_done", 1) and not may("health_red", 3) and not may("backup_failed", 3)
+    assert notify_core.may_receive("health_red", "", True, None, levels)
+    assert "health_red" not in notify_core.personal_events(False) and "health_red" in notify_core.personal_events(True)
+    assert notify_core.clean_personal({"goals": "everything"})["goals"] == "mine"

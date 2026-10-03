@@ -162,6 +162,11 @@ def remove_user(name: str, request: Request):
     for device_id in list(redis.smembers("laika:devices") or []):  # their phones stop working
         if (redis.hget(f"laika:devices:{device_id}", "owner") or "") == user["name"]:
             redis.hset(f"laika:devices:{device_id}", "revoked_at", str(time.time()))
+    import notify_core  # their own notifications go with them
+    notify_core.remove_person(user["name"])
+    for key in (notify_core.settings_key(user["name"]), f"laika:notify:sent:{user['name']}",
+                f"laika:notify:initialized:{user['name']}", f"laika:digest:last:{user['name']}"):
+        redis.delete(key)
     redis.delete(access.user_key(user["name"]))
     redis.srem(access.USERS, user["name"])
     return {"removed": user["name"]}

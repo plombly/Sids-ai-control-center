@@ -3,6 +3,10 @@
 Targets are write-only: the page shows whether a Discord webhook / ntfy
 topic is set (and its last 4 characters), never the value. The target file
 is the host's /etc/laika/notify/notify.env, mounted here at /notify.
+
+/api/me/notifications is everyone's own channel (1.2): their targets in
+/notify/people/<name>.env, their settings, the events they can choose (by
+their role), a test and a preview of their own digest.
 """
 
 import json
@@ -10,9 +14,10 @@ import re
 import time
 from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+import access
 import digest
 import notify_core
 import project_routes as projects
@@ -48,6 +53,10 @@ def put_settings(payload: Settings):
     return {"settings": notify_core.save_settings(_redis(), payload.model_dump())}
 
 
+class PersonalSettings(Settings):
+    goals: str = Field(default="mine", pattern=r"^(mine|all)$")
+
+
 class Targets(BaseModel):
     discord_webhook: Optional[str] = Field(default=None, max_length=300)
     discord_mention: Optional[str] = Field(default=None, max_length=30)
@@ -57,6 +66,11 @@ class Targets(BaseModel):
 
 @router.put("/api/notifications/targets")
 def put_targets(payload: Targets):
+    notify_core.save_targets(_target_changes(payload))
+    return {"targets": notify_core.masked(notify_core.load_targets())}
+
+
+def _target_changes(payload, personal=False):
     changes = {}
     if payload.discord_webhook is not None:
         if payload.discord_webhook and not DISCORD.fullmatch(payload.discord_webhook.strip()):
@@ -73,14 +87,18 @@ def put_targets(payload: Targets):
     if payload.dashboard_url is not None:
         if payload.dashboard_url and not re.fullmatch(r"https?://\S+", payload.dashboard_url.strip()):
             raise HTTPException(status_code=422, detail="The dashboard address starts with http:// or https://")
+        if personal:
+            raise HTTPException(status_code=422, detail="The dashboard address is a server setting")
         changes["DASHBOARD_URL"] = payload.dashboard_url.strip()
-    notify_core.save_targets(changes)
-    return {"targets": notify_core.masked(notify_core.load_targets())}
+    return changes
 
 
 @router.post("/api/notifications/test")
 def send_test():
-    targets = notify_core.load_targets()
+    return _test(notify_core.load_targets())
+
+
+def _test(targets):
     if not (targets.get("DISCORD_WEBHOOK") or targets.get("NTFY_URL")):
         raise HTTPException(status_code=409, detail="Add a Discord webhook or an ntfy topic first")
     delivered = notify_core.send(targets, "LAIka test notification",
@@ -114,4 +132,63 @@ def _digest_data():
 def digest_preview():
     title, text = digest.build(time.time(), dashboard=notify_core.load_targets().get("DASHBOARD_URL", ""),
                                **_digest_data())
+    return {"title": title, "text": text}
+
+
+# --- everyone's own ------------------------------------------------------------------------------
+
+def _person(request):
+    """The signed-in person's account (the operator token is nobody)."""
+    ctx = getattr(request.state, "ctx", None)
+    user = access.get_user(_redis(), ctx.name) if ctx is not None else None
+    if not user:
+        raise HTTPException(status_code=409, detail="Sign in with your own account to set your notifications")
+    return user, ctx
+
+
+@router.get("/api/me/notifications")
+def my_notifications(request: Request):
+    user, ctx = _person(request)
+    names = notify_core.personal_events(ctx.is_admin)
+    return {"targets": notify_core.masked(notify_core.load_targets(person=user["name"])),
+            "settings": notify_core.load_settings(_redis(), user["name"]),
+            "events": [{"type": name, "label": notify_core.EVENTS[name][0], "urgent": notify_core.EVENTS[name][2]}
+                       for name in names],
+            "days": list(notify_core.DAYS), "admin": ctx.is_admin}
+
+
+@router.put("/api/me/notifications/settings")
+def put_my_settings(payload: PersonalSettings, request: Request):
+    user, _ = _person(request)
+    return {"settings": notify_core.save_settings(_redis(), payload.model_dump(), user["name"])}
+
+
+@router.put("/api/me/notifications/targets")
+def put_my_targets(payload: Targets, request: Request):
+    user, _ = _person(request)
+    notify_core.save_targets(_target_changes(payload, personal=True), person=user["name"])
+    return {"targets": notify_core.masked(notify_core.load_targets(person=user["name"]))}
+
+
+@router.post("/api/me/notifications/test")
+def my_test(request: Request):
+    user, _ = _person(request)
+    targets = notify_core.load_targets(person=user["name"])
+    return _test({**targets, "DASHBOARD_URL": notify_core.load_targets().get("DASHBOARD_URL", "")})
+
+
+@router.get("/api/me/notifications/digest-preview")
+def my_digest_preview(request: Request):
+    user, ctx = _person(request)
+    data = _digest_data()
+    levels = access.levels(_redis(), ctx)
+    if levels is not None:
+        keep = lambda record: (record.get("project_id") or "laika") in levels
+        data = {**data, "projects": [(pid, name) for pid, name in data["projects"] if pid in levels],
+                "parents": {k: v for k, v in data["parents"].items() if k in levels},
+                "goals": {k: v for k, v in data["goals"].items() if keep(v)},
+                "jobs": {k: v for k, v in data["jobs"].items() if keep(v)},
+                "events": {k: v for k, v in data["events"].items() if k in levels},
+                "apps": {k: v for k, v in data["apps"].items() if k in levels}, "backup": None, "restore": None}
+    title, text = digest.build(time.time(), dashboard=notify_core.load_targets().get("DASHBOARD_URL", ""), **data)
     return {"title": title, "text": text}

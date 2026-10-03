@@ -29,6 +29,18 @@ CONF = Path("/etc/laika")
 LOGS = Path("/var/log/laika")
 VENV = DATA / "venv"
 SUPPORTED = {("ubuntu", "22.04"), ("ubuntu", "24.04"), ("ubuntu", "26.04"), ("debian", "12"), ("debian", "13")}
+# Fedora 41+ and RHEL-family 9 / 10 (any minor version).
+RHEL_LIKE = ("rhel", "almalinux", "rocky", "centos")
+SUPPORTED_TEXT = "Ubuntu 22.04/24.04/26.04, Debian 12/13, Fedora 41+, RHEL / AlmaLinux / Rocky 9 and 10"
+
+
+def supported(os_id, version):
+    if (os_id, version) in SUPPORTED:
+        return True
+    major = (version or "").split(".")[0]
+    if os_id == "fedora":
+        return major.isdigit() and int(major) >= 41
+    return os_id in RHEL_LIKE and major in ("9", "10")
 SERVICES = ("laika-orchestrator", "laika-operator", "laika-apps", "laika-scaler")
 TIMERS = ("laika-backup", "laika-watchdog", "laika-prune", "laika-notify", "laika-digest", "laika-restore-check")
 CONTAINERS = ("laika-redis", "laika-postgres", "laika-api", "laika-web")
@@ -83,9 +95,9 @@ def check_system(os_release="/etc/os-release"):
     except OSError:
         pass
     name = info.get("PRETTY_NAME", "unknown")
-    if (info.get("ID"), info.get("VERSION_ID")) in SUPPORTED:
+    if supported(info.get("ID"), info.get("VERSION_ID")):
         return ok("system", name)
-    return warn("system", f"{name} is not a supported system (Ubuntu 22.04/24.04/26.04, Debian 12/13)")
+    return warn("system", f"{name} is not a supported system ({SUPPORTED_TEXT})")
 
 
 def check_resources(meminfo="/proc/meminfo", usage=shutil.disk_usage):
@@ -266,7 +278,8 @@ def check_sandbox(runner=run):
     result = runner(argv)
     if result.returncode:
         return fail("sandbox", f"bubblewrap cannot run as {USER}: {(result.stderr or '').strip()[:160]}",
-                    "Ubuntu: the bubblewrap package must keep its AppArmor profile (bwrap-userns-restrict).")
+                    "Ubuntu: the bubblewrap package must keep its AppArmor profile (bwrap-userns-restrict). "
+                    "RHEL: user namespaces must be allowed (sysctl user.max_user_namespaces > 0).")
     return ok("sandbox", f"bubblewrap works as {USER}")
 
 
@@ -317,6 +330,19 @@ def check_exposure(runner=run):
     return ok("exposure", "no public addresses")
 
 
+def check_firewall(runner=run):
+    """firewalld (Fedora / RHEL): the dashboard and app ports must be open."""
+    if not shutil.which("firewall-cmd") or runner(["firewall-cmd", "--state"]).returncode:
+        return ok("firewall", "no firewalld running")
+    ports = set(runner(["firewall-cmd", "--list-ports"]).stdout.split())
+    missing = [port for port in ("8080/tcp", "8100-8299/tcp") if port not in ports]
+    if missing:
+        return fail("firewall", f"firewalld blocks {', '.join(missing)}",
+                    "sudo firewall-cmd --permanent --add-port=8080/tcp --add-port=8100-8299/tcp && sudo firewall-cmd --reload"
+                    " (or sudo laika repair)")
+    return ok("firewall", "firewalld allows 8080 and 8100-8299")
+
+
 def check_backups(client=None, now=None):
     import datetime
     import time as _time
@@ -356,7 +382,7 @@ def all_checks():
               check_containers, check_services, check_redis_and_workers,
               lambda: check_http("api", "http://127.0.0.1:8000/health"),
               lambda: check_http("dashboard", "http://127.0.0.1:8080/health"),
-              check_sandbox, check_providers, check_exposure, check_backups, check_admin]
+              check_sandbox, check_providers, check_firewall, check_exposure, check_backups, check_admin]
     results = []
     for check in checks:
         try:

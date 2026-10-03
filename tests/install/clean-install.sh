@@ -39,7 +39,8 @@ trap cleanup EXIT
 
 step "base image $IMAGE with systemd"
 case "$IMAGE" in
-  fedora*|rocky*|alma*) PKG="dnf -y -q install systemd procps-ng iproute sudo && dnf clean all" ;;
+  # firewalld on, as on a real Fedora / RHEL server: the installer must open LAIka's ports.
+  fedora*|rocky*|alma*|*/rockylinux*) PKG="dnf -y -q install systemd procps-ng iproute sudo firewalld && systemctl enable firewalld && dnf clean all" ;;
   *) PKG="apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q systemd systemd-sysv dbus iproute2 sudo ca-certificates curl && rm -rf /var/lib/apt/lists/*" ;;
 esac
 cat > "$WORK/Dockerfile" <<EOF
@@ -95,6 +96,12 @@ doctor=$(out_box "laika doctor --json" || true)
 echo "$doctor" >> "$LOG"
 fails=$(echo "$doctor" | python3 -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin) if c["level"] == "fail"))' 2>/dev/null || echo "unreadable")
 [ -z "$fails" ] && pass "doctor: no failures" || bad "doctor failures: $fails"
+
+if out_box "command -v firewall-cmd" >/dev/null; then
+  ports=$(out_box "firewall-cmd --list-ports")
+  case " $ports " in *" 8080/tcp "*"8100-8299/tcp"*|*"8100-8299/tcp"*" 8080/tcp "*) pass "firewalld opened 8080 and 8100-8299 ($ports)" ;;
+    *) bad "firewalld ports: ${ports:-none}" ;; esac
+fi
 
 step "first-run setup through the API (setup code -> admin -> sign in)"
 code=$(out_box "/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-admin.py setup-code" | tail -1)
@@ -159,6 +166,11 @@ out_box "test ! -e /opt/laika && test -d /var/lib/laika/projects/demo && ! syste
 in_box "LAIKA_RELEASE_URL=http://127.0.0.1:8099/releases bash /root/laika-src/install.sh $how --yes" && pass "reinstall" || bad "reinstall"
 state=$(api "-X POST http://127.0.0.1:8080/api/auth/login -d '{\"username\": \"tester\", \"password\": \"correct horse battery\"}'")
 echo "$state" | grep -q '"user"' && pass "the old administrator still signs in" || bad "after reinstall: $state"
+
+if out_box "command -v firewall-cmd" >/dev/null; then
+  ports=$(out_box "firewall-cmd --list-ports")
+  case "$ports" in *8080*) pass "ports open again after reinstall" ;; *) bad "ports after reinstall: ${ports:-none}" ;; esac
+fi
 
 step "uninstall --purge"
 in_box "laika uninstall --purge --yes" && pass "purge" || bad "purge"

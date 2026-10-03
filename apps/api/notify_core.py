@@ -7,11 +7,19 @@ DISCORD_WEBHOOK, DISCORD_MENTION (user id to ping), NTFY_URL, DASHBOARD_URL.
 The API sees that directory mounted at /notify; values are write-only there.
 Everything else (what each event does, quiet hours, digest schedule) is
 plain settings in Redis laika:notify:settings.
+
+That is the server's channel (the administrators'). Since 1.2 every person
+may also have their own: targets in NOTIFY_DIR/people/<name>.env (same
+rules: root-only, write-only from the page; no dashboard address) and
+settings in laika:notify:settings:<name>. A person only gets events for
+projects they may see, at the level the event needs (EVENT_LEVEL), and goal
+events only for goals they gave unless they choose "all".
 """
 
 import datetime
 import json
 import os
+import re
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -20,6 +28,8 @@ NOTIFY_DIR = Path(os.environ.get("LAIKA_NOTIFY_DIR", "/etc/laika/notify"))
 LEGACY_FILE = Path("/etc/laika/notify.env")
 SETTINGS_KEY = "laika:notify:settings"
 TARGET_KEYS = ("DISCORD_WEBHOOK", "DISCORD_MENTION", "NTFY_URL", "DASHBOARD_URL")
+PERSONAL_KEYS = ("DISCORD_WEBHOOK", "DISCORD_MENTION", "NTFY_URL")
+PERSON = re.compile(r"^[a-z0-9._-]{2,40}$")
 MODES = ("ping", "post", "off")
 
 # type: (label, default mode, urgent: goes out even in quiet hours)
@@ -33,6 +43,10 @@ EVENTS = {
     "health_red": ("System health turned red", "ping", True),
     "digest": ("Weekly digest", "post", False),
 }
+# What a person needs to receive an event (access.LEVELS names, or admin).
+EVENT_LEVEL = {"approval": "approve", "needs_human": "build", "app_problem": "build", "goal_done": "view",
+               "goal_failed": "view", "backup_failed": "admin", "health_red": "admin", "digest": "view"}
+GOAL_SCOPES = ("mine", "all")
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DEFAULT_SETTINGS = {
     "events": {name: default for name, (_, default, _) in EVENTS.items()},
@@ -43,12 +57,26 @@ DEFAULT_SETTINGS = {
 
 # --- targets ---------------------------------------------------------------------------
 
-def env_file(base=None):
-    return Path(base or NOTIFY_DIR) / "notify.env"
+def env_file(base=None, person=None):
+    if person is None:
+        return Path(base or NOTIFY_DIR) / "notify.env"
+    if not PERSON.fullmatch(person or "") or set(person) == {"."}:
+        raise ValueError("not a user name")
+    return Path(base or NOTIFY_DIR) / "people" / f"{person}.env"
 
 
-def load_targets(base=None):
+def load_targets(base=None, person=None):
     values = {}
+    if person is not None:
+        try:
+            lines = env_file(base, person).read_text().splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            key, sep, value = line.strip().partition("=")
+            if sep and key in PERSONAL_KEYS:
+                values[key] = value.strip()
+        return values
     for path in (env_file(base), LEGACY_FILE):
         try:
             for line in path.read_text().splitlines():
@@ -64,34 +92,47 @@ def load_targets(base=None):
     return values
 
 
-def save_targets(changes, base=None):
+def save_targets(changes, base=None, person=None):
     """Merge changes into the env file (root-only, atomic). An empty string
-    removes a value."""
-    folder = Path(base or NOTIFY_DIR)
+    removes a value. person: that person's own file."""
+    allowed = TARGET_KEYS if person is None else PERSONAL_KEYS
+    target = env_file(base, person)
+    folder = target.parent
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
-    current = {k: v for k, v in load_targets(base).items() if k in TARGET_KEYS}
+    current = {k: v for k, v in load_targets(base, person).items() if k in allowed}
     for key, value in changes.items():
-        if key not in TARGET_KEYS:
+        if key not in allowed or "\n" in str(value):
             raise ValueError(f"unknown setting {key}")
         if value:
             current[key] = value
         else:
             current.pop(key, None)
     body = "# LAIka notifications. Root-only; edited from the dashboard Settings page.\n"
-    body += "".join(f"{key}={current[key]}\n" for key in TARGET_KEYS if key in current)
+    body += "".join(f"{key}={current[key]}\n" for key in allowed if key in current)
     handle = tempfile.NamedTemporaryFile("w", dir=folder, prefix=".notify-", delete=False)
     try:
         os.chmod(handle.name, 0o600)
         handle.write(body)
         handle.close()
-        os.replace(handle.name, env_file(base))
+        os.replace(handle.name, target)
     except BaseException:
         handle.close()
         if os.path.exists(handle.name):
             os.unlink(handle.name)
         raise
     return current
+
+
+def remove_person(name, base=None):
+    try:
+        env_file(base, name).unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def has_target(targets):
+    return bool(targets.get("DISCORD_WEBHOOK") or targets.get("NTFY_URL"))
 
 
 def masked(targets):
@@ -131,17 +172,46 @@ def clean_settings(raw):
     return {"events": events, "quiet": quiet, "digest": digest}
 
 
-def load_settings(redis):
-    try:
-        return clean_settings(json.loads(redis.get(SETTINGS_KEY) or "{}"))
-    except (TypeError, ValueError):
-        return clean_settings({})
-
-
-def save_settings(redis, raw):
+def clean_personal(raw):
+    """A person's settings: the same shape, plus which goals they hear about."""
+    raw = raw if isinstance(raw, dict) else {}
     settings = clean_settings(raw)
-    redis.set(SETTINGS_KEY, json.dumps(settings))
+    settings["goals"] = raw.get("goals") if raw.get("goals") in GOAL_SCOPES else "mine"
     return settings
+
+
+def settings_key(person=None):
+    return SETTINGS_KEY if person is None else f"{SETTINGS_KEY}:{person}"
+
+
+def load_settings(redis, person=None):
+    clean = clean_settings if person is None else clean_personal
+    try:
+        return clean(json.loads(redis.get(settings_key(person)) or "{}"))
+    except (TypeError, ValueError):
+        return clean({})
+
+
+def save_settings(redis, raw, person=None):
+    settings = (clean_settings if person is None else clean_personal)(raw)
+    redis.set(settings_key(person), json.dumps(settings))
+    return settings
+
+
+def may_receive(kind, project, is_admin, levels, level_names):
+    """May someone with these project levels ({project: number}; admins:
+    everything) receive this event? level_names: access.LEVELS."""
+    need = EVENT_LEVEL.get(kind, "admin")
+    if is_admin:
+        return True
+    if need == "admin" or not project:
+        return False
+    return (levels or {}).get(project, 0) >= level_names[need]
+
+
+def personal_events(is_admin):
+    """The event types a person can choose for themselves."""
+    return [name for name in EVENTS if is_admin or EVENT_LEVEL.get(name) != "admin"]
 
 
 def in_quiet_hours(settings, now=None):

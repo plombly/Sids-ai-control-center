@@ -5,6 +5,9 @@ os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
 # Most tests run without an administrator account: keep the API unlocked
 # (tests/test_auth.py turns the lock on).
 os.environ["LAIKA_SETUP_LOCK"] = "0"
+import tempfile  # noqa: E402
+# ...nor the server's notification targets.
+os.environ.setdefault("LAIKA_NOTIFY_DIR", tempfile.mkdtemp(prefix="laika-test-notify-"))
 import sys
 from pathlib import Path
 

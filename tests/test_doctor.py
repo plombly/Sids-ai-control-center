@@ -107,3 +107,20 @@ def test_backups(doc):
     r.values["laika:backup:last"] = json.dumps({"at": "20261002T033000Z", "ok": False, "errors": {"repo": "x"}})
     result = doc.check_backups(r, now=1790919000)
     assert result["level"] == "fail" and "repo" in result["detail"]
+
+
+def test_fedora_and_rhel_family_are_supported(doc):
+    for os_id, version in (("fedora", "42"), ("almalinux", "9.6"), ("rocky", "10.0"), ("rhel", "9.4")):
+        assert doc.supported(os_id, version), (os_id, version)
+    for os_id, version in (("fedora", "40"), ("almalinux", "8.10"), ("centos", "7")):
+        assert not doc.supported(os_id, version), (os_id, version)
+
+
+def test_firewalld_must_let_the_dashboard_and_apps_through(doc, monkeypatch):
+    monkeypatch.setattr(doc.shutil, "which", lambda name: "/usr/bin/firewall-cmd")
+    def runner(ports, state=0):
+        return lambda argv, **k: subprocess.CompletedProcess(argv, state if argv[1] == "--state" else 0, ports, "")
+    assert doc.check_firewall(runner("ssh 8080/tcp 8100-8299/tcp"))["level"] == "ok"
+    result = doc.check_firewall(runner("8080/tcp"))
+    assert result["level"] == "fail" and "8100-8299/tcp" in result["detail"]
+    assert doc.check_firewall(runner("", state=252))["level"] == "ok"           # firewalld not running

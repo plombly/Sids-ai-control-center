@@ -62,14 +62,13 @@ die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 OS="${ID:-unknown}"; OS_VERSION="${VERSION_ID:-0}"
 case "$OS:$OS_VERSION" in
   ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) FAMILY=debian ;;
-  fedora:4[0-9]|rhel:9*|rocky:9*|almalinux:9*|centos:9*)
-    FAMILY=fedora; warn "$PRETTY_NAME support is experimental." ;;
+  fedora:4[1-9]|rhel:9*|rhel:10*|rocky:9*|rocky:10*|almalinux:9*|almalinux:10*|centos:9*|centos:10*) FAMILY=fedora ;;
   *)
     if [ "${LAIKA_FORCE_OS:-0}" = 1 ]; then
       case "${ID_LIKE:-}" in *debian*) FAMILY=debian ;; *fedora*|*rhel*) FAMILY=fedora ;; *) die "Unsupported system: ${PRETTY_NAME:-$OS}" ;; esac
       warn "${PRETTY_NAME:-$OS} is not supported; continuing because LAIKA_FORCE_OS=1."
     else
-      die "Unsupported system: ${PRETTY_NAME:-$OS}. Supported: Ubuntu 22.04/24.04/26.04, Debian 12/13 (Fedora 40+, RHEL 9: experimental). LAIKA_FORCE_OS=1 tries anyway."
+      die "Unsupported system: ${PRETTY_NAME:-$OS}. Supported: Ubuntu 22.04/24.04/26.04, Debian 12/13, Fedora 41+, RHEL / AlmaLinux / Rocky 9 and 10. LAIKA_FORCE_OS=1 tries anyway."
     fi ;;
 esac
 case "$(uname -m)" in x86_64|aarch64) ;; *) die "Unsupported CPU: $(uname -m) (x86_64 or aarch64 needed)." ;; esac
@@ -81,6 +80,7 @@ free_gb=$(df -Pk / | awk 'NR==2 {print int($4/1048576)}')
 say "Installing LAIka on ${PRETTY_NAME} ($(uname -m), ${memory_mb} MB memory)"
 
 # --- packages -------------------------------------------------------------------------------
+PYTHON=python3
 apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "$@" >/dev/null; }
 if [ "$FAMILY" = debian ]; then
   say "System packages"
@@ -101,8 +101,18 @@ if [ "$FAMILY" = debian ]; then
   fi
 else
   say "System packages"
-  dnf -y -q install ca-certificates curl git python3 python3-pip bubblewrap openssl openssh-clients util-linux iproute \
-    iptables rsync tar xz procps-ng dnf-plugins-core >/dev/null
+  # curl-minimal (RHEL's default) already provides curl and conflicts with
+  # the full package; iptables-nft: the nftables backend firewalld uses too.
+  pkgs="ca-certificates git python3 python3-pip bubblewrap openssl openssh-clients util-linux iproute iptables-nft rsync tar xz procps-ng dnf-plugins-core"
+  command -v curl >/dev/null || pkgs="$pkgs curl"
+  # shellcheck disable=SC2086
+  dnf -y -q install $pkgs >/dev/null
+  # RHEL 9's Python is 3.9: LAIka uses the system's own Python 3.11 package.
+  if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+    say "Python 3.11 (the system's python3 is older than 3.10)"
+    dnf -y -q install python3.11 python3.11-pip >/dev/null
+    PYTHON=python3.11
+  fi
   if ! command -v docker >/dev/null; then
     say "Docker (from docker.com)"
     repo=fedora; [ "$OS" = fedora ] || repo=rhel
@@ -113,7 +123,7 @@ else
 fi
 systemctl enable --now docker >/dev/null 2>&1 || true
 docker info >/dev/null 2>&1 || die "Docker is installed but not running (systemctl status docker)."
-python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10 or newer is needed."
+"$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10 or newer is needed."
 
 # --- LAIka's code ----------------------------------------------------------------------------
 if [ "$REPAIR" = 1 ] && [ -d "$LAIKA_HOME" ]; then
@@ -197,7 +207,7 @@ ln -sfn "$CONF/compose.env" "$LAIKA_HOME/.env"
 
 # --- Python ---------------------------------------------------------------------------------------
 say "Python environment"
-[ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+[ -x "$VENV/bin/python" ] || "$PYTHON" -m venv "$VENV"
 "$VENV/bin/pip" install -q --disable-pip-version-check -r "$LAIKA_HOME/deploy/requirements-host.lock"
 
 # --- Node and the AI command-line tools ------------------------------------------------------------
@@ -243,6 +253,17 @@ for timer in backup watchdog prune notify digest restore-check; do
   systemctl enable --now "laika-$timer.timer" >/dev/null 2>&1
 done
 ln -sfn "$LAIKA_HOME/scripts/laika" /usr/local/bin/laika
+
+# --- firewall ---------------------------------------------------------------------------------------
+# firewalld (Fedora / RHEL) blocks everything not listed: open the dashboard
+# and the ports project apps and previews run on, in the default zone. Ubuntu
+# and Debian have no firewall on by default; ufw users open them themselves.
+if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+  zone=$(firewall-cmd --get-default-zone)
+  say "Firewall: opening 8080 (dashboard) and 8100-8299 (apps, previews) in firewalld's '$zone' zone"
+  firewall-cmd -q --permanent --zone="$zone" --add-port=8080/tcp --add-port=8100-8299/tcp
+  firewall-cmd -q --reload
+fi
 
 # --- done ------------------------------------------------------------------------------------------------
 for _ in $(seq 1 30); do

@@ -149,8 +149,10 @@ SIGNED_IN = [
             rf"|/api/heartbeat|/api/orchestrators|/api/status|/api/system-health|/api/workers/scale|/api/system/update"
             rf"|/api/goals|/api/goals/recent|/api/jobs|/api/jobs/recent|/api/approvals|/api/jobs/approvals|/api/failures"
             rf"|/api/action-required|/api/actions-required|/api/queue|/api/merge-queue|/api/dismissals|/api/projects"
-            rf"|/api/usage|/api/devices|/api/repository|/api/operator/status|/api/operator-requests/{ID}|/api/me"),
-    ("POST", r"/api/auth/logout|/api/auth/password|/api/devices|/api/dismissals"),
+            rf"|/api/usage|/api/devices|/api/repository|/api/operator/status|/api/operator-requests/{ID}|/api/me"
+            rf"|/api/me/notifications|/api/me/notifications/digest-preview"),
+    ("POST", r"/api/auth/logout|/api/auth/password|/api/devices|/api/dismissals|/api/me/notifications/test"),
+    ("PUT", r"/api/me/notifications/(?:settings|targets)"),
     ("DELETE", rf"/api/auth/sessions/[a-f0-9]{{16}}|/api/devices/{ID}|/api/dismissals/.+"),
 ]
 # (method, path pattern, what the id names, level). First match wins.

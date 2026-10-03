@@ -11,6 +11,8 @@ os.environ["LAIKA_SETTINGS_SOURCE"] = "none"
 # throwaway folder for the whole run (CI runners cannot write there anyway).
 import tempfile  # noqa: E402
 os.environ.setdefault("LAIKA_PROJECT_DATA", tempfile.mkdtemp(prefix="laika-test-data-"))
+# ...nor the server's notification targets.
+os.environ.setdefault("LAIKA_NOTIFY_DIR", tempfile.mkdtemp(prefix="laika-test-notify-"))
 
 from laika_testing import (  # noqa: F401  (re-exported for fixtures below)
     BASE, INTEGRATED, JOB, ROOT, FakeGit, MemoryRedis, load_module, make_builder,

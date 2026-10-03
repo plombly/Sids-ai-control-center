@@ -147,3 +147,80 @@ def test_event_modes_from_settings_and_quiet_hours(notify):
     assert result["held"] == ["approval:j2:c1"] and result["sent"] == ["health:disk"]  # urgent goes out anyway
     morning = datetime.datetime(2026, 10, 2, 8, 0)
     assert module.run(r, CONFIG, now=4, sender=sender, settings=quiet, clock=morning)["sent"] == ["approval:j2:c1"]
+
+
+# --- everyone's own notifications (1.2) ------------------------------------------------------------
+
+def person(r, name, role="member", grants=None, settings=None):
+    r.sets = getattr(r, "sets", {})
+    r.records[f"laika:users:{name}"] = {"username": name, "password": "x", "role": role,
+                                        "access": json.dumps(grants or {})}
+    r.values.setdefault("laika:users", set()).add(name)
+    if settings:
+        r.values[f"laika:notify:settings:{name}"] = json.dumps(settings)
+
+
+SERVER_OFF = {"DASHBOARD_URL": "http://laika:8080"}  # only people's own channels
+
+
+class PeopleRedis(NotifyRedis):
+    def smembers(self, key):
+        value = self.values.get(key)
+        return set(value) if isinstance(value, set) else set()
+
+    def hget(self, key, field):
+        return self.records.get(key, {}).get(field)
+
+    def delete(self, *keys):
+        for key in keys:
+            self.values.pop(key, None)
+            self.records.pop(key, None)
+
+
+def test_each_person_hears_only_about_their_projects_at_their_level(notify):
+    module, _, outbox, _ = notify
+    r = PeopleRedis()
+    for pid in ("shop", "blog"):
+        r.records[f"laika:projects:{pid}"] = {"id": pid}
+        r.values.setdefault("laika:projects", set()).add(pid)
+    person(r, "ann", grants={"shop": "approve"})
+    person(r, "bob", grants={"shop": "view", "blog": "build"})
+    person(r, "cy", role="admin")
+    person(r, "dee", grants={"shop": "approve"})                      # no targets of her own
+    targets = {"ann": {"NTFY_URL": "https://ntfy.example/ann"}, "bob": {"NTFY_URL": "https://ntfy.example/bob"},
+               "cy": {"NTFY_URL": "https://ntfy.example/cy"}}
+    got = {}
+    sender = lambda config, title, message, link, mode="post": got.setdefault(config["NTFY_URL"].rsplit("/", 1)[1], []).append(title) or 1
+    load = lambda name: targets.get(name, {})
+    module.run(r, SERVER_OFF, now=1, sender=sender, person_targets=load)    # everyone starts quiet
+    ready_job(r, "j1", project="shop")
+    r.records["laika:jobs:j2"] = {"id": "j2", "project_id": "blog", "title": "Fix", "status": "needs_human",
+                                  "updated_at": "2026-10-03T10"}
+    r.records["laika:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "completed", "prompt": "Cart",
+                                   "submitted_by": "Bob"}
+    r.records["laika:goals:g2"] = {"id": "g2", "project_id": "shop", "status": "failed", "prompt": "Other",
+                                   "submitted_by": "ann"}
+    r.values["laika:health"] = json.dumps({"checks": [{"name": "disk", "level": "fail", "detail": "full"}]})
+    module.run(r, SERVER_OFF, now=2, sender=sender, person_targets=load)
+    assert sorted(got["ann"]) == ["Goal failed · shop", "Ready for approval · shop"]         # approve; her goal
+    assert sorted(got["bob"]) == ["Goal finished · shop", "Needs you · blog"]                # no approvals on view
+    assert sorted(got["cy"]) == ["LAIka health is red", "Needs you · blog", "Ready for approval · shop"]
+    assert "dee" not in got and len(got) == 3
+
+
+def test_a_person_can_ask_for_every_goal_and_new_targets_never_flood(notify):
+    module, _, _, _ = notify
+    r = PeopleRedis()
+    r.records["laika:projects:shop"] = {"id": "shop"}
+    r.values["laika:projects"] = {"shop"}
+    person(r, "bob", grants={"shop": "view"}, settings={"goals": "all"})
+    r.records["laika:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "completed", "prompt": "A", "submitted_by": "ann"}
+    sent = []
+    sender = lambda config, title, *a, **k: sent.append(title) or 1
+    targets = {}
+    module.run(r, SERVER_OFF, now=1, sender=sender, person_targets=lambda name: targets)
+    targets["NTFY_URL"] = "https://ntfy.example/bob"                     # added later: old goal stays quiet
+    module.run(r, SERVER_OFF, now=2, sender=sender, person_targets=lambda name: targets)
+    r.records["laika:goals:g2"] = {"id": "g2", "project_id": "shop", "status": "completed", "prompt": "B", "submitted_by": "ann"}
+    module.run(r, SERVER_OFF, now=3, sender=sender, person_targets=lambda name: targets)
+    assert sent == ["Goal finished · shop"]
