@@ -169,3 +169,18 @@ def test_sign_in_transcripts_never_keep_the_token(tmp_path):
     helper.keep_transcript("Your\x1b[1Ctoken:\r\n" + token + "\r\n", tmp_path / "log")
     text = (tmp_path / "log").read_text()
     assert token not in text and "[token]" in text and "Your token:" in text
+
+
+def test_the_token_is_read_from_the_rendered_screen(tmp_path, monkeypatch):
+    """The CLI skips cells that already show the right character; only the
+    rendered screen has the whole token (the bug: an 'o' went missing)."""
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_screen_test")
+    token = "sk-ant-oat01-" + "Q7w_" * 23
+    # Frame 1 leaves "o" in column 8; frame 2 skips over it with a cursor move.
+    output = "\x1b[2J\x1b[H       o\r\n" + "\x1b[H" + "sk-ant-\x1b[1C" + token[8:] + "\r\n"
+    assert helper.token_candidates(output)[0] == token
+    saved = []
+    monkeypatch.setattr(helper, "SIGNIN_LOG", tmp_path / "log")
+    monkeypatch.setattr(helper, "status", lambda r, runner=None: {})
+    assert helper.finish_claude(MemoryRedis(), 0, output, saver=saved.append, tester=lambda t: t == token) == 0
+    assert saved == [token]

@@ -256,12 +256,26 @@ def token_shape(token):
     return f"type {kind.group(1) if kind else '?'}, {len(token)} characters"
 
 
+def rendered(output, columns=2000, rows=400):
+    """The text a terminal would show. The CLI redraws by writing only the
+    cells that changed since the last frame, so a character already on
+    screen in the right place is never sent again: only replaying every
+    frame (pyte, a terminal emulator) gives the real text."""
+    try:
+        import pyte
+    except ImportError:
+        return ""
+    screen = pyte.Screen(columns, rows)
+    pyte.Stream(screen).feed(output)
+    return "\n".join(line.rstrip() for line in screen.display)
+
+
 def token_candidates(output):
-    """Every reading of the screen, longest first (control codes can sit
-    inside what the terminal shows as one token)."""
+    """The token as the screen shows it first, then the raw readings."""
+    first = TOKEN_IN_OUTPUT.findall(rendered(output))
     readings = {output, plain(output), ANSI.sub("", output), re.sub(r"\x1b\[[0-9;?<>=]*[A-Za-z~]", "", output)}
-    found = {match for text in readings for match in TOKEN_IN_OUTPUT.findall(text)}
-    return sorted(found, key=len, reverse=True)
+    rest = sorted({m for text in readings for m in TOKEN_IN_OUTPUT.findall(text)} - set(first), key=len, reverse=True)
+    return first + rest
 
 
 FAILED = "Sign-in did not finish. Try again; details for support are in /var/log/laika/claude-signin.log."
