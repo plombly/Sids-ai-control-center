@@ -33,4 +33,13 @@ def apply():
     return env
 
 
+def shared_umask():
+    """A host tool run by hand as root (sudo, a root shell) creates files the
+    laika user must be able to use (services/laika_user.py): the system's
+    default umask 022 becomes 007. A stricter one (backups: 077) is kept."""
+    current = os.umask(0o022)
+    os.umask(0o007 if current == 0o022 else current)
+
+
+shared_umask()
 APPLIED = apply()

@@ -26,6 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 
+# Run by hand as root, merges must leave files the laika group can use
+# (the operator service already runs with umask 0007).
+_mask = os.umask(0o022)
+os.umask(0o007 if _mask == 0o022 else _mask)
+
 r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
 
 # The project the current action works on. LAIka's paths are the module

@@ -131,3 +131,16 @@ def test_a_claude_sign_in_is_judged_by_the_cli_afterwards(monkeypatch):
     assert helper.finish_claude(r, 1, "\x1b[1mInvalid code\x1b[0m", check=lambda: {"signed_in": False}) == 1
     failed = json.loads(r.get("laika:provider-login:claude"))
     assert failed["state"] == "failed" and failed["message"] == "Invalid code"
+
+
+def test_host_tools_share_files_with_the_laika_group_but_keep_stricter_masks():
+    import os
+    env = load_module(ROOT / "services/laika_env.py", "laika_env_umask_test")
+    before = os.umask(0o022)
+    try:
+        env.shared_umask()
+        assert os.umask(0o077) == 0o007
+        env.shared_umask()
+        assert os.umask(0o022) == 0o077
+    finally:
+        os.umask(before)
