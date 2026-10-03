@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.1.0 (not released yet)
+## 1.1.0
 
 Teams: several people can share one LAIka, and its AI accounts.
 
@@ -20,6 +20,8 @@ Teams: several people can share one LAIka, and its AI accounts.
 - **Phones** act for the person who paired them.
 - `laika reset-password` takes a username.
 - Tables on phones keep whole words and scroll sideways.
+- Settings → AI shows a revoked or expired Claude token as not signed in
+  (it is checked with Claude, not only found on disk).
 
 ## 1.0.2
 
