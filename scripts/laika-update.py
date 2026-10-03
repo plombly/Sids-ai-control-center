@@ -147,7 +147,8 @@ def safe_extract(data, target):
             name = Path(member.name)
             if name.is_absolute() or ".." in name.parts or member.issym() or member.islnk() or member.isdev():
                 raise ValueError(f"unsafe path in the release: {member.name}")
-        tar.extractall(target)
+        # Explicit on every Python: plain files and folders, no surprises.
+        tar.extractall(target, filter="data") if hasattr(tarfile, "data_filter") else tar.extractall(target)
     entries = [p for p in Path(target).iterdir()]
     if len(entries) != 1 or not (entries[0] / "install.sh").is_file():
         raise ValueError("the release does not look like LAIka")

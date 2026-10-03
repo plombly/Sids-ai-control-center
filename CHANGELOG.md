@@ -2,12 +2,14 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.1.1 (not released yet)
+## 1.1.1
 
 - Settings → AI explains that Claude's and OpenAI's sign-in pages ask you to
   authorize **Claude Code** / **Codex**, the tools LAIka works through.
 - Tests run as any user and never touch the server's real data (the public
   repository's checks failed on GitHub because they ran as a normal user).
+- The updater unpacks releases with an explicit safe filter (ready for
+  Python 3.14).
 
 ## 1.1.0
 
