@@ -135,3 +135,12 @@ def test_setup_info_and_done(api):
     assert client.get("/api/setup/state").json()["done"] is False
     assert client.post("/api/setup/done").status_code == 200
     assert client.get("/api/setup/state").json()["done"] is True
+
+
+def test_usernames_ignore_case(api):
+    client, fake = api
+    setup(client)
+    client.post("/api/auth/logout")
+    for typed in ("Alex", "ALEX", " alex "):
+        assert client.post("/api/auth/login", json={"username": typed, "password": "correct horse battery"}).status_code == 200
+        client.post("/api/auth/logout")

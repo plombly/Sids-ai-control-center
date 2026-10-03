@@ -34,3 +34,9 @@ test('which screen the sign-in state calls for', () => {
   assert.equal(screenFor({ setup_required: false, admin_exists: true, signed_in: true }), '');
   assert.equal(screenFor(null), '');
 });
+
+test('phones do not capitalize or correct usernames', () => {
+  for (const html of [setupMarkup(), loginMarkup()]) {
+    assert.match(html, /name="username"[^>]*autocapitalize="none"[^>]*autocorrect="off"/);
+  }
+});

@@ -170,7 +170,9 @@ def login(payload: Login, request: Request, response: Response):
     if int(redis.get(fails_key) or 0) >= FAILS_ALLOWED:
         raise HTTPException(status_code=429, detail="Too many failed sign-ins from this address. Try again in 15 minutes.")
     account = admin(redis)
-    ok = bool(account) and hmac.compare_digest(payload.username.strip(), account.get("username", "")) \
+    # Usernames ignore case (phones capitalize the first letter): the account
+    # keeps the spelling it was created with, any capitals sign in.
+    ok = bool(account) and hmac.compare_digest(payload.username.strip().lower(), account.get("username", "").lower()) \
         and verify_password(payload.password, account.get("password", ""))
     if not ok:
         redis.incr(fails_key)

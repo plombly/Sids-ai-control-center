@@ -2,6 +2,11 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.2 (not released yet)
+
+- **Sign-in on phones:** usernames ignore capitals, and phones no longer
+  capitalize or autocorrect the username field.
+
 ## 1.0.1
 
 Fixes from the first days of real use.
