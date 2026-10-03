@@ -167,16 +167,32 @@ def login_claude(r, clock=time.time):
         if shown and not sent:
             code = r.get("laika:provider-login:claude:code")
             if code:
-                os.write(fd, (code.strip() + "\r").encode())
+                # Typed like a person: the code, then Enter on its own (sent
+                # together, the CLI may take Enter as part of a paste).
+                os.write(fd, code.strip().encode())
+                time.sleep(0.5)
+                os.write(fd, b"\r")
                 r.delete("laika:provider-login:claude:code")
-                sent = True
+                sent, sent_at, nudged = True, clock(), False
                 publish(r, "claude", state="checking", message="Checking the code…")
+        if sent and TOKEN_IN_OUTPUT.search(plain(output)):
+            # The token is on screen: done, whether or not the CLI waits for a key.
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+            os.waitpid(pid, 0)
+            return finish_claude(r, 0, output)
+        if sent and not nudged and clock() - sent_at > 8:
+            os.write(fd, b"\r")  # one more Enter, in case the first one was swallowed
+            nudged = True
         finished, code_status = os.waitpid(pid, os.WNOHANG)
         if finished:
             return finish_claude(r, os.waitstatus_to_exitcode(code_status), output)
     if not ended:
         os.kill(pid, 9)
         os.waitpid(pid, 0)
+        keep_transcript(output)
         publish(r, "claude", state="failed", message="Sign-in timed out")
         return 1
     # The terminal closed before the exit was seen: wait for it (it is quick).
@@ -199,9 +215,21 @@ def save_token(token, path=None):
     os.replace(temp, path)
 
 
+SIGNIN_LOG = Path(os.environ.get("LAIKA_SIGNIN_LOG", "/var/log/laika/claude-signin.log"))
+
+
+def keep_transcript(output, path=None):
+    """What the CLI showed, tokens masked, for diagnosing a failed sign-in."""
+    try:
+        Path(path or SIGNIN_LOG).write_text(TOKEN_IN_OUTPUT.sub("[token]", plain(output))[-20000:])
+    except OSError:
+        pass
+
+
 def finish_claude(r, exit_code, output, check=None, saver=save_token):
     """The CLI printed the long-lived token: save it (never publish it), end
     any Claude pause, report. Nothing printed: report what it said."""
+    keep_transcript(output)
     clean = plain(output)
     found = TOKEN_IN_OUTPUT.findall(clean)
     if found:

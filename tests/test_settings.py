@@ -179,3 +179,11 @@ def test_claude_runs_use_the_saved_token(tmp_path, monkeypatch):
     token = "sk-ant-oat01-" + "x" * 40
     (tmp_path / ".config/laika/claude-token").write_text(token + "\n")
     assert agent_cli.claude_token(tmp_path) == token
+
+
+def test_sign_in_transcripts_never_keep_the_token(tmp_path):
+    helper = load_module(ROOT / "scripts/laika-providers.py", "laika_providers_log_test")
+    token = "sk-ant-oat01-" + "Z" * 50
+    helper.keep_transcript("Your\x1b[1Ctoken:\r\n" + token + "\r\n", tmp_path / "log")
+    text = (tmp_path / "log").read_text()
+    assert token not in text and "[token]" in text and "Your token:" in text
