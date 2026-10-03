@@ -5,6 +5,9 @@
 #   tests/install/clean-install.sh IMAGE [SOURCE]
 #   IMAGE:  ubuntu:22.04 | ubuntu:24.04 | debian:12 | fedora:42 ...
 #   SOURCE: the commit to install (default HEAD of this repository)
+#   RELEASE_DIR=folder: instead, install the signed release in that folder
+#   (manifest.json, .sig, tarball) the way `curl … | sudo bash` does, from
+#   a web server inside the machine.
 #
 # Needs Docker and internet access (packages, images). Leaves nothing
 # behind: the container and its volume are removed at the end (KEEP=1 keeps
@@ -67,10 +70,24 @@ in_box "tar -xf /root/src.tar -C /root" \
 
 step "install"
 started=$(date +%s)
-if in_box "apt-get update -q >/dev/null 2>&1 || true; command -v git >/dev/null || (apt-get install -y -q git >/dev/null 2>&1 || dnf -y -q install git >/dev/null 2>&1); bash /root/laika-src/install.sh --source /root/laika-src --yes"; then
+how="--source /root/laika-src"
+if [ -n "${RELEASE_DIR:-}" ]; then
+  mkdir -p "$WORK/releases/latest/download"
+  cp "$RELEASE_DIR"/* "$WORK/releases/latest/download/"
+  docker cp "$WORK/releases" "$NAME:/root/releases" >>"$LOG" 2>&1
+  in_box "command -v python3 >/dev/null || (apt-get update -q >/dev/null 2>&1; apt-get install -y -q python3 >/dev/null 2>&1 || dnf -y -q install python3 >/dev/null 2>&1); cd /root && nohup python3 -m http.server 8099 --bind 127.0.0.1 >/dev/null 2>&1 &"
+  sleep 2
+  how=""  # no --source: download, verify and install the signed release
+fi
+if in_box "apt-get update -q >/dev/null 2>&1 || true; command -v git >/dev/null || (apt-get install -y -q git >/dev/null 2>&1 || dnf -y -q install git >/dev/null 2>&1); LAIKA_RELEASE_URL=http://127.0.0.1:8099/releases bash /root/laika-src/install.sh $how --yes"; then
   pass "install.sh finished in $(( $(date +%s) - started ))s"
 else
   bad "install.sh failed (see $LOG)"; KEEP=${KEEP:-0}; exit 1
+fi
+
+if [ -n "${RELEASE_DIR:-}" ]; then
+  out_box "test ! -e /opt/laika/.git && test -f /opt/laika/VERSION && test ! -e /opt/laika/CLAUDE.md" \
+    && pass "installed the release $(out_box 'cat /opt/laika/VERSION') (no git, no development files)" || bad "not a release install"
 fi
 
 step "doctor"
@@ -122,7 +139,7 @@ step "uninstall keeping data, then install again"
 in_box "laika uninstall --yes" && pass "uninstall" || bad "uninstall"
 out_box "test ! -e /opt/laika && test -d /var/lib/laika/projects/demo && ! systemctl list-units --plain --no-legend 'laika-*' | grep -q ." \
   && pass "program removed, data kept" || bad "uninstall left the wrong things"
-in_box "bash /root/laika-src/install.sh --source /root/laika-src --yes" && pass "reinstall" || bad "reinstall"
+in_box "LAIKA_RELEASE_URL=http://127.0.0.1:8099/releases bash /root/laika-src/install.sh $how --yes" && pass "reinstall" || bad "reinstall"
 state=$(api "-X POST http://127.0.0.1:8080/api/auth/login -d '{\"username\": \"tester\", \"password\": \"correct horse battery\"}'")
 echo "$state" | grep -q '"user"' && pass "the old administrator still signs in" || bad "after reinstall: $state"
 
