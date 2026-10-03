@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from laika_testing import ROOT, load_module
+from laika_testing import ROOT, bwrap_works, load_module
+
+needs_bwrap = pytest.mark.skipif(not bwrap_works(), reason="bubblewrap cannot run here")
 
 sys.path.insert(0, str(ROOT / "services"))
 import project_sandbox  # noqa: E402
@@ -135,6 +137,7 @@ def test_worker_git_refuses_a_missing_pointer(worker):
         module.run_git("status", cwd=wt)
 
 
+@needs_bwrap
 def test_project_gate_runs_inside_the_sandbox(worker, monkeypatch):
     module, project, wt = worker
     project.gate_command = "echo gate"
@@ -158,6 +161,7 @@ def test_setup_has_network_and_a_package_cache_but_gates_do_not(tmp_path, hidden
     assert ["--setenv", "HOME", cache] == setup[setup.index("HOME") - 1:][:3]
 
 
+@needs_bwrap
 def test_setup_output_is_never_committed_and_runs_once(worker, monkeypatch):
     module, project, wt = worker
     (wt / "tracked.txt").write_text("original\n")
@@ -176,6 +180,7 @@ def test_setup_output_is_never_committed_and_runs_once(worker, monkeypatch):
     assert ok and "SETUP-RAN" not in output  # once per worktree
 
 
+@needs_bwrap
 def test_failed_setup_fails_the_gate_without_running_tests(worker):
     module, project, wt = worker
     project.setup_command = "echo cannot-download; exit 7"

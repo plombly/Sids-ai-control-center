@@ -309,7 +309,8 @@ def test_claude_timeout_fails_the_job(worker, tmp_path, monkeypatch):
 # --- orchestrator: planner and repair findings ---------------------------------------------
 
 @pytest.fixture
-def orch(tmp_path, fake_claude):
+def orch(tmp_path, fake_claude, monkeypatch):
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))  # the built-in project's repository, not /opt/laika
     module = load_module(ROOT / "services/orchestrator/orchestrator.py")
     module.r = MemoryRedis()
     module.agent_cli.POLL_SECONDS = 0.05

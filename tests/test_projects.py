@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from laika_testing import INTEGRATED, MemoryRedis, ROOT, load_module
+from laika_testing import bwrap_works, INTEGRATED, MemoryRedis, ROOT, load_module
+
+needs_bwrap = pytest.mark.skipif(not bwrap_works(), reason="bubblewrap cannot run here")
 
 
 class ProjectRedis(MemoryRedis):
@@ -106,6 +108,7 @@ def test_worker_switches_every_path_per_job_and_back(worker, tmp_path, monkeypat
     assert worker.REPO_ROOT == tmp_path / "laika-repo"
 
 
+@needs_bwrap
 @pytest.mark.parametrize("gate,ok,text", [
     ("echo gate-ran", True, "gate-ran"), ("echo broken; exit 3", False, "broken"), ("", True, "no gate command"),
 ])
@@ -255,6 +258,7 @@ def test_merge_queue_processes_every_project_on_its_own_main(job_review, fake_gi
     assert set(k for k in r.values if k.startswith("laika:main-head")) == {"laika:main-head", "laika:main-head:web-shop"}
 
 
+@needs_bwrap
 def test_project_gates_find_the_venvs_python_tooling(worker, tmp_path, monkeypatch):
     register(worker.redis, "py", tmp_path, gate_command='python3 -c "import pytest; print(\'pytest-ok\')"')
     worker.use_project(worker.laika_projects.load(worker.redis, "py"))
@@ -265,6 +269,7 @@ def test_project_gates_find_the_venvs_python_tooling(worker, tmp_path, monkeypat
     assert worker.gate_env()["PATH"].startswith("/var/lib/laika/venv/bin" + __import__("os").pathsep)
 
 
+@needs_bwrap
 def test_gate_leaves_the_worktree_exactly_as_it_found_it(worker, tmp_path, monkeypatch):
     import subprocess as sp
     wt = tmp_path / "wt"

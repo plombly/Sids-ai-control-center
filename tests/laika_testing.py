@@ -16,6 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 _module_ids = itertools.count()
 
 
+def bwrap_works():
+    """Can bubblewrap run here? (CI machines and containers may not allow it.)"""
+    import shutil
+    import subprocess
+    if not shutil.which("bwrap"):
+        return False
+    return subprocess.run(["bwrap", "--ro-bind", "/", "/", "--unshare-pid", "--cap-drop", "ALL", "true"],
+                          capture_output=True).returncode == 0
+
+
 def load_module(path, name=None):
     """Load a script by path (job-review.py has a hyphen, so no import)."""
     name = name or f"laika_test_{Path(path).stem.replace('-', '_')}_{next(_module_ids)}"
