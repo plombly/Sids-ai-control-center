@@ -166,3 +166,12 @@ you can see:
 **Settings → Server notifications** (administrators): the server's own
 channel, for example a team Discord channel. It gets every event, and the
 dashboard address used in all messages is set here.
+
+## Remote access
+
+**Settings → Remote access** (administrators) puts this server on your
+private Tailscale network: **Install Tailscale**, then **Connect to my
+Tailscale account** and approve the server with the link it shows. Install
+Tailscale on your phone or laptop with the same account, and the
+addresses listed there (dashboard, apps, SFTP) work from anywhere. Nothing
+becomes public, and **Disconnect** removes the server from your tailnet.

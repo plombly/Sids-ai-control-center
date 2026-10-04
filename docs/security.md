@@ -12,6 +12,10 @@ accounts. It is designed for one owner on a private network.
 - Do not forward port 8080 (or the app ports 8100–8299, or SFTP on 2222) on your router,
   and do not put LAIka behind a public reverse proxy or tunnel.
 - On a cloud server, firewall every LAIka port to your VPN only.
+- For access from anywhere, use **Settings → Remote access** (Tailscale):
+  your devices reach LAIka over your private tailnet and no port is
+  opened. Never turn on Tailscale Funnel for this server (it publishes to
+  the internet); `laika doctor` fails if it is on.
   `sudo laika doctor`, the setup guide and the health page warn when the
   server has a public address.
 

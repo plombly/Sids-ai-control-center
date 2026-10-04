@@ -42,7 +42,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       0.0.0.0, README. The first goal can then be about features.
 
 ### Checkpoint 4: remote access (Tailscale)
-- [ ] Settings → Remote access: install / sign in Tailscale from the
+- [x] Settings → Remote access: install / sign in Tailscale from the
       dashboard (auth key), show the tailnet address for the dashboard and
       apps; doctor checks it; nothing public (VPN-only stays the rule).
 

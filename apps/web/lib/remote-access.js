@@ -16,7 +16,9 @@ const STATES = {
 export function remoteMarkup(data = {}, appPorts = []) {
   const s = data.status || {};
   const progress = data.progress || {};
-  const login = data.login || {};
+  const login = { ...(data.login || {}) };
+  // A sign-in link is good for 10 minutes (scripts/laika-remote.py).
+  if (login.state === 'waiting' && login.at && Date.now() / 1000 - login.at > 600) Object.assign(login, { state: 'failed', message: 'The sign-in link expired. Try again.' });
   const state = s.installed === false ? 'not_installed' : s.state || 'unknown';
   const busy = progress.state === 'installing' || login.state === 'starting' || login.state === 'waiting';
   const warnings = [

@@ -131,7 +131,7 @@ def login(r, popen=subprocess.Popen, clock=time.time):
         return 1
     put(r, "laika:remote:login", state="starting", message="Asking Tailscale for a sign-in link")
     process = popen(["tailscale", "up", "--reset", f"--hostname={hostname()}", "--accept-dns=false",
-                     "--ssh=false", "--accept-routes=false", "--timeout=0"],
+                     "--ssh=false", "--accept-routes=false", f"--timeout={LOGIN_WAIT_SECONDS}s"],
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     deadline = clock() + LOGIN_WAIT_SECONDS
     sent = False
