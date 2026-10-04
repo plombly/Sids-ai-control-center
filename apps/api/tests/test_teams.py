@@ -181,7 +181,7 @@ def test_everyone_manages_their_own_ssh_keys_for_sftp(team):
     added = sam.post("/api/me/ssh-keys", json={"name": "Laptop", "key": ED25519})
     assert added.status_code == 201 and added.json()["fingerprint"].startswith("SHA256:")
     assert sam.post("/api/me/ssh-keys", json={"name": "Again", "key": ED25519}).status_code == 409
-    for bad in ("-----BEGIN OPENSSH PRIVATE KEY----- abc", "ssh-ed25519 notbase64!!", "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIGqA"):
+    for bad in ("-----BEGIN OPENSSH PRIVATE KEY----- abc", "ssh-ed25519 notbase64!!", "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIGqA"):  # release-scan: allow (a fake, to test refusal)
         assert sam.post("/api/me/ssh-keys", json={"name": "x", "key": bad + " " * 20}).status_code == 422, bad
     listed = sam.get("/api/me/ssh-keys").json()["keys"]
     assert [k["name"] for k in listed] == ["Laptop"] and "key" not in listed[0]
