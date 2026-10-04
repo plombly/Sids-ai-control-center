@@ -103,7 +103,7 @@ def test_batches_wait_for_quiet_and_open_files_then_stay_visible_until_committed
 
 def test_data_is_plain_and_confined(tmp_path):
     root = tmp_path / "data"
-    root.mkdir()
+    assert DataArea(root).listdir("") == [] and root.is_dir()          # an app that never ran: made on first use
     (root / "out").symlink_to(tmp_path)
     data = DataArea(root)
     data.mkdir("db")

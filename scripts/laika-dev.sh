@@ -110,6 +110,10 @@ deploy() {
     | grep -E '==>|!!|xx' || true
   inside "/opt/laika/scripts/laika-restart.sh --wait 60 all" >/dev/null 2>&1 || true
   status
+  # install.sh makes a new setup code while no administrator exists (the old one stops working).
+  if inside "/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-doctor.py --json" 2>/dev/null | grep -q 'no administrator account yet'; then
+    say "Setup code for the first administrator: $(setup_code)"
+  fi
 }
 
 status() {

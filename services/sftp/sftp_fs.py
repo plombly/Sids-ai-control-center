@@ -82,6 +82,8 @@ class DataArea:
 
     def real(self, rel, must_exist=True):
         rel = clean(rel)
+        if not self.root.exists():
+            self.root.mkdir(parents=True, exist_ok=True)  # an app that never ran has no data folder yet
         path = self.root / rel if rel else self.root
         if rel and not _inside(self.root, path.parent):
             raise FsError("denied", "path leads outside the project")
@@ -92,8 +94,6 @@ class DataArea:
         return path
 
     def entry(self, rel):
-        if not clean(rel):
-            self.root.mkdir(parents=True, exist_ok=True)
         path = self.real(rel)
         return Entry.of(path)
 
@@ -177,7 +177,9 @@ class Batch:
             or any(folder == rel or folder.startswith(prefix) for folder in self.dirs)
 
     def move_to(self, folder):
-        os.rename(self.folder, folder)
+        # shutil.move: the staging and upload folders may be different mounts
+        # (the service's ReadWritePaths), where a rename fails.
+        shutil.move(str(self.folder), str(folder))
         self.folder = Path(folder)
 
 
