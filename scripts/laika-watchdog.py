@@ -101,7 +101,12 @@ def check_endpoint(name, url, getter=http_json):
     return check(name, "ok", "responding")
 
 
-def check_live_tree(runner=subprocess.run):
+def check_live_tree(runner=subprocess.run, root=None):
+    # Only a git checkout of LAIka (a development server, or one that builds
+    # LAIka itself) must stay clean; a release install has no .git at all.
+    root = root or REPO_ROOT
+    if not os.path.exists(os.path.join(root, ".git")):
+        return check("live_tree", "ok", "release install (not a git checkout)")
     result = runner(["git", "-C", REPO_ROOT, "status", "--porcelain", "--untracked-files=all"],
                     text=True, capture_output=True)
     if result.returncode != 0:
