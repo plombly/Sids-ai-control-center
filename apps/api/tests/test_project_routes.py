@@ -464,3 +464,14 @@ def test_build_all_builds_every_buildable_member_of_the_group(builds):
     assert result["group"] == "game" and [b["id"] for b in result["started"]] == ["game"]
     reasons = {s["id"]: s["reason"] for s in result["skipped"]}
     assert "Unity" in reasons["game-server"] and "managed by the LAIka builder" in reasons["game-app"]
+
+
+def test_a_project_can_be_renamed_but_not_to_markup_or_blank(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main
+    fake = FakeRedis({"laika:projects:web": {"id": "web", "name": "web", "status": "active"}}, members=["web"])
+    monkeypatch.setattr(main, "redis", fake)
+    client = TestClient(main.app)
+    assert client.patch("/api/projects/web", json={"name": "Tank Tumble"}).json()["name"] == "Tank Tumble"
+    for bad in ("", "   ", "a\nb", "<script>"):
+        assert client.patch("/api/projects/web", json={"name": bad}).status_code == 422, bad

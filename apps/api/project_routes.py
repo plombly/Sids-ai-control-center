@@ -27,6 +27,8 @@ _COMMAND = r"^[^\r\n]*$"
 class ProjectPatch(BaseModel):
     """Any subset of the editable settings. Commands are one line; an empty
     string clears one (gate/setup: detect automatically; run: app off)."""
+    # The display name; the id (folders, ports, keys) never changes.
+    name: Optional[str] = Field(default=None, min_length=1, max_length=60, pattern=r"^[^\r\n<>]*\S[^\r\n<>]*$")
     importance: Optional[Literal["high", "medium", "low"]] = None
     gate_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)
     setup_command: Optional[str] = Field(default=None, max_length=300, pattern=_COMMAND)

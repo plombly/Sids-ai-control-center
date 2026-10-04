@@ -2,6 +2,11 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.3.1 (not released yet)
+
+- Projects can be renamed: Settings → Name. Only the name shown changes;
+  the id, folders and app port stay.
+
 ## 1.3.0
 
 - **Needs you on every project page.** Changes ready to approve and stuck

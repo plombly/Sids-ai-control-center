@@ -169,7 +169,8 @@ export function historyMarkup(history, now = Date.now() / 1000) {
 function settingsMarkup(project) {
   const id = text(project?.id, '');
   if (id === 'laika') return systemInfoMarkup(project.system);
-  return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+  const nameForm = `<form id="project-name-form" class="goal-form"><h3>Name</h3><div class="form-row"><input name="name" value="${escValue(text(project?.name, id))}" maxlength="60" required aria-label="Project name"><button type="submit">Rename</button></div><span class="field-hint">Only the name shown in LAIka changes; the project's id (${esc(id)}), folders and app port stay.</span><span id="project-name-status" class="form-status" role="status"></span></form>`;
+  return `${nameForm}${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
 // What this project (and its children) needs from you: the same cards as the
@@ -545,6 +546,13 @@ if (typeof document !== 'undefined') {
         form.reset();
         document.activeElement?.blur?.();
         status('project-env-status', `Saved ${name}; the app restarts with it`);
+        await render(activeRoute, true);
+      } else if (form.id === 'project-name-form') {
+        const name = text(values.name, '').trim();
+        if (!name) return status('project-name-status', 'Give it a name');
+        await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+        status('project-name-status', 'Renamed');
+        document.activeElement?.blur?.();
         await render(activeRoute, true);
       } else if (form.id === 'project-settings-form') {
         const body = buildSettingsRequest(values);
