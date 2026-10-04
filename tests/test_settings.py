@@ -213,3 +213,15 @@ def test_a_revoked_token_shows_as_not_signed_in():
     assert info["signed_in"] is False and "sign in again" in info["method"]
     good = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, json.dumps({"is_error": False, "result": "OK", "loggedIn": True}), "")
     assert helper.claude_status(good, token=token)["signed_in"] is True
+
+
+def test_host_programs_use_laikas_git_config_unless_given_one(tmp_path, monkeypatch):
+    import laika_env
+    config = tmp_path / "gitconfig"
+    config.write_text("[safe]\n\tdirectory = *\n")
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+    laika_env.shared_git_config(str(config))
+    assert __import__("os").environ["GIT_CONFIG_GLOBAL"] == str(config)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/elsewhere")
+    laika_env.shared_git_config(str(config))
+    assert __import__("os").environ["GIT_CONFIG_GLOBAL"] == "/elsewhere"

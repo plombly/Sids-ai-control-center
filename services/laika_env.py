@@ -41,5 +41,16 @@ def shared_umask():
     os.umask(0o007 if current == 0o022 else current)
 
 
+def shared_git_config(path="/etc/laika/gitconfig"):
+    """Repositories are shared between root and the laika user, and git
+    refuses ones owned by someone else unless its global config trusts them.
+    Units start with a clean environment (systemd-run: builds, play-tests,
+    assistant turns), so every host program uses LAIka's git config unless
+    it was given another."""
+    if not os.environ.get("GIT_CONFIG_GLOBAL") and os.path.isfile(path):
+        os.environ["GIT_CONFIG_GLOBAL"] = path
+
+
 shared_umask()
+shared_git_config()
 APPLIED = apply()
