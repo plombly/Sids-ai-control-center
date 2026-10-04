@@ -108,7 +108,7 @@ try:
 except ValueError:
     sys.exit("  doctor did not run")
 bad = [c for c in checks if c["level"] != "ok"]
-print("  doctor: all good" if not bad else "  doctor: " + "; ".join(f"{c[\"name\"]} ({c[\"level\"]}): {c[\"detail\"]}" for c in bad))'
+print("  doctor: all good" if not bad else "  doctor: " + "; ".join("%s (%s): %s" % (c["name"], c["level"], c["detail"]) for c in bad))' || true
 }
 
 setup_code() {
