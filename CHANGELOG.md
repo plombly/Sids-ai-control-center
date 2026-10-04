@@ -29,6 +29,9 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   git checkout (LAIka's own, on an install from a release), so no queued
   change was ever merged. Each project's queue now runs on its own, and
   approved changes waiting in the queue say so instead of showing Approve.
+- **Planning survives restarts.** A goal whose planning was cut off by a
+  restart (an update, `laika repair`, a crash) stayed "planning" forever.
+  The orchestrator now plans it again (twice at most, then it says so).
 - Job details: **Close** works again (and Esc, and leaving the page).
 - Releases no longer show red health for "live tree" (it only applies to
   git checkouts), which also pinged the health notification.

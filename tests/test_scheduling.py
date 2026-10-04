@@ -173,3 +173,21 @@ def test_problem_goals_are_diagnosed_first_with_recent_failures(orch, monkeypatc
     assert "App: crashed: exit 1" in prompt and "TypeError: x is undefined" in prompt
     plain = orch.planner_prompt("add a pause menu")
     assert "DIAGNOSE" not in plain and "Recent problems" not in plain and "Do not broadly inspect" in plain
+
+
+def test_planning_interrupted_by_a_restart_is_queued_again(orch):
+    orch.r.records["laika:goals:g7"] = {"id": "g7", "goal": "fix the lobby", "status": "planning", "project_id": "laika",
+                                        "atomic": "false"}
+    orch.r.values["laika:goals:g7:planning"] = orch.ORCHESTRATOR_ID   # the claim of the process that died
+    orch.recover_interrupted_planning()
+    assert orch.r.records["laika:goals:g7"]["status"] == "planning"   # a live claim is left alone
+    orch.recover_interrupted_planning(startup=True)                   # ...but at startup it is ours and dead
+    goal = orch.r.records["laika:goals:g7"]
+    assert goal["status"] == "queued" and goal["plan_restarts"] == "1"
+    queued = json.loads(orch.r.values[orch.GOAL_QUEUE][-1])
+    assert queued == {"id": "g7", "goal": "fix the lobby", "atomic": False, "project_id": "laika"}
+    goal["status"] = "planning"
+    orch.recover_interrupted_planning()                               # claim gone (expired): queued again
+    goal["status"] = "planning"
+    orch.recover_interrupted_planning()
+    assert goal["status"] == "planning_failed" and "interrupted" in goal["error"]

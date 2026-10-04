@@ -681,9 +681,54 @@ Efficiency requirements:
 - Stop when the requested implementation and focused validation are complete.
 """.strip() + goal_section(goal, jobs_in_plan)
 
+PLANNING_NOW = set()  # goal ids this process is planning right now
+MAX_PLAN_RESTARTS = 2
+LAST_PLAN_RECOVERY = [0.0]
+
+
+def recover_interrupted_planning(startup=False):
+    """A goal left in "planning" by a restart or crash (its planner died with
+    the process, and its queue entry was already taken) is queued again. At
+    startup that is every planning goal this orchestrator had claimed; later,
+    any planning goal whose claim has expired. After MAX_PLAN_RESTARTS it
+    fails visibly instead of looping."""
+    for key in r.scan_iter("laika:goals:*"):
+        if key.count(":") != 2 or key.endswith(":planning"):
+            continue
+        goal_id = key.rsplit(":", 1)[-1]
+        if goal_id in PLANNING_NOW or r.hget(key, "status") != "planning" or r.hget(key, "jobs"):
+            continue
+        owner = r.get(f"{key}:planning")
+        if owner and not (startup and owner == ORCHESTRATOR_ID):
+            continue  # still being planned (here or by another orchestrator)
+        goal = r.hgetall(key)
+        restarts = int(goal.get("plan_restarts") or 0) + 1
+        r.delete(f"{key}:planning")
+        if restarts > MAX_PLAN_RESTARTS:
+            r.hset(key, mapping={"status": "planning_failed", "updated_at": now(),
+                                 "error": "planning was interrupted several times (restarts); submit the goal again"})
+            continue
+        r.hset(key, mapping={"status": "queued", "plan_restarts": str(restarts), "updated_at": now(),
+                             "note": "planning was interrupted by a restart; planning again"})
+        queued = {"id": goal_id, "goal": goal.get("goal") or goal.get("prompt") or "",
+                  "atomic": str(goal.get("atomic", "")).lower() in {"1", "true", "yes"}}
+        if goal.get("project_id"):
+            queued["project_id"] = goal["project_id"]
+        r.rpush(GOAL_QUEUE, json.dumps(queued))
+        print(f"[{ORCHESTRATOR_ID}] goal {goal_id}: planning was interrupted; queued again ({restarts})", flush=True)
+
+
 def process_goal(raw):
     data = json.loads(raw)
     goal_id = data["id"]
+    PLANNING_NOW.add(goal_id)
+    try:
+        return _process_goal(raw, data, goal_id)
+    finally:
+        PLANNING_NOW.discard(goal_id)
+
+
+def _process_goal(raw, data, goal_id):
     goal = data["goal"]
     key = f"laika:goals:{goal_id}"
 
@@ -1719,6 +1764,10 @@ def main():
     )
 
     futures = set()
+    try:
+        recover_interrupted_planning(startup=True)
+    except Exception as exc:
+        print(f"[{ORCHESTRATOR_ID}] planning recovery: {exc}", flush=True)
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_GOALS) as executor:
         while True:
             try:
@@ -1735,6 +1784,9 @@ def main():
                 queue_repairs()
                 release_dependencies()
                 update_goals()
+                if time.time() - LAST_PLAN_RECOVERY[0] > 30:
+                    LAST_PLAN_RECOVERY[0] = time.time()
+                    recover_interrupted_planning()
                 submit_queued_goals(executor, futures)
 
                 ids = active_goal_ids()
