@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.3.0 (not released yet)
+## 1.3.0
 
 - **Needs you on every project page.** Changes ready to approve and stuck
   jobs of a project (and its child projects) show at the top of its page,
