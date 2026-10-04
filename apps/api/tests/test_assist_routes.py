@@ -74,3 +74,26 @@ def test_validation_and_limits(api):
     assert client.post("/api/projects/game/assistant", json={"idea": "x"}).status_code == 429
     laika = client.post("/api/projects/laika/assistant", json={"idea": "x"})
     assert laika.status_code == 403  # the built-in project is view-only
+
+
+def test_talk_it_through_conversation_and_write_the_goal(api):
+    client, fake, submitted = api
+    session = client.post("/api/projects/game/assistant", json={"idea": "what should we add next?", "mode": "chat"}).json()
+    laika = session["id"]
+    assert (session["mode"], session["want"], session["turns"]) == ("chat", "reply", [{"from": "you", "message": "what should we add next?"}])
+    assert client.post(f"/api/assistant/{laika}/reply", json={"message": "and?"}).status_code == 409   # wait for the reply
+    goal_assist.save(fake, laika, status="reply", turns=session["turns"] + [{"from": "assistant", "message": "A pause menu."}])
+    more = client.post(f"/api/assistant/{laika}/reply", json={"message": "  How hard is that? "}).json()
+    assert more["status"] == "queued" and more["turns"][-1] == {"from": "you", "message": "How hard is that?"}
+    goal_assist.save(fake, laika, status="reply")
+    wrote = client.post(f"/api/assistant/{laika}/write-goal").json()
+    assert (wrote["status"], wrote["want"]) == ("queued", "brief")
+    # A brief can still be discussed further.
+    goal_assist.save(fake, laika, status="brief", brief={"title": "Pause", "summary": "", "goal": "Add pause.", "atomic": True})
+    assert client.post(f"/api/assistant/{laika}/reply", json={"message": "also mute"}).json()["want"] == "reply"
+    plan = client.post("/api/projects/game/assistant", json={"idea": "pause menu"}).json()
+    assert client.post(f"/api/assistant/{plan['id']}/reply", json={"message": "hi"}).status_code == 409
+    assert client.post(f"/api/assistant/{plan['id']}/write-goal").status_code == 409
+    goal_assist.save(fake, laika, status="failed", error="limit")
+    assert client.post(f"/api/assistant/{laika}/retry").json()["status"] == "queued"
+    assert client.post(f"/api/assistant/{laika}/retry").status_code == 409

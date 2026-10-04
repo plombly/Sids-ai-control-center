@@ -9,7 +9,7 @@ goal submission for the session's project.
 import json
 import secrets
 import time
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -23,11 +23,13 @@ MAX_ACTIVE = 6  # queued or thinking, across all projects
 
 class AssistStart(BaseModel):
     idea: str = Field(min_length=1, max_length=4000)
+    mode: Literal["plan", "chat"] = "plan"
 
 
 class AssistReply(BaseModel):
     answers: Optional[List[str]] = Field(default=None, max_length=goal_assist.MAX_QUESTIONS)
     feedback: Optional[str] = Field(default=None, max_length=2000)
+    message: Optional[str] = Field(default=None, max_length=goal_assist.MAX_MESSAGE)
 
 
 class AssistSubmit(BaseModel):
@@ -45,6 +47,7 @@ def view(session_id, session):
             "turns": session.get("turns") or [], "questions": session.get("questions") or [],
             "brief": session.get("brief") or None, "error": session.get("error") or "",
             "goal_id": session.get("goal_id") or "", "cost_usd": projects._numeric(session.get("cost_usd")) or 0,
+            "mode": session.get("mode") or "plan", "want": session.get("want") or "",
             "updated_at": projects._numeric(session.get("updated_at"))}
 
 
@@ -83,8 +86,13 @@ def start(project_id: str, payload: AssistStart):
     if _active_count() >= MAX_ACTIVE:
         raise HTTPException(status_code=429, detail="The assistant is busy; try again in a minute or use Send as written")
     session_id = secrets.token_hex(8)
-    _queue(session_id, project_id=project_id, idea=idea, created_at=time.time(),
-           turns=[{"from": "you", "idea": idea}], questions=[], brief={})
+    import access
+    if payload.mode == "chat":
+        _queue(session_id, project_id=project_id, idea=idea, created_at=time.time(), mode="chat", want="reply",
+               turns=[{"from": "you", "message": idea}], questions=[], brief={}, started_by=access.current_name())
+    else:
+        _queue(session_id, project_id=project_id, idea=idea, created_at=time.time(),
+               turns=[{"from": "you", "idea": idea}], questions=[], brief={}, started_by=access.current_name())
     return view(session_id, goal_assist.load(_redis(), session_id))
 
 
@@ -97,7 +105,17 @@ def get(session_id: str):
 def reply(session_id: str, payload: AssistReply):
     session = _session(session_id)
     turns = session["turns"]
-    if len([t for t in turns if t.get("from") == "you"]) >= goal_assist.MAX_TURNS:
+    if (payload.message or "").strip():
+        # Talk it through: any time the assistant is not busy, also after a brief.
+        if session.get("mode") != "chat":
+            raise HTTPException(status_code=409, detail="This session plans a goal; start 'Talk it through' to chat")
+        if session.get("status") not in ("reply", "brief", "failed"):
+            raise HTTPException(status_code=409, detail="Wait for the reply first")
+        if len([t for t in turns if t.get("from") == "you" and t.get("message")]) >= goal_assist.MAX_CHAT_MESSAGES:
+            raise HTTPException(status_code=409, detail="This conversation is long: press Write the goal, or start a new one")
+        _queue(session_id, turns=turns + [{"from": "you", "message": payload.message.strip()}], want="reply")
+        return view(session_id, goal_assist.load(_redis(), session_id))
+    if len([t for t in turns if t.get("from") == "you"]) >= goal_assist.MAX_TURNS + goal_assist.MAX_CHAT_MESSAGES:
         raise HTTPException(status_code=409, detail="This conversation is long enough: edit the brief yourself or start over")
     if payload.answers is not None:
         if session.get("status") != "questions":
@@ -113,6 +131,26 @@ def reply(session_id: str, payload: AssistReply):
     else:
         raise HTTPException(status_code=422, detail="Send answers or the changes you want")
     _queue(session_id, turns=turns + [turn], questions=[])
+    return view(session_id, goal_assist.load(_redis(), session_id))
+
+
+@router.post("/api/assistant/{session_id}/write-goal", status_code=202)
+def write_goal(session_id: str):
+    """Talk it through -> the goal brief, from the whole conversation."""
+    session = _session(session_id)
+    if session.get("mode") != "chat" or session.get("status") not in ("reply", "brief", "failed"):
+        raise HTTPException(status_code=409, detail="Nothing to write a goal from yet")
+    _queue(session_id, want="brief")
+    return view(session_id, goal_assist.load(_redis(), session_id))
+
+
+@router.post("/api/assistant/{session_id}/retry", status_code=202)
+def retry(session_id: str):
+    """The last turn failed (a limit, a timeout): run it again as it was."""
+    session = _session(session_id)
+    if session.get("status") != "failed":
+        raise HTTPException(status_code=409, detail="Nothing failed")
+    _queue(session_id)
     return view(session_id, goal_assist.load(_redis(), session_id))
 
 

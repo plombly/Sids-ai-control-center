@@ -111,6 +111,10 @@ FIELDS = [
     _f("ASSIST_MODEL", "ai", "Goal assistant model", "str", "claude-haiku-4-5-20251001",
        "The quick model behind 'Plan it with me'.", max_length=80, pattern=r"^[A-Za-z0-9._:-]+$"),
     _f("ASSIST_BUDGET_USD", "ai", "Goal assistant cap per turn ($)", "float", 0.30, min=0.05, max=5),
+    _f("ASSIST_CHAT_MODEL", "ai", "'Talk it through' model", "str", "sonnet",
+       "The model you discuss ideas with in the goal box (a Claude model name or alias).", max_length=80,
+       pattern=r"^[A-Za-z0-9._:-]+$"),
+    _f("ASSIST_CHAT_BUDGET_USD", "ai", "'Talk it through' cap per reply ($)", "float", 0.50, min=0.05, max=5),
     # --- workers -------------------------------------------------------------------------
     # The scaler (services/scaler/laika_scaler.py) reads these every 15 s.
     _f("AUTOSCALE", "workers", "Automatic scaling", "bool", "true",

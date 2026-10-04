@@ -168,3 +168,25 @@ def test_the_assistant_knows_how_laika_runs_projects():
     assert "listen on $PORT on 0.0.0.0, never a fixed port" in prompt
     assert "never localhost" in prompt
     assert "say which project (by name) each part goes in" in prompt
+
+
+def test_talk_it_through_replies_in_prose_then_writes_the_goal_from_the_conversation(assist):
+    module, r, runner_for, calls = assist
+    goal_assist.save(r, "a" * 16, mode="chat", want="reply", turns=[{"from": "you", "message": "What would make the game better?"}])
+    assert module.main("a" * 16, r=r, runner=runner_for(Run("A pause menu and saved high scores would help most."))) == 0
+    session = goal_assist.load(r, "a" * 16)
+    assert session["status"] == "reply"
+    assert session["turns"][-1] == {"from": "assistant", "message": "A pause menu and saved high scores would help most."}
+    chat = calls[0]
+    assert chat["model"] == module.CHAT_MODEL and chat["tools"] == "Read,Grep,Glob"
+    assert chat["system_prompt"] == goal_assist.CHAT_SYSTEM_PROMPT
+    assert "OPERATOR:\nWhat would make the game better?" in chat["prompt"] and "Write the goal" in chat["prompt"]
+    # "Write the goal": a brief from the whole conversation, no questions round.
+    goal_assist.save(r, "a" * 16, status="queued", want="brief",
+                     turns=session["turns"] + [{"from": "you", "message": "Do the pause menu."}])
+    assert module.main("a" * 16, r=r, runner=runner_for(Run(json.dumps(BRIEF)))) == 0
+    session = goal_assist.load(r, "a" * 16)
+    assert session["status"] == "brief" and session["brief"]["goal"]
+    brief_call = calls[1]
+    assert "Write the brief now" in brief_call["prompt"] and "YOU (earlier reply):" in brief_call["prompt"]
+    assert brief_call["model"] == module.MODEL

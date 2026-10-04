@@ -1,6 +1,9 @@
 // The goal box with its assistant: "Plan it with me" sends the idea to the
 // goal assistant (Haiku reads the project, may ask up to 3 questions, then
-// writes a brief you can edit); "Send as written" submits the text as is.
+// writes a brief you can edit); "Send as written" submits the text as is;
+// "Talk it through" (1.3) is an open conversation about the project
+// (apps/api/goal_assist.py, mode chat) that "Write the goal" turns into the
+// same editable brief.
 // Used on the dashboard home ('home', with a project picker) and on each
 // project's Overview ('project:<id>'). State lives here, so the pages can
 // redraw around it every few seconds without losing what you typed.
@@ -14,7 +17,7 @@ const POLL_MS = 2000;
 const WORKING = /^(queued|thinking)$/;
 
 export function boxState(box) {
-  if (!boxes.has(box)) boxes.set(box, { draft: '', atomic: false, session: null, answers: [], feedback: '', briefText: '', briefAtomic: false, revising: false, message: '' });
+  if (!boxes.has(box)) boxes.set(box, { draft: '', atomic: false, session: null, answers: [], feedback: '', briefText: '', briefAtomic: false, revising: false, message: '', chatDraft: '', chatting: false });
   return boxes.get(box);
 }
 
@@ -23,12 +26,69 @@ const attr = box => escValue(box);
 const opt = value => (value ? esc(value) : '');
 
 function ideaOf(session) {
-  return session?.turns?.find(turn => turn.idea)?.idea || '';
+  return session?.turns?.find(turn => turn.idea || turn.message)?.idea || session?.turns?.find(turn => turn.message)?.message || '';
+}
+
+// A chat message as HTML: escaped, then a little markdown (code blocks,
+// `code`, **bold**, bullet and numbered lists, paragraphs).
+export function chatText(text) {
+  const blocks = String(text || '').split(/```/);
+  return blocks
+    .map((block, index) => {
+      if (index % 2) return `<pre class="chat-code">${esc(block.replace(/^[a-z0-9+-]*\n/i, ''))}</pre>`;
+      return block
+        .split(/\n{2,}/)
+        .map(paragraph => paragraph.trim())
+        .filter(Boolean)
+        .map(paragraph => {
+          const inline = line => esc(line).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+          // Runs of list lines become lists; other lines stay text.
+          const item = /^\s*([-*]|\d+[.)])\s+/;
+          const out = [];
+          let text = [];
+          let list = null;
+          const flushText = () => text.length && (out.push(`<p>${text.join('<br>')}</p>`), (text = []));
+          const flushList = () => list && (out.push(`<${list.tag}>${list.items.join('')}</${list.tag}>`), (list = null));
+          for (const line of paragraph.split('\n')) {
+            if (item.test(line)) {
+              flushText();
+              const tag = /^\s*\d/.test(line) ? 'ol' : 'ul';
+              if (list && list.tag !== tag) flushList();
+              list = list || { tag, items: [] };
+              list.items.push(`<li>${inline(line.replace(item, ''))}</li>`);
+            } else {
+              flushList();
+              text.push(inline(line));
+            }
+          }
+          flushText();
+          flushList();
+          return out.join('');
+        })
+        .join('');
+    })
+    .join('');
+}
+
+export function chatMarkup(box, state, session) {
+  const working = WORKING.test(session.status);
+  const bubbles = (session.turns || [])
+    .filter(turn => turn.message)
+    .map(turn => `<div class="chat-bubble ${turn.from === 'you' ? 'from-you' : 'from-laika'}"><span class="chat-who">${turn.from === 'you' ? 'You' : 'LAIka'}</span>${chatText(turn.message)}</div>`)
+    .join('');
+  const thinking = working
+    ? `<div class="chat-bubble from-laika thinking"><span class="spinner" aria-hidden="true"></span> ${session.want === 'brief' ? 'Writing the goal from your conversation…' : 'Reading the project and thinking…'}</div>`
+    : '';
+  const failed = session.status === 'failed'
+    ? `<div class="chat-bubble from-laika failed"><b>That did not work.</b> ${opt(session.error)} <button type="button" class="detail-button" data-assist-retry-turn="${attr(box)}">Try again</button></div>`
+    : '';
+  const id = `${domId(box)}-chat`;
+  return `<p class="assist-step">Talking it through <span class="subtle">· nothing is built until you start a goal</span></p><div class="chat-log" aria-live="polite">${bubbles}${thinking}${failed}</div><label class="sr-only" for="${id}">Your message</label><textarea id="${id}" class="chat-input" rows="2" data-assist-field="chatDraft" data-box="${attr(box)}" placeholder="${working ? 'Wait for the reply…' : 'Reply, ask, or suggest… (Ctrl+Enter sends)'}"${working ? ' disabled' : ''}>${opt(state.chatDraft)}</textarea><div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.brief?.goal ? `<button type="button" data-assist-to-brief="${attr(box)}"${working ? ' disabled' : ''}>Back to the goal</button>` : ''}<button type="button" data-assist-write-goal="${attr(box)}"${working ? ' disabled' : ''}>Write the goal</button><button type="button" class="primary" data-assist-send="${attr(box)}"${working ? ' disabled' : ''}>Send</button></span></div>`;
 }
 
 function idleMarkup(box, state, o) {
   const id = `${domId(box)}-text`;
-  return `<label class="composer-label" for="${id}">${esc(o.label)}</label><textarea id="${id}" rows="3" data-assist-field="draft" data-box="${attr(box)}" placeholder="${escValue(o.placeholder)}">${opt(state.draft)}</textarea><div class="composer-row">${typeof o.extra === 'function' ? o.extra() : o.extra || ''}<label class="composer-atomic"><input type="checkbox" data-assist-field="atomic" data-box="${attr(box)}"${state.atomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-plain="${attr(box)}">Send as written</button><button type="button" class="primary" data-assist-start="${attr(box)}">Plan it with me</button></span></div>`;
+  return `<label class="composer-label" for="${id}">${esc(o.label)}</label><textarea id="${id}" rows="3" data-assist-field="draft" data-box="${attr(box)}" placeholder="${escValue(o.placeholder)}">${opt(state.draft)}</textarea><div class="composer-row">${typeof o.extra === 'function' ? o.extra() : o.extra || ''}<label class="composer-atomic"><input type="checkbox" data-assist-field="atomic" data-box="${attr(box)}"${state.atomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-plain="${attr(box)}">Send as written</button><button type="button" data-assist-chat="${attr(box)}" title="Discuss ideas, changes and features with Claude before building anything">Talk it through</button><button type="button" class="primary" data-assist-start="${attr(box)}">Plan it with me</button></span></div>`;
 }
 
 function ideaQuote(session) {
@@ -53,14 +113,16 @@ function briefMarkup(box, state, session) {
   const revise = state.revising
     ? `<div class="assist-revise"><input data-assist-field="feedback" data-box="${attr(box)}" value="${escValue(state.feedback)}" placeholder="What should change? e.g. also support the P key" autocomplete="off"><button type="button" data-assist-revise="${attr(box)}">Rewrite brief</button></div>`
     : '';
-  return `<p class="assist-step">Your goal, ready to start</p><div class="assist-brief-head"><b>${opt(brief.title)}</b>${brief.summary ? `<span class="subtle">${esc(brief.summary)}</span>` : ''}</div><textarea class="assist-brief" rows="12" data-assist-field="brief" data-box="${attr(box)}" aria-label="Goal brief (you can edit it)">${opt(state.briefText)}</textarea><span class="field-hint">You can edit this before starting. Nothing runs until you press Start.</span>${revise}<div class="composer-row"><label class="composer-atomic"><input type="checkbox" data-assist-field="briefAtomic" data-box="${attr(box)}"${state.briefAtomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${state.revising ? '' : `<button type="button" data-assist-change="${attr(box)}">Change something</button>`}<button type="button" class="primary" data-assist-submit="${attr(box)}">Start this goal</button></span></div>`;
+  return `<p class="assist-step">Your goal, ready to start</p><div class="assist-brief-head"><b>${opt(brief.title)}</b>${brief.summary ? `<span class="subtle">${esc(brief.summary)}</span>` : ''}</div><textarea class="assist-brief" rows="12" data-assist-field="brief" data-box="${attr(box)}" aria-label="Goal brief (you can edit it)">${opt(state.briefText)}</textarea><span class="field-hint">You can edit this before starting. Nothing runs until you press Start.</span>${revise}<div class="composer-row"><label class="composer-atomic"><input type="checkbox" data-assist-field="briefAtomic" data-box="${attr(box)}"${state.briefAtomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.mode === 'chat' ? `<button type="button" data-assist-to-chat="${attr(box)}">Keep talking</button>` : ''}${state.revising ? '' : `<button type="button" data-assist-change="${attr(box)}">Change something</button>`}<button type="button" class="primary" data-assist-submit="${attr(box)}">Start this goal</button></span></div>`;
 }
 
 export function assistantInner(box, state = boxState(box), o = options.get(box) || {}) {
   const session = state.session;
   const status = session?.status || 'idle';
   let body;
-  if (WORKING.test(status)) {
+  if (session?.mode === 'chat' && (status !== 'brief' || state.chatting) && status !== 'submitted' && status !== 'cancelled') {
+    body = chatMarkup(box, state, session);
+  } else if (WORKING.test(status)) {
     body = `<p class="assist-step"><span class="spinner" aria-hidden="true"></span> ${status === 'queued' ? 'Starting…' : 'Reading the project and thinking…'} <span class="subtle">usually under a minute</span></p>${ideaQuote(session)}<div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Cancel</button></span></div>`;
   } else if (status === 'questions') body = questionsMarkup(box, state, session);
   else if (status === 'brief') body = briefMarkup(box, state, session);
@@ -79,7 +141,7 @@ export function assistantMarkup(box, o) {
 
 // The current session, reset to idle (keeps nothing of the old one).
 function reset(state, message = '') {
-  Object.assign(state, { session: null, answers: [], feedback: '', briefText: '', briefAtomic: false, revising: false, message });
+  Object.assign(state, { session: null, answers: [], feedback: '', briefText: '', briefAtomic: false, revising: false, message, chatDraft: '', chatting: false });
   return state;
 }
 
@@ -92,6 +154,7 @@ export function applySession(state, session) {
     state.briefAtomic = Boolean(session.brief?.atomic);
     state.revising = false;
     state.feedback = '';
+    state.chatting = false; // a new brief: show it
   }
   if (session?.status === 'questions' && before !== 'questions') state.answers = (session.questions || []).map(() => '');
   return state;
@@ -195,8 +258,8 @@ async function act(box, button, work) {
   if (state.session && WORKING.test(state.session.status)) poll(box);
 }
 
-async function start(state, box, idea) {
-  const session = await requestJSON(`/api/projects/${encodeURIComponent(projectOf(box))}/assistant`, { method: 'POST', body: JSON.stringify({ idea }) });
+async function start(state, box, idea, mode = 'plan') {
+  const session = await requestJSON(`/api/projects/${encodeURIComponent(projectOf(box))}/assistant`, { method: 'POST', body: JSON.stringify({ idea, mode }) });
   applySession(state, session);
   storage.set(box, session.id);
 }
@@ -211,7 +274,48 @@ if (typeof document !== 'undefined') {
     const state = boxState(event.target.dataset.box);
     if (field === 'answer') state.answers[Number(event.target.dataset.index)] = event.target.value;
     else if (field === 'atomic' || field === 'briefAtomic') state[field] = event.target.checked;
-    else state[{ draft: 'draft', brief: 'briefText', feedback: 'feedback' }[field]] = event.target.value;
+    else state[{ draft: 'draft', brief: 'briefText', feedback: 'feedback', chatDraft: 'chatDraft' }[field]] = event.target.value;
+  });
+  // Ctrl/Cmd+Enter sends a chat message (Enter alone is a new line).
+  document.addEventListener('keydown', event => {
+    if (event.target?.dataset?.assistField !== 'chatDraft' || event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
+    event.preventDefault();
+    document.querySelector(`[data-assist-send="${CSS.escape(event.target.dataset.box)}"]`)?.click();
+  });
+  const sendChat = (box, button) =>
+    act(box, button, async state => {
+      const message = state.chatDraft.trim();
+      if (!message) throw new Error('Write something first');
+      applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/reply`, { method: 'POST', body: JSON.stringify({ message }) }));
+      state.chatDraft = '';
+      state.chatting = true;
+    });
+  registerClick('assistChat', button =>
+    act(button.dataset.assistChat, button, async state => {
+      const idea = state.draft.trim();
+      if (!idea) throw new Error('Write what you would like to talk about first, e.g. "What could make the app better?"');
+      await start(state, button.dataset.assistChat, idea, 'chat');
+    })
+  );
+  registerClick('assistSend', button => sendChat(button.dataset.assistSend, button));
+  registerClick('assistWriteGoal', button =>
+    act(button.dataset.assistWriteGoal, button, async state => {
+      applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/write-goal`, { method: 'POST' }));
+      state.chatting = false;
+    })
+  );
+  registerClick('assistRetryTurn', button =>
+    act(button.dataset.assistRetryTurn, button, async state => {
+      applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/retry`, { method: 'POST' }));
+    })
+  );
+  registerClick('assistToChat', button => {
+    boxState(button.dataset.assistToChat).chatting = true;
+    paintBox(button.dataset.assistToChat);
+  });
+  registerClick('assistToBrief', button => {
+    boxState(button.dataset.assistToBrief).chatting = false;
+    paintBox(button.dataset.assistToBrief);
   });
   document.addEventListener('change', event => {
     const field = event.target?.dataset?.assistField;

@@ -29,6 +29,9 @@ import laika_redis  # noqa: E402
 
 MODEL = os.getenv("ASSIST_MODEL", "claude-haiku-4-5-20251001")
 BUDGET_USD = float(os.getenv("ASSIST_BUDGET_USD", "0.30"))
+CHAT_MODEL = os.getenv("ASSIST_CHAT_MODEL", "sonnet")
+CHAT_BUDGET_USD = float(os.getenv("ASSIST_CHAT_BUDGET_USD", "0.50"))
+CHAT_TIMEOUT = int(os.getenv("ASSIST_CHAT_TIMEOUT_SECONDS", "240"))
 TIMEOUT = int(os.getenv("ASSIST_TIMEOUT_SECONDS", "150"))
 MAX_RUNNING = int(os.getenv("ASSIST_MAX_CONCURRENT", "2"))
 LOG_ROOT = Path(os.getenv("ASSIST_LOG_ROOT", "/var/log/laika/assist"))
@@ -96,6 +99,21 @@ def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
                   wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
 
 
+def chat(r, session, project, runner=agent_cli.run_claude):
+    """One reply in a "Talk it through" conversation."""
+    try:
+        note = group_note(r, project)
+    except Exception as exc:
+        print(f"[assist] group context: {exc}", flush=True)
+        note = ""
+    prompt = goal_assist.build_chat_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
+                                           recent_goals(r, project.id), group_note=note)
+    log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}-chat.json"
+    return runner("assistant", prompt, project.repo, log_path, CHAT_TIMEOUT, model=CHAT_MODEL, budget_usd=CHAT_BUDGET_USD,
+                  tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.CHAT_SYSTEM_PROMPT,
+                  wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
+
+
 def fail(r, session_id, message):
     goal_assist.save(r, session_id, status="failed", error=message[:500])
     return 1
@@ -123,7 +141,28 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
     goal_assist.save(r, session_id, status="thinking", error="")
     try:
         cost = float(session.get("cost_usd") or 0)
-        for force_brief in (False, True):
+        chatting = session.get("mode") == "chat"
+        if chatting and session.get("want") != "brief":
+            run = chat(r, session, project, runner=runner)
+            if run.result:
+                cost += float(run.result.get("total_cost_usd") or 0)
+            if not run.ok:
+                goal_assist.save(r, session_id, cost_usd=cost)
+                if run.unavailable:
+                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
+                    return fail(r, session_id, "Claude is not available right now (usage limit or login). Try again later.")
+                return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")
+            try:
+                text = goal_assist.parse_chat_reply(run.text)
+            except ValueError as exc:
+                goal_assist.save(r, session_id, cost_usd=cost)
+                return fail(r, session_id, str(exc))
+            if r.hget(goal_assist.session_key(session_id), "status") != "thinking":
+                return 0
+            goal_assist.save(r, session_id, status="reply", turns=session["turns"] + [{"from": "assistant", "message": text}],
+                             cost_usd=cost, model=CHAT_MODEL)
+            return 0
+        for force_brief in ((True,) if chatting else (False, True)):
             run = ask(r, session, project, force_brief=force_brief, runner=runner)
             if run.result:
                 cost += float(run.result.get("total_cost_usd") or 0)

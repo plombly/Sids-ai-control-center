@@ -21,6 +21,11 @@ Type what you want into a goal box, as you would tell a developer:
 - **Send as written** plans it straight away.
 - **Plan it with me** first asks up to three questions and writes a precise
   brief for you to check, change or send.
+- **Talk it through** is an open conversation with Claude about the
+  project: discuss changes, ask what could be better, get ideas you had not
+  thought of. Claude reads the code to answer concretely. When you are
+  ready, **Write the goal** turns the conversation into a brief; you can
+  still edit it, keep talking, or start it. Nothing is built before that.
 
 LAIka plans the goal into jobs (one-step goals skip planning). Jobs that
 touch different files run in parallel; jobs that depend on each other

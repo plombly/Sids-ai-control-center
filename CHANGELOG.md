@@ -4,6 +4,14 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 1.3.0 (not released yet)
 
+- **Talk it through.** The goal box has a third way in: an open conversation
+  with Claude about the project. Discuss changes and additions, ask what
+  could be better, and get suggestions you had not thought of; Claude reads
+  the project's code to make its answers concrete. **Write the goal** turns
+  the conversation into the usual editable brief, and you can keep talking
+  after that. Nothing is built until you start a goal. The model (Sonnet by
+  default) and the cost cap per reply are in Settings → AI.
+
 - **SFTP.** Edit project files with WinSCP, FileZilla, Cyberduck, VS Code or
   `sftp`, signed in with your LAIka username and password (or your own SSH
   key, Settings → SFTP access). Port 2222.
