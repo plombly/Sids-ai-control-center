@@ -1,0 +1,5 @@
+{
+ "name": "Command-line tool",
+ "description": "A Python command-line tool with argument parsing and tests.",
+ "type": "cli_tool"
+}

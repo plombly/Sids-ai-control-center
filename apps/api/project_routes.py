@@ -65,7 +65,29 @@ class ProjectCreate(BaseModel):
     url: Optional[str] = Field(default=None, pattern=_GIT_URL)
     push_remote: Optional[str] = Field(default=None, pattern=_GIT_URL)
     gate: Optional[str] = Field(default=None, max_length=200, pattern=r"^[^\r\n]*$")
+    template: Optional[str] = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")
     request_id: str = Field(pattern=_REQUEST_ID)
+
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "project_templates"
+
+
+def project_templates():
+    """The starters new projects can begin from (project_templates/<id>/template.json)."""
+    found = []
+    for meta in sorted(TEMPLATES_DIR.glob("*/template.json")):
+        try:
+            data = json.loads(meta.read_text())
+        except ValueError:
+            continue
+        found.append({"id": meta.parent.name, "name": data.get("name", meta.parent.name),
+                      "description": data.get("description", ""), "type": data.get("type", "")})
+    return found
+
+
+@router.get("/api/project-templates")
+def list_project_templates():
+    return {"templates": project_templates()}
 
 
 class ProjectPushSetup(BaseModel):
@@ -547,10 +569,12 @@ def create_project(payload: ProjectCreate):
         raise HTTPException(status_code=409, detail="Project already exists")
     if payload.source == "clone" and not payload.url:
         raise HTTPException(status_code=422, detail="A clone needs a git URL")
+    if payload.template and (payload.source != "empty" or payload.template not in {t["id"] for t in project_templates()}):
+        raise HTTPException(status_code=422, detail="Unknown template (templates start empty projects)")
     return _operator_request("create_project", payload.request_id, {
         "project_id": payload.id, "name": payload.name, "importance": payload.importance,
         "source": payload.source, "url": payload.url if payload.source == "clone" else "",
-        "push_remote": payload.push_remote, "gate": payload.gate})
+        "push_remote": payload.push_remote, "gate": payload.gate, "template": payload.template or ""})
 
 
 @router.post("/api/projects/{project_id}/retry-clone", status_code=202)

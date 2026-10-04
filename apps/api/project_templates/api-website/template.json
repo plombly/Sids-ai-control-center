@@ -1,0 +1,5 @@
+{
+ "name": "API + website",
+ "description": "A JSON API and a page that uses it, in one Node server, with data saved in the app's data folder.",
+ "type": "api_service"
+}

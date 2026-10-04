@@ -1,0 +1,15 @@
+[project]
+name = "{{ID}}"
+version = "0.1.0"
+description = "{{NAME}}"
+requires-python = ">=3.10"
+
+[project.scripts]
+{{ID}} = "{{PKG}}:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["{{PKG}}"]

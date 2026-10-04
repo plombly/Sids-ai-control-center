@@ -1,0 +1,6 @@
+{
+ "name": "Discord bot",
+ "description": "A Python Discord bot with commands you can test; add its token as a secret.",
+ "type": "bot",
+ "run_command": ".venv/bin/python bot.py"
+}

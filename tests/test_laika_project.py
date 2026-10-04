@@ -645,3 +645,18 @@ def test_sftp_batch_refuses_bad_paths_and_keeps_files_when_main_is_unusable(uplo
     assert code == 1 and "kept in App data" in captured.err
     assert list((tmp_path / "data" / "shop" / ".laika-sftp-conflicts").glob("*-sam/a.txt"))
     assert invoke(["sftp-commit", "laika", "--upload", "sftp-0005", "--author", "sam"], capsys)[0] == 1
+
+
+def test_create_from_a_template_starts_with_working_code(redis, tmp_path, capsys):
+    code, captured, data = invoke(["create", "--id", "my-bot", "--name", "My Bot", "--empty", "--template", "discord-bot",
+                                   "--root-base", str(tmp_path)], capsys)
+    assert code == 0, captured.err
+    repo = tmp_path / "my-bot" / "repo"
+    assert (repo / "bot.py").is_file() and "My Bot" in (repo / "README.md").read_text()
+    assert not (repo / "template.json").exists() and "{{" not in (repo / "bot.py").read_text()
+    log = subprocess.run(["git", "-C", str(repo), "log", "--format=%s"], capture_output=True, text=True).stdout.split("\n")
+    assert log[0] == "Start from the Discord bot template"
+    assert (data["template"], data["type"], data["run_command"]) == ("discord-bot", "bot", ".venv/bin/python bot.py")
+    assert data["gate_command"] == "python3 -m pytest -q"
+    code, captured, _ = invoke(["create", "--id", "x", "--name", "X", "--empty", "--template", "nope", "--root-base", str(tmp_path)], capsys)
+    assert code == 1 and "unknown template" in captured.err

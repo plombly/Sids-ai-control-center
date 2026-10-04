@@ -489,3 +489,14 @@ def test_the_apps_live_log_is_served_from_what_the_apps_service_published(monkey
     body = client.get("/api/projects/web/app/log").json()
     assert body["lines"] == ["2026-10-04T09:30:00 listening on 8100"] and body["restarts"] == 1
     assert client.get("/api/projects/nope/app/log").status_code == 404
+
+
+def test_templates_are_listed_and_checked(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main
+    monkeypatch.setattr(main, "redis", FakeRedis({}, members=[]))
+    client = TestClient(main.app)
+    ids = {t["id"] for t in client.get("/api/project-templates").json()["templates"]}
+    assert {"web-game", "website", "api-website", "python-service", "cli-tool", "discord-bot"} <= ids
+    bad = client.post("/api/projects", json={"id": "g", "name": "G", "source": "empty", "template": "nope", "request_id": "req-12345678"})
+    assert bad.status_code == 422

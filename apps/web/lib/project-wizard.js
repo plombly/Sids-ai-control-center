@@ -31,7 +31,8 @@ export function validateStep(step, state = {}) {
     if (state.id && (!ID_PATTERN.test(state.id) || (state.existingIds || []).includes(state.id))) return 'Choose a valid, available project ID';
   }
   if (step === 2) {
-    if (!['empty', 'clone'].includes(state.source)) return 'Choose a starting point';
+    if (!['empty', 'clone', 'template'].includes(state.source)) return 'Choose a starting point';
+    if (state.source === 'template' && !state.template) return 'Choose a template';
     if (state.source === 'clone' && !URL_PATTERN.test(String(state.url || '').trim())) return 'Enter the repository address';
   }
   if (step === 3 && !['high', 'medium', 'low'].includes(state.importance)) return 'Choose an importance';
@@ -47,9 +48,10 @@ export function buildCreateBody(state) {
     id: String(state.id || '').trim(),
     name: String(state.name || '').trim(),
     importance: state.importance,
-    source: state.source,
+    source: state.source === 'template' ? 'empty' : state.source,
     request_id: state.requestId || newRequestId()
   };
+  if (state.source === 'template' && state.template) body.template = state.template;
   if (state.source === 'clone') body.url = String(state.url || '').trim();
   if (String(state.push_remote || '').trim()) body.push_remote = String(state.push_remote).trim();
   if (String(state.gate || '').trim()) body.gate = String(state.gate).trim();
@@ -76,7 +78,11 @@ export function stepMarkup(step, state = {}) {
     return `${field('What should this project be called?', 'name', state.name || '', { maxlength: 80 })}<span class="field-hint">Project ID: ${esc(id)}</span><button type="button" class="button" data-wizard-id-toggle>Change ID</button>${state.idRevealed ? field('Project ID', 'id', id) : ''}`;
   }
   if (step === 2)
-    return `<div class="choice-grid">${choice('source', 'empty', 'Start empty', 'A new, empty repository', state.source === 'empty')}${choice('source', 'clone', 'Import from GitHub', 'Clone an existing repository', state.source === 'clone')}</div>${
+    return `<div class="choice-grid">${choice('source', 'template', 'Start from a template', 'Working code, tests and a run command to build on', state.source === 'template')}${choice('source', 'empty', 'Start empty', 'A new, empty repository', state.source === 'empty')}${choice('source', 'clone', 'Import from GitHub', 'Clone an existing repository', state.source === 'clone')}</div>${
+      state.source === 'template'
+        ? `<div class="choice-grid template-grid">${(state.templates || []).map(t => choice('template', t.id, t.name, t.description, state.template === t.id)).join('') || '<p class="subtle">Loading templates…</p>'}</div>`
+        : ''
+    }${
       state.source === 'clone'
         ? `${field('Repository address', 'url', state.url || '', { placeholder: 'git@github.com:you/repo.git' })}<span class="field-hint">Use the SSH address from the repository's Code button. Private repositories need a deploy key, which the next screens will show you.</span>`
         : ''
@@ -85,7 +91,8 @@ export function stepMarkup(step, state = {}) {
     return `${state.parent ? `<p class="subtle">This project will be a child of ${esc(state.parentName || state.parent)}; once it joins, it follows that project's importance.</p>` : ''}<div class="choice-grid">${choice('importance', 'high', 'High', 'Gets workers first', state.importance === 'high')}${choice('importance', 'medium', 'Medium', 'Normal priority', state.importance === 'medium')}${choice('importance', 'low', 'Low', 'Runs when there is spare capacity', state.importance === 'low')}</div>`;
   if (step === 4)
     return `${field('Push merged work to GitHub', 'push_remote', state.push_remote || '')}<span class="field-hint">Leave blank to keep the project local only</span>${field('Test command', 'gate', state.gate || '')}<span class="field-hint">Leave blank and LAIka will detect it (npm test, pytest, cargo test, go test, make test)</span>`;
-  const starting = state.source === 'clone' ? `Import from GitHub (${text(state.url)})` : 'Start empty';
+  const template = (state.templates || []).find(t => t.id === state.template);
+  const starting = state.source === 'clone' ? `Import from GitHub (${text(state.url)})` : state.source === 'template' ? `Template: ${template?.name || state.template}` : 'Start empty';
   return `<div class="field">${esc(state.name)}<span class="field-hint">Project ID: ${esc(state.id)}</span><span>${esc(starting)}</span><span>${pill(state.importance)}</span><span>Push remote: ${esc(state.push_remote || 'local only')}</span><span>Test command: ${esc(state.gate || 'detect automatically')}</span>${state.parent ? `<span>Part of: ${esc(state.parentName || state.parent)}</span>` : ''}</div>`;
 }
 
@@ -226,6 +233,12 @@ onRoute(async route => {
   if (!root) return;
   render();
   try {
+    requestJSON('/api/project-templates')
+      .then(found => {
+        state.templates = found.templates || [];
+        render();
+      })
+      .catch(() => {});
     const projects = await requestJSON('/api/projects');
     state.existingIds = Array.isArray(projects) ? projects.map(project => project.id) : [];
     state.parentName = (Array.isArray(projects) ? projects : []).find(project => project.id === state.parent)?.name || '';

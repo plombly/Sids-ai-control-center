@@ -1,0 +1,6 @@
+body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.6; color: #1f2933; }
+header, main, footer { width: min(100% - 32px, 860px); margin: 0 auto; }
+header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; padding: 16px 0; }
+nav a { margin-left: 12px; }
+section { padding: 24px 0; }
+footer { padding: 24px 0; opacity: .7; }

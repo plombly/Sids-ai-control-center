@@ -83,7 +83,7 @@ REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
     "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
-    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit", "expected_sha256", "author",
+    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit", "expected_sha256", "author", "template",
 )
 # project_commit_upload commits one dashboard file change to a project's main:
 # an upload (op "upload", the default) or a file-browser operation.
@@ -247,6 +247,10 @@ def validate_project_request(action, fields):
         gate = fields.get("gate", "")
         if len(gate) > 200 or "\n" in gate or "\r" in gate:
             raise Invalid("gate command must be one line of at most 200 characters")
+        template = fields.get("template", "")
+        if template and (source != "empty" or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", template)):
+            raise Invalid("a template needs an empty project and a template id")
+        request["template"] = template
         request.update(name=name, importance=importance, source=source, url=url,
                        push_remote=push_remote, gate=gate)
     elif action == "delete_project":
@@ -320,6 +324,8 @@ def project_cli_args(request):
         args += ["--empty"] if request["source"] == "empty" else ["--clone", request["url"]]
         if request.get("gate"):
             args += ["--gate", request["gate"]]
+        if request.get("template"):
+            args += [f"--template={request['template']}"]
         if request.get("push_remote"):
             args += ["--push-remote", request["push_remote"]]
         return args

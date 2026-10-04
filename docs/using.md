@@ -4,6 +4,9 @@
 
 A project is one git repository. Create one under **Projects → New**:
 
+- **From a template**: a working starter with tests and a run command: web
+  game, website, API + website, Python web service, command-line tool or
+  Discord bot (add its token under Settings → Secrets).
 - **Empty**: LAIka starts a fresh repository.
 - **Clone**: from GitHub or any git URL; private repositories get their own
   deploy key, which the page shows you to add to the repository.

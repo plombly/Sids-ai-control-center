@@ -1,0 +1,5 @@
+{
+ "name": "Website",
+ "description": "A simple website: HTML and CSS pages served by a tiny Node server.",
+ "type": "website"
+}

@@ -15,6 +15,10 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   page and a screenshot, on the project page and as an "app looks broken"
   notification. Settings → Project defaults → Play-test web apps.
 
+- **Project templates.** New project → **Start from a template**: Web game,
+  Website, API + website, Python web service, Command-line tool or Discord
+  bot. Each starts with working code, tests and a run command (apps listen
+  on the port LAIka assigns), so the first goal can be about features.
 - **Fewer review rounds.** A repair gets every blocking finding as a
   checklist, fixes all of them (and other instances of the same mistake in
   the change), and says what it changed for each; a review reports every

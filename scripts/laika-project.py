@@ -208,6 +208,19 @@ def create(args):
         run_git(["config", "user.name", "LAIka"], cwd=repo)
         run_git(["config", "user.email", "laika@localhost"], cwd=repo)
         run_git(["commit", "--allow-empty", "-m", "Initialize project"], cwd=repo)
+        if getattr(args, "template", None):
+            # A starter: working code, tests and (when it runs) a run command.
+            try:
+                meta = laika_projects.apply_template(args.template, repo, args.id, args.name)
+            except ValueError as exc:
+                raise ProjectError(str(exc))
+            run_git(["add", "-A"], cwd=repo)
+            run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", f"Start from the {meta['name']} template"], cwd=repo)
+            record["template"] = args.template
+            if meta.get("type"):
+                record["type"] = meta["type"]
+            if meta.get("run_command"):
+                record["run_command"] = meta["run_command"]
         record["gate_command"] = args.gate if args.gate is not None else detect_gate(repo)
     register(redis_client, record)
     if args.push_remote:
@@ -898,7 +911,7 @@ def retry_clone(args):
 def main(argv=None):
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("create"); p.add_argument("--id", required=True); p.add_argument("--name", required=True); p.add_argument("--importance", default="medium"); p.add_argument("--gate"); p.add_argument("--push-remote"); p.add_argument("--root-base", default="/var/lib/laika/projects"); source = p.add_mutually_exclusive_group(required=True); source.add_argument("--empty", action="store_true"); source.add_argument("--clone")
+    p = sub.add_parser("create"); p.add_argument("--id", required=True); p.add_argument("--name", required=True); p.add_argument("--importance", default="medium"); p.add_argument("--gate"); p.add_argument("--push-remote"); p.add_argument("--root-base", default="/var/lib/laika/projects"); source = p.add_mutually_exclusive_group(required=True); source.add_argument("--empty", action="store_true"); source.add_argument("--clone"); p.add_argument("--template", help="with --empty: a starter from apps/api/project_templates")
     p = sub.add_parser("register-existing"); p.add_argument("--id", required=True); p.add_argument("--name", required=True); p.add_argument("--repo", required=True); p.add_argument("--worktrees", required=True); p.add_argument("--logs", required=True); p.add_argument("--gate"); p.add_argument("--importance", default="medium")
     p = sub.add_parser("retry-clone"); p.add_argument("id")
     p = sub.add_parser("push-setup"); p.add_argument("id"); p.add_argument("url")

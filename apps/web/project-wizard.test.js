@@ -77,3 +77,17 @@ test('renders result variants and escapes values', () => {
   assert.doesNotMatch(resultMarkup({ status: 'refused', message: '<b>x</b>' }, '<b>x</b>'), /<b>x<\/b>/);
   assert.match(stepMarkup(5, { ...valid, name: '<b>x</b>' }), /&lt;b&gt;x&lt;\/b&gt;/);
 });
+
+test('a project can start from a template', async () => {
+  const { stepMarkup, validateStep, buildCreateBody } = await import('./lib/project-wizard.js');
+  const templates = [{ id: 'web-game', name: 'Web game', description: 'A canvas game' }];
+  const html = stepMarkup(2, { source: 'template', templates });
+  assert.match(html, /Start from a template/);
+  assert.match(html, /data-wizard-choice="template" data-value="web-game"/);
+  assert.equal(validateStep(2, { source: 'template' }), 'Choose a template');
+  assert.equal(validateStep(2, { source: 'template', template: 'web-game' }), '');
+  const body = buildCreateBody({ id: 'g', name: 'G', importance: 'medium', source: 'template', template: 'web-game', requestId: 'req-12345678' });
+  assert.equal(body.source, 'empty');
+  assert.equal(body.template, 'web-game');
+  assert.match(stepMarkup(5, { name: 'G', id: 'g', importance: 'medium', source: 'template', template: 'web-game', templates }), /Template: Web game/);
+});

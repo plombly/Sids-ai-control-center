@@ -36,7 +36,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       (base..candidate).
 
 ### Checkpoint 2: project templates
-- [ ] "New project" offers templates (web game, website, API + website,
+- [x] "New project" offers templates (web game, website, API + website,
       Discord bot, CLI tool, Python script/service, …) that start with a
       working skeleton: tests, a run command that listens on $PORT /
       0.0.0.0, README. The first goal can then be about features.

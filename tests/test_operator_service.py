@@ -586,3 +586,12 @@ def test_an_editor_save_carries_the_opened_hash(op):
     with pytest.raises(op.Invalid, match="hash"):
         op.validate({"action": "project_commit_upload", "project_id": "web", "path": "a.txt", "upload": "edit-0001",
                      "expected_sha256": "--evil"}, f"{int(NOW * 1000)}-0", NOW)
+
+
+def test_a_project_can_be_created_from_a_template(op):
+    request = op.validate({"action": "create_project", "project_id": "game", "name": "Game", "source": "empty",
+                           "template": "web-game"}, f"{int(NOW * 1000)}-0", NOW)
+    assert op.project_cli_args(request)[-1] == "--template=web-game"
+    for bad in ({"source": "clone", "url": "https://github.com/a/b.git", "template": "web-game"}, {"source": "empty", "template": "../x"}):
+        with pytest.raises(op.Invalid):
+            op.validate({"action": "create_project", "project_id": "game", "name": "Game", **bad}, f"{int(NOW * 1000)}-0", NOW)

@@ -321,6 +321,47 @@ def detect_setup(path):
     return " && ".join(steps)
 
 
+TEMPLATES = Path(__file__).resolve().parents[1] / "apps/api/project_templates"
+
+
+def templates(base=None):
+    """{id: metadata} of the starter templates (apps/api/project_templates)."""
+    found = {}
+    for meta in sorted(Path(base or TEMPLATES).glob("*/template.json")):
+        try:
+            data = json.loads(meta.read_text())
+        except ValueError:
+            continue
+        found[meta.parent.name] = {"id": meta.parent.name, "name": data.get("name", meta.parent.name),
+                                   "description": data.get("description", ""), "type": data.get("type", ""),
+                                   "run_command": data.get("run_command", "")}
+    return found
+
+
+def apply_template(template_id, dest, project_id, name, base=None):
+    """Copy a template into dest with {{NAME}}, {{ID}} and {{PKG}} (the id
+    as a Python package name) filled in, in file contents and paths. Returns
+    the template's metadata."""
+    base = Path(base or TEMPLATES)
+    known = templates(base)
+    if template_id not in known:
+        raise ValueError(f"unknown template {template_id!r}")
+    values = {"{{NAME}}": name, "{{ID}}": project_id, "{{PKG}}": re.sub(r"[^a-z0-9_]", "_", project_id.lower())}
+    fill = lambda text: re.sub(r"\{\{(NAME|ID|PKG)\}\}", lambda m: values[m.group(0)], text)
+    source = base / template_id
+    for path in sorted(source.rglob("*")):
+        rel = path.relative_to(source)
+        if path.is_dir() or path.is_symlink() or rel.as_posix() == "template.json" or "__pycache__" in rel.parts:
+            continue
+        target = Path(dest) / fill(rel.as_posix())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(fill(path.read_text()))
+        except UnicodeDecodeError:
+            target.write_bytes(path.read_bytes())
+    return known[template_id]
+
+
 def detect_run(read):
     """The command that runs a project's app, from its files, or "".
     read(name) returns a file's text on main (or None). Used when the owner

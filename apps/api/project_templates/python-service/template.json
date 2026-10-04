@@ -1,0 +1,5 @@
+{
+ "name": "Python web service",
+ "description": "A JSON API in plain Python (no frameworks) with tests and data saved in the app's data folder.",
+ "type": "api_service"
+}
