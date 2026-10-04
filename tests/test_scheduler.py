@@ -194,7 +194,7 @@ def test_planner_size_is_stored_and_bad_sizes_become_medium(orch):
     ]}
     jobs = orch.validate_plan(plan)
     assert [j["size"] for j in jobs] == ["L", "M"]
-    assert '"size": "S|M|L"' in orch.planner_prompt("g")
+    assert '"size": "S|M"' in orch.planner_prompt("g")
 
 
 def test_long_scopes_are_compressed_to_top_level_entries(orch):

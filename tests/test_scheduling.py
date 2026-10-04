@@ -137,3 +137,21 @@ def test_planner_is_told_which_files_are_busy(orch, monkeypatch):
     assert "  - apps/api/main.py" in prompt
     assert "apps/web/app.js\n" not in prompt.split("in-flight jobs")[1]
     assert "registerPanel" in prompt
+
+
+def test_a_job_too_big_to_review_is_split_by_asking_the_planner_again(orch, monkeypatch):
+    orch.r.records["laika:goals:g2"] = {"id": "g2", "goal": "a multiplayer game", "status": "queued"}
+    big = {"jobs": [{"number": 1, "title": "whole server", "task": "t", "size": "L", "depends_on": [],
+                     "scope": [f"server/f{i}.js" for i in range(9)] + ["tests/test_server.js"]}]}
+    split = {"jobs": [{"number": 1, "title": "game rules", "task": "t", "size": "M", "scope": ["server/game.js"], "depends_on": []},
+                      {"number": 2, "title": "rooms", "task": "t", "size": "M", "scope": ["server/rooms.js"], "depends_on": [1]}]}
+    asked = []
+    monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None, project=None: asked.append(goal) or (big if len(asked) == 1 else split))
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
+    orch.process_goal(json.dumps({"id": "g2", "goal": "a multiplayer game"}))
+    assert len(asked) == 2 and "PLANNER FEEDBACK" in asked[1] and '"whole server" (sized L)' in asked[1]
+    titles = sorted(j["title"] for k, j in orch.r.records.items() if k.startswith("laika:jobs:") and j.get("title"))
+    assert titles == ["game rules", "rooms"]
+    assert orch.oversized_jobs(big, atomic=True) == []                      # atomic goals are one job by request
+    assert orch.oversized_jobs({"jobs": [{"number": 1, "size": "M", "scope": ["a.js", "b.js", "test/a.test.js"]}]}) == []
+    assert "There is no L" in orch.planner_prompt("goal") and "S|M|L" not in orch.planner_prompt("goal")

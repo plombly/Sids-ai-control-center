@@ -4,6 +4,20 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 1.3.0 (not released yet)
 
+- **Needs you on every project page.** Changes ready to approve and stuck
+  jobs of a project (and its child projects) show at the top of its page,
+  with the same Approve / Preview / Reject / Try again buttons as the home
+  page.
+- **Smaller jobs.** The planner keeps every job reviewable in one pass: one
+  concern and at most 6 files (tests not counted). A plan with a bigger job
+  is sent back once to be split. Big jobs used to bounce between review and
+  repair, each review finding something new.
+- Job details: **Close** works again (and Esc, and leaving the page).
+- Releases no longer show red health for "live tree" (it only applies to
+  git checkouts), which also pinged the health notification.
+- The dashboard's refresh no longer wipes a text selection, typing or a
+  click.
+
 - **Conversation.** The goal box has a third way in: an open conversation
   with Claude about the project. The goal box's three buttons now say what
   they do: **Send as written**, **Questionnaire** (the former "Plan it with

@@ -2718,3 +2718,14 @@ table {
 .composer-modes {
   margin: 6px 0 0;
 }
+/* Project page: Needs you (lib/projects.js projectNeedsMarkup) */
+.project-needs {
+  margin: 12px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--amber, #d29922);
+  border-radius: 10px;
+}
+.project-needs h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}

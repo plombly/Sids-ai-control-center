@@ -167,9 +167,14 @@ by independent coding agents.
 Rules:
 - Do not modify files.
 - If ATOMIC MODE is enabled, return exactly one implementation job with no dependencies.
-- Without atomic mode, use one job for a narrow independently-testable change; split only when there is a concrete dependency or separable ownership boundary.
-- Prefer 1-5 coherent jobs.
-- Avoid microscopic jobs.
+- Without atomic mode, a narrow change stays one job. Anything bigger is split
+  so that EVERY job can be reviewed thoroughly in one pass: one concern (one
+  module, screen, endpoint group or subsystem) and at most {MAX_JOB_FILES} files
+  created or changed, not counting tests. A whole server, client, app or game
+  is never one job: split it by module (for a game server e.g. protocol, game
+  rules, rooms/matchmaking, bots, HTTP/static serving), with depends_on where
+  one part needs another. Prefer 2-8 jobs for a feature-sized goal.
+- Avoid microscopic jobs (one trivial line each); size them S or M.
 - Minimize overlapping file ownership between parallel jobs.
 - "scope" must list every file the job will create or change (exact paths;
   a directory only when the job adds new files inside it). LAIka schedules by
@@ -179,9 +184,9 @@ Rules:
 {laika_rules}- Files currently being changed by other in-flight jobs (work touching them
   will wait until they finish):
 {busy_files_summary(project.id)}
-- "size" is your effort estimate for the job: S (a small, local change),
-  M (a normal feature or fix), L (large or cross-cutting). LAIka schedules by
-  remaining effort, so estimate honestly.
+- "size" is your effort estimate for the job: S (a small, local change) or
+  M (a normal feature or fix). There is no L: work that large must be split
+  into S/M jobs. LAIka schedules by remaining effort, so estimate honestly.
 - Dependencies must reference job numbers from this plan.
 - Every job must be independently testable.
 - Existing LAIka review and human approval gates will handle merging.
@@ -200,12 +205,48 @@ Return ONLY valid JSON using this exact shape:
       "title": "short title",
       "task": "complete implementation instructions",
       "scope": ["exact/file/it/will/change.py"],
-      "size": "S|M|L",
+      "size": "S|M",
       "depends_on": []
     }}
   ]
 }}
 """.strip()
+
+
+MAX_JOB_FILES = int(os.getenv("PLANNER_MAX_JOB_FILES", "6"))
+
+
+def _is_test_path(path):
+    name = path.rsplit("/", 1)[-1].lower()
+    parts = path.lower().split("/")
+    return (any(part in ("test", "tests", "__tests__", "spec") for part in parts[:-1])
+            or name.startswith("test_") or ".test." in name or ".spec." in name or name.endswith("_test.py")
+            or name.endswith("_test.go"))
+
+
+def oversized_jobs(plan, atomic=False):
+    """[(number, why)] for jobs too big to review in one pass (size L, or
+    more than MAX_JOB_FILES non-test files). Atomic plans are never split."""
+    if atomic or not isinstance(plan, dict):
+        return []
+    found = []
+    for job in plan.get("jobs") or []:
+        if not isinstance(job, dict):
+            continue
+        scope = [p for p in job.get("scope") or [] if isinstance(p, str) and not _is_test_path(p)]
+        if str(job.get("size", "")).upper() == "L":
+            found.append((job.get("number"), "sized L"))
+        elif len(scope) > MAX_JOB_FILES:
+            found.append((job.get("number"), f"{len(scope)} files"))
+    return found
+
+
+def split_feedback(plan, issues):
+    titles = {job.get("number"): job.get("title", "") for job in plan.get("jobs") or [] if isinstance(job, dict)}
+    listed = "; ".join(f"job {number} \"{titles.get(number, '')}\" ({why})" for number, why in issues)
+    return (f"\n\nPLANNER FEEDBACK: your previous plan had jobs too big to review in one pass: {listed}. "
+            f"Return the whole plan again with those jobs split into S/M jobs of at most {MAX_JOB_FILES} files "
+            "each (tests not counted), one concern per job, with depends_on between them.")
 
 
 def group_planner_prompt(goal, atomic, project, members):
@@ -603,6 +644,17 @@ def process_goal(raw):
     project = laika_projects.load(r, data.get("project_id") or r.hget(key, "project_id"))
     planner = {}
     plan = run_planner(goal, atomic=atomic, info=planner, project=project)
+    issues = oversized_jobs(plan, atomic)
+    if issues:
+        # One more try with the reasons; a second big plan is used as it is.
+        print(f"[{ORCHESTRATOR_ID}] goal {goal_id}: re-planning, oversized jobs {issues}", flush=True)
+        try:
+            again = run_planner(goal + split_feedback(plan, issues), atomic=atomic, info=planner, project=project)
+            if isinstance(again, dict) and again.get("jobs"):
+                plan = again
+                r.hset(key, "replanned", f"split {len(issues)} oversized job(s)")
+        except Exception as exc:
+            print(f"[{ORCHESTRATOR_ID}] goal {goal_id}: re-plan failed, using the first plan: {exc}", flush=True)
     members = {member.id: member for member in laika_projects.group(r, project)}
     jobs = validate_plan(plan, atomic=atomic, members=list(members) if len(members) > 1 else None)
 

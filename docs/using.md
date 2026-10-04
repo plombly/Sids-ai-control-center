@@ -37,7 +37,7 @@ say how you will check it. Templates on a project's Overview help.
 ## Approving
 
 When a change has passed its tests and the independent review, it appears
-under **Needs you** on the home page:
+under **Needs you** on the home page and at the top of its project's page:
 
 - **Approve** merges that exact change into the project's main branch.
 - **Preview** (web apps) runs the change on its own port so you can try it

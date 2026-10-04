@@ -1,7 +1,7 @@
 import { requestJSON, operatorRequest, newRequestId } from './api.js';
 import { esc, escValue, pill, text, number } from './format.js';
 import { registerPanel, registerClick, onRoute } from './registry.js';
-import { projectsMarkup as homeProjectsMarkup } from './home.js';
+import { projectsMarkup as homeProjectsMarkup, needsYou, needsYouMarkup } from './home.js';
 import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
 import { assistantMarkup } from './goal-assistant.js';
 import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
@@ -172,7 +172,21 @@ function settingsMarkup(project) {
   return `${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
-export function projectDetailMarkup(project, tab = 'overview') {
+// What this project (and its children) needs from you: the same cards as the
+// home page's "Needs you", so approving never needs a trip back home.
+export function projectNeedsMarkup(project, pollState) {
+  if (!project?.id || !pollState) return '';
+  const ids = new Set([project.id, ...(project.children || []).map(child => child.id || child)]);
+  const get = key => (Array.isArray(pollState[key]?.data) ? pollState[key].data : []).filter(job => ids.has(job.project_id || 'laika'));
+  const family = [project, ...(project.children || []).filter(child => typeof child === 'object')];
+  const items = needsYou({ approvals: get('approvals'), jobs: get('jobs'), dismissed: pollState.dismissed || new Set(), projects: family });
+  if (!items.ready.length && !items.stuck.length) return '';
+  const names = Object.fromEntries(family.map(item => [item.id, item.name || item.id]));
+  const count = items.ready.length + items.stuck.length;
+  return `<div class="project-needs"><h3>${count === 1 ? 'Needs you: one thing is waiting' : `Needs you: ${count} things are waiting`}</h3>${needsYouMarkup(items, names)}</div>`;
+}
+
+export function projectDetailMarkup(project, tab = 'overview', pollState = null) {
   const id = text(project?.id, '');
   const name = text(project?.name, id);
   const retry = project?.status === 'pending_key'
@@ -191,7 +205,7 @@ export function projectDetailMarkup(project, tab = 'overview') {
       }>high</option><option value="medium"${project.importance === 'medium' ? ' selected' : ''}>medium</option><option value="low"${
         project.importance === 'low' ? ' selected' : ''
       }>low</option></select></label>`;
-  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'laika' ? 'LAIka · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${tabsMarkup(id, tab, isViewOnly(project), project)}<div class="project-tab-body">${body}</div></section>`;
+  return `<section class="panel wide project-page"><div class="project-head"><div><p class="eyebrow">${id === 'laika' ? 'LAIka · THIS SYSTEM' : 'PROJECT'}</p><h2>${esc(name)}</h2>${partOfMarkup(project)}</div><div class="project-head-actions">${appLink}${project.status && project.status !== 'active' ? pill(project.status) : ''}${importance}</div></div>${retry}${isViewOnly(project) ? '' : projectNeedsMarkup(project, pollState)}${tabsMarkup(id, tab, isViewOnly(project), project)}<div class="project-tab-body">${body}</div></section>`;
 }
 
 const APP_STATES = {
@@ -324,6 +338,7 @@ async function poll(request_id) {
 if (typeof document !== 'undefined') {
   let activeRoute = null;
   let refreshTimer = null;
+  let latestPoll = null; // the dashboard's last poll (approvals, jobs)
   let renderVersion = 0;
   let busy = false; // an operator request is in flight: keep its status visible
   const root = () => document.getElementById('projects-root');
@@ -389,7 +404,7 @@ if (typeof document !== 'undefined') {
         project.allProjects = Array.isArray(allProjects) ? allProjects : [];
       }
       if (version === renderVersion) {
-        setHTML(detailMain(), projectDetailMarkup(project, tab), { force });
+        setHTML(detailMain(), projectDetailMarkup(project, tab, latestPoll), { force });
         const files = document.getElementById('project-files-panel');
         if (files) files.hidden = tab !== 'files';
       }
@@ -415,7 +430,8 @@ if (typeof document !== 'undefined') {
     render(route, true);
     refreshTimer = setInterval(() => render(activeRoute), 5000);
   });
-  registerPanel(() => {
+  registerPanel(state => {
+    latestPoll = state || latestPoll; // approvals and jobs for the project's "Needs you"
     if (activeRoute?.view === 'projects' && !refreshTimer) render(activeRoute);
   });
   window.addEventListener('laika:project-refresh', () => activeRoute && render(activeRoute, true));

@@ -210,3 +210,22 @@ test('builder-managed projects (the app) are view-only too', () => {
   assert.doesNotMatch(projectDetailMarkup({ ...app, builds: { recipe: { label: 'APK' }, builds: [] } }, 'builds'), /data-build-start/);
   assert.match(projectDetailMarkup({ id: 'shop', status: 'active', goals: [], jobs: [] }, 'overview'), /data-assist-start/);
 });
+
+test('a project page shows its own Needs you: approvals and stuck jobs of it and its children only', async () => {
+  const { projectNeedsMarkup, projectDetailMarkup } = await import('./lib/projects.js');
+  const poll = {
+    approvals: { data: [
+      { id: 'a1', project_id: 'game', status: 'awaiting_review', review_verdict: 'pass', title: 'Pause menu', integrated_candidate_commit: 'c'.repeat(40) },
+      { id: 'a2', project_id: 'other', status: 'awaiting_review', review_verdict: 'pass', title: 'Elsewhere' }
+    ] },
+    jobs: { data: [{ id: 's1', project_id: 'game-api', status: 'needs_human', title: 'Server', needs_human_kind: 'repair' }] }
+  };
+  const project = { id: 'game', name: 'Game', children: [{ id: 'game-api', name: 'Game API' }] };
+  const html = projectNeedsMarkup(project, poll);
+  assert.match(html, /Needs you: 2 things are waiting/);
+  assert.match(html, /data-op="approve" data-job="a1"/);
+  assert.match(html, /data-op="extend" data-job="s1"/);
+  assert.doesNotMatch(html, /Elsewhere/);
+  assert.equal(projectNeedsMarkup({ id: 'quiet' }, poll), '');
+  assert.match(projectDetailMarkup({ ...project, status: 'active' }, 'files', poll), /project-needs/);
+});
