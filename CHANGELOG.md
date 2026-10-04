@@ -13,7 +13,14 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   line, Django's `manage.py`, or a Python server that reads `PORT`. Settings
   shows what it detected; type `off` to never run it. (A finished game used
   to sit there unplayable because nobody had set its run command.)
-- - **Smaller jobs.** The planner keeps every job reviewable in one pass: one
+- - **Problems are diagnosed before they are planned.** A goal that reports a
+  bug, error, crash or "why…" makes the planner read the code involved and
+  the project's recent failures (app crashes and logs, failed and stuck
+  jobs) until it can name the likely cause with evidence. Each job then
+  says the cause, the fix and a regression test; if the cause stays
+  unclear, the first job is "find and fix the cause" with ranked
+  hypotheses. Time limit in Settings → AI (7 minutes by default).
+- **Smaller jobs.** The planner keeps every job reviewable in one pass: one
   concern and at most 6 files (tests not counted). A plan with a bigger job
   is sent back once to be split. Big jobs used to bounce between review and
   repair, each review finding something new.

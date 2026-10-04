@@ -92,6 +92,8 @@ Which AI does what, how much it may spend and how hard LAIka tries.
 | Repair time limit (seconds) | `600` | 120–14400 | after **Apply now** |  |
 | Review time limit (seconds) | `240` | 60–7200 | after **Apply now** |  |
 | Planning time limit (seconds) | `180` | 60–3600 | after **Apply now** |  |
+| Planning time limit for problems (seconds) | `420` | 120–3600 | after **Apply now** | Goals that report a bug or error are diagnosed first: the planner reads the code and recent failures. |
+| Most files per job | `6` | 2–30 | after **Apply now** | Bigger jobs are sent back to the planner once to be split (tests do not count). |
 | Goals planned at the same time | `4` | 1–20 | after **Apply now** |  |
 | Goal assistant model | `claude-haiku-4-5-20251001` |  | after **Apply now** | The quick model behind the goal box's Questionnaire. |
 | Goal assistant cap per turn ($) | `0.3` | 0.05–5 | after **Apply now** |  |

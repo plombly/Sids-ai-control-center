@@ -155,3 +155,21 @@ def test_a_job_too_big_to_review_is_split_by_asking_the_planner_again(orch, monk
     assert orch.oversized_jobs(big, atomic=True) == []                      # atomic goals are one job by request
     assert orch.oversized_jobs({"jobs": [{"number": 1, "size": "M", "scope": ["a.js", "b.js", "test/a.test.js"]}]}) == []
     assert "There is no L" in orch.planner_prompt("goal") and "S|M|L" not in orch.planner_prompt("goal")
+
+
+def test_problem_goals_are_diagnosed_first_with_recent_failures(orch, monkeypatch):
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
+    assert orch.reports_problem("The lobby crashes when a second player joins")
+    assert orch.reports_problem("Why doesn't the score update?")
+    assert not orch.reports_problem("Add a dark mode toggle to the settings page")
+    assert orch.plan_timeout("fix the login error") == orch.DIAGNOSE_TIMEOUT
+    assert orch.plan_timeout("add a pause menu") == orch.PLAN_TIMEOUT
+    orch.r.records["laika:jobs:f1"] = {"id": "f1", "project_id": "laika", "status": "test_failed", "title": "Scores",
+                                       "error": "AssertionError: expected 3 got 2\nmore", "updated_at": str(__import__("time").time())}
+    orch.r.records["laika:app-status:laika"] = {"state": "crashed", "error": "exit 1", "log": "TypeError: x is undefined"}
+    prompt = orch.planner_prompt("the scoreboard is broken")
+    assert "DIAGNOSE BEFORE YOU PLAN" in prompt and "file:line" in prompt
+    assert 'Job "Scores" test_failed: AssertionError: expected 3 got 2' in prompt
+    assert "App: crashed: exit 1" in prompt and "TypeError: x is undefined" in prompt
+    plain = orch.planner_prompt("add a pause menu")
+    assert "DIAGNOSE" not in plain and "Recent problems" not in plain and "Do not broadly inspect" in plain

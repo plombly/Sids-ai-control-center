@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import re
 import os
 import pwd
 import subprocess
@@ -31,6 +32,21 @@ DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "codex")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-5.6-luna")
 ORCHESTRATOR_ID = os.getenv("ORCHESTRATOR_ID", "laika-orchestrator-01")
 PLAN_TIMEOUT = int(os.getenv("PLAN_TIMEOUT", "180"))
+# A goal that reports a problem is diagnosed first: the planner reads code and
+# recent failures, which takes longer (and may cost a little more).
+DIAGNOSE_TIMEOUT = int(os.getenv("PLAN_DIAGNOSE_TIMEOUT", "420"))
+PROBLEM_WORDS = re.compile(
+    r"\b(bug|bugs|fix|fixes|broken|break|breaks|error|errors|crash|crashes|crashing|fail|fails|failing|failed|"
+    r"exception|traceback|wrong|incorrect|issue|issues|regression|diagnose|debug|why|slow|hangs|freezes|stuck|"
+    r"doesn'?t|does not|isn'?t|won'?t|can'?t|cannot|not working|no longer|500|404)\b", re.IGNORECASE)
+
+
+def reports_problem(goal):
+    return bool(PROBLEM_WORDS.search(goal or ""))
+
+
+def plan_timeout(goal):
+    return DIAGNOSE_TIMEOUT if reports_problem(goal) else PLAN_TIMEOUT
 PLANNER_LOG_ROOT = Path(os.getenv("PLANNER_LOG_ROOT", "/var/log/laika/planner"))
 MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
@@ -156,11 +172,11 @@ High-level goal:
 
 ATOMIC MODE: {"ENABLED" if atomic else "disabled"}
 
-Plan from the goal and the compact repository manifest below. Do not broadly inspect the repository unless a specific ambiguity prevents a safe plan.
+{diagnose_rules(goal)}
 
 Repository manifest:
 {repository_manifest(project.repo)}
-
+{recent_problems(project) if reports_problem(goal) else ""}
 Break the goal into a SMALL set of implementation jobs that can be executed
 by independent coding agents.
 
@@ -249,6 +265,61 @@ def split_feedback(plan, issues):
             "each (tests not counted), one concern per job, with depends_on between them.")
 
 
+def diagnose_rules(goal):
+    if not reports_problem(goal):
+        return ("Plan from the goal and the compact repository manifest below. Do not broadly inspect the "
+                "repository unless a specific ambiguity prevents a safe plan.")
+    return """This goal reports a problem. DIAGNOSE BEFORE YOU PLAN:
+1. Read the code involved (Read / Grep / Glob; your working directory is the
+   project at its latest main) and the recent problems listed below, until you
+   can name the most likely cause with evidence: file:line and what goes wrong.
+   Follow the actual code path; do not guess from file names.
+2. Plan the fix for THAT cause. In each job's task, state the cause and the
+   evidence, the fix, and a test that fails before the fix and passes after it
+   (a regression test), so the reviewer can check the right thing.
+3. If you cannot pin the cause down, make job 1 "Find and fix the cause of ...":
+   list your hypotheses, most likely first, with what to check for each, and
+   require the builder to reproduce it with a failing test first.
+4. Fix the cause, not the symptom; do not rewrite unrelated code.
+Keep the investigation focused (roughly 10-30 lookups)."""
+
+
+def recent_problems(project, limit=6, days=7):
+    """What went wrong lately in this project (app crashes, failed and stuck
+    jobs), for diagnosing a problem goal. Short; no secrets (errors and the
+    app's own log lines only)."""
+    lines = []
+    app = r.hgetall(f"laika:app-status:{project.id}") or {}
+    if app.get("state") and app.get("state") != "running":
+        lines.append(f"- App: {app.get('state')}" + (f": {app.get('error')[:300]}" if app.get("error") else ""))
+    if app.get("log"):
+        tail = "\n".join(app["log"].splitlines()[-15:])[:1500]
+        lines.append("- App log (last lines):\n" + "\n".join("    " + line for line in tail.splitlines()))
+    cutoff = time.time() - days * 86400
+    failed = []
+    for key in r.scan_iter("laika:jobs:*"):
+        if key.count(":") != 2:
+            continue
+        job = r.hgetall(key)
+        if (job.get("project_id") or laika_projects.BUILTIN_PROJECT) != project.id:
+            continue
+        if job.get("status") not in ("failed", "test_failed", "integration_failed", "needs_human"):
+            continue
+        try:
+            when = float(job.get("updated_at") or job.get("created_at") or 0)
+        except ValueError:
+            when = 0
+        if when >= cutoff:
+            failed.append((when, job))
+    for _, job in sorted(failed, key=lambda item: -item[0])[:limit]:
+        why = (job.get("error") or job.get("needs_human_reason") or job.get("review_findings") or "").strip()
+        lines.append(f"- Job \"{(job.get('title') or job.get('id', ''))[:80]}\" {job.get('status')}: "
+                     + (why.splitlines()[0][:300] if why else "(no message)"))
+    if not lines:
+        return "\nRecent problems in this project: none recorded.\n"
+    return "\nRecent problems in this project (newest first):\n" + "\n".join(lines) + "\n"
+
+
 def group_planner_prompt(goal, atomic, project, members):
     """The normal planner prompt with the single repository replaced by the
     group's members and a "project" field on every job."""
@@ -296,14 +367,14 @@ def run_planner(goal, atomic=False, info=None, project=None):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
         slot = f"planner:{log_path.stem}"
         if not agent_cli.wait_for_claude_slot(
-                r, slot, PLAN_TIMEOUT + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300"))):
+                r, slot, plan_timeout(goal) + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300"))):
             info["fallback"] = "claude at capacity (CLAUDE_MAX_CONCURRENT)"
             info.update(provider="codex", model=DEFAULT_MODEL)
             return run_codex_planner(goal, atomic, project)
         try:
             run = agent_cli.run_claude(
                 "planner", planner_prompt(goal, atomic=atomic, project=project),
-                project.repo, log_path, PLAN_TIMEOUT, model=planner_model(atomic),
+                project.repo, log_path, plan_timeout(goal), model=planner_model(atomic),
                 wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
         finally:
             agent_cli.release_claude_slot(r, slot)
@@ -344,7 +415,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         input=planner_prompt(goal, atomic=atomic, project=project),
         text=True,
         capture_output=True,
-        timeout=PLAN_TIMEOUT,
+        timeout=plan_timeout(goal),
         env={**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir},
     )
 
@@ -619,7 +690,8 @@ def process_goal(raw):
     # Queue delivery is at-least-once. A short-lived claim prevents a retry or
     # a second orchestrator from creating a second plan for the same goal.
     claim_key = f"{key}:planning"
-    if not r.set(claim_key, ORCHESTRATOR_ID, nx=True, ex=PLAN_TIMEOUT + 30):
+    # Long enough for a diagnosis and one re-plan.
+    if not r.set(claim_key, ORCHESTRATOR_ID, nx=True, ex=2 * max(PLAN_TIMEOUT, DIAGNOSE_TIMEOUT) + 60):
         return
 
     existing_status = r.hget(key, "status")

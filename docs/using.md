@@ -31,6 +31,11 @@ LAIka plans the goal into jobs (one-step goals skip planning). Jobs that
 touch different files run in parallel; jobs that depend on each other
 wait. You can follow every job live: its log, tests, review and time.
 
+Describing a problem ("the lobby crashes when a second player joins")
+makes the planner diagnose first: it reads the code and the project's
+recent failures before deciding what to change, and asks for a test that
+proves the fix.
+
 Good goals say *what* and *why*, name anything that must not change, and
 say how you will check it. Templates on a project's Overview help.
 
