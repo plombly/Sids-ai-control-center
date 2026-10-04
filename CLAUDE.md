@@ -634,6 +634,25 @@ the person has no target, so adding one never floods), personal digest
 laika:digest:last:<name>. Who gets what: notify_core.EVENT_LEVEL via
 access.levels (the same rules as the dashboard).
 
+SFTP (1.3): services/sftp/laika_sftp.py (asyncssh; unit laika-sftp as
+laika, locked down: ProtectSystem=strict, RestrictSUIDSGID, writes only
+/var/lib/laika/{sftp,uploads,project-data}); host key /etc/laika/sftp
+(root:laika 0640); settings SFTP_ENABLED/PORT (2222)/COMMIT_SECONDS (30).
+sftp_fs.CodeArea = main + per-person batches (staging under
+/var/lib/laika/sftp/staging/<user>/<project>/<uuid>, manifest with base
+sha256 per change); quiet or disconnect -> moved (copy across mounts) to
+uploads/<sftp-id> -> operator project_commit_upload op sftp ->
+laika-project.py sftp-commit (one commit, author = person, conflicts to
+App data/.laika-sftp-conflicts + laika:sftp:conflicts + notify
+sftp_conflict). SSH keys: users' ssh_keys JSON, /api/me/ssh-keys. Dev
+container publishes SFTP on 9222.
+
+Goal box modes (1.3): Send as written / Questionnaire (mode plan) /
+Conversation (mode chat: status reply, want reply|brief, /reply {message},
+/write-goal, /retry). Dashboard redraws go through lib/dom.js setHTML
+(skips panels with a selection, focused field or held pointer; keeps
+data-keep-scroll positions).
+
 Fedora/RHEL (1.2): install.sh FAMILY=fedora installs iptables-nft (legacy
 iptables breaks Docker on nft-only kernels), skips curl when curl-minimal
 provides it, adds python3.11 when python3 < 3.10 ($PYTHON), opens 8080 and
