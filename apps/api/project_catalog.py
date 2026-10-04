@@ -214,6 +214,13 @@ TYPES = {
 # Build recipes per stack: Docker image, command run in /src (the project),
 # and the folder or file that becomes the downloadable build. {name} is the
 # project id. unsupported: why it cannot be built on this server.
+# Builds run with 4 GB (scripts/laika-build.py); Flutter's Android template asks
+# Gradle for an 8 GB heap, and the build dies ("daemon disappeared", killed for
+# memory). The copy being built gets a heap that fits.
+GRADLE_FIT = ("for f in android/gradle.properties gradle.properties; do [ -f \"$f\" ] && "
+              "sed -i -E 's/-Xmx[0-9]+[GgMm]/-Xmx2G/; s/MaxMetaspaceSize=[0-9]+[GgMm]/MaxMetaspaceSize=768m/' \"$f\"; done; ")
+
+
 RECIPES = {
     "node": {"label": "Node.js (npm run build)", "image": "node:22-bookworm",
              "command": "npm ci || npm install; npm run build", "output": "dist"},
@@ -244,10 +251,10 @@ RECIPES = {
                "command": "pip install -q pyinstaller pygame && (pip install -q -r requirements.txt || true) && pyinstaller --onefile --windowed --name {name} {entry}",
                "output": "dist"},
     "flutter": {"label": "Flutter (web + APK)", "image": "ghcr.io/cirruslabs/flutter:stable",
-                "command": "flutter pub get && flutter build web && (flutter build apk --release || true) && mkdir -p laika-build && cp -r build/web laika-build/web && (cp build/app/outputs/flutter-apk/*.apk laika-build/ || true)",
+                "command": GRADLE_FIT + "flutter pub get && flutter build web && (flutter build apk --release || true) && mkdir -p laika-build && cp -r build/web laika-build/web && (cp build/app/outputs/flutter-apk/*.apk laika-build/ || true)",
                 "output": "laika-build"},
     "android_gradle": {"label": "Android (Gradle APK)", "image": "mingc/android-build-box:latest",
-                       "command": "chmod +x gradlew 2>/dev/null; (./gradlew assembleDebug || gradle assembleDebug) && mkdir -p laika-build && find . -name '*.apk' -path '*outputs*' -exec cp {} laika-build/ \\;",
+                       "command": GRADLE_FIT + "chmod +x gradlew 2>/dev/null; (./gradlew assembleDebug || gradle assembleDebug) && mkdir -p laika-build && find . -name '*.apk' -path '*outputs*' -exec cp {} laika-build/ \\;",
                        "output": "laika-build", "note": "The Android build image is large (several GB) and downloads on the first build."},
     "expo": {"label": "Expo / React Native (web export)", "image": "node:22-bookworm",
              "command": "npm ci || npm install; npx expo export --platform web --output-dir laika-build", "output": "laika-build",
