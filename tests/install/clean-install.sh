@@ -8,6 +8,8 @@
 #   RELEASE_DIR=folder: instead, install the signed release in that folder
 #   (manifest.json, .sig, tarball) the way `curl … | sudo bash` does, from
 #   a web server inside the machine.
+#   PLATFORM=linux/amd64/v2: that image variant (RHEL 10 clones on CPUs
+#   without x86-64-v3, e.g. quay.io/almalinuxorg/almalinux:10).
 #
 # Needs Docker and internet access (packages, images). Leaves nothing
 # behind: the container and its volume are removed at the end (KEEP=1 keeps
@@ -40,7 +42,7 @@ trap cleanup EXIT
 step "base image $IMAGE with systemd"
 case "$IMAGE" in
   # firewalld on, as on a real Fedora / RHEL server: the installer must open LAIka's ports.
-  fedora*|rocky*|alma*|*/rockylinux*) PKG="dnf -y -q install systemd procps-ng iproute sudo firewalld && systemctl enable firewalld && dnf clean all" ;;
+  fedora*|rocky*|alma*|*/rockylinux*|*/almalinux*) PKG="dnf -y -q install systemd procps-ng iproute sudo firewalld && systemctl enable firewalld && dnf clean all" ;;
   *) PKG="apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q systemd systemd-sysv dbus iproute2 sudo ca-certificates curl && rm -rf /var/lib/apt/lists/*" ;;
 esac
 cat > "$WORK/Dockerfile" <<EOF
@@ -49,11 +51,11 @@ RUN $PKG
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 EOF
-docker build -q -t "$TAG" "$WORK" >>"$LOG" 2>&1 || { bad "base image"; exit 1; }
+docker build -q ${PLATFORM:+--platform "$PLATFORM"} -t "$TAG" "$WORK" >>"$LOG" 2>&1 || { bad "base image"; exit 1; }
 
 step "start a fresh machine"
 docker rm -f -v "$NAME" >/dev/null 2>&1
-docker run -d --name "$NAME" --hostname laika-test --privileged --cgroupns=private \
+docker run -d ${PLATFORM:+--platform "$PLATFORM"} --name "$NAME" --hostname laika-test --privileged --cgroupns=private \
   --tmpfs /run --tmpfs /run/lock -v /var/lib/docker -v /var/lib/containerd --memory=4g --cpus=2 "$TAG" >>"$LOG" 2>&1 \
   || { bad "container start"; exit 1; }
 for _ in $(seq 1 30); do
