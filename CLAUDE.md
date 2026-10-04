@@ -67,7 +67,14 @@ Operator actions: `laika:operator-requests` (STREAM, consumer group `laika-opera
    `LAIKA_PYTHON=/var/lib/laika/venv/bin/python REPO_ROOT=/opt/sid-dev python3 scripts/integration-check.py`
    Check its exit code directly. Do not pipe it into `tail`, because the pipe
    hides failure.
-4. **Deploying is the operator's call.** Propose, don't do: merging to main
+4. **Try changes on the development LAIka first** (2026-10-03, the
+   operator's request: the real one is in use and must not be interrupted).
+   `scripts/laika-dev.sh deploy` installs this checkout's HEAD into the
+   container `laika-dev` (dashboard http://10.0.0.59:9080; its own data,
+   users and AI sign-ins; 3 GB / 2 CPUs). Deploy there and let the operator
+   test before proposing a merge into /opt/laika or a release. Heavy
+   clean-install tests also slow the real server: run them one at a time.
+5. **Deploying is the operator's call.** Propose, don't do: merging to main
    (`git merge --ff-only dev/claude` in the live tree), restarting units, or
    rebuilding containers. Before any restart, confirm no worker is busy
    (`scripts/laika-redis-cli hget laika:workers:laika-worker-0N status`
@@ -77,12 +84,12 @@ Operator actions: `laika:operator-requests` (STREAM, consumer group `laika-opera
    `scripts/job-review.py` takes effect immediately for the CLI, but the
    operator service loads it at start and needs a restart
    (`laika-operator.service`) for job-review or operator changes.
-5. **Do not read or print secrets**: `.env`, `/root/.codex/auth.json`,
+6. **Do not read or print secrets**: `.env`, `/root/.codex/auth.json`,
    `/root/.claude*`, container env. Nothing here requires them.
-6. **Do not mutate Redis job/goal state by hand** except through
+7. **Do not mutate Redis job/goal state by hand** except through
    `scripts/job-review.py` or code paths under test. Failed goals are audit
    history. Leave them.
-7. Do not give the API container repository, systemd, or shell authority.
+8. Do not give the API container repository, systemd, or shell authority.
 
 ## v1.2 safety contract (preserve all of it)
 

@@ -35,3 +35,10 @@ is dependency-free: no build step, no packages. `scripts/laika-docs.py
 
 To try a full install, `tests/install/clean-install.sh ubuntu:24.04` runs
 the installer in a throwaway container (needs Docker).
+
+To work against a running LAIka without touching a real one,
+`sudo scripts/laika-dev.sh create` installs your checkout into its own
+systemd container (own Docker, data, users and AI sign-ins; dashboard on
+port 9080), and `scripts/laika-dev.sh deploy` updates it with your latest
+commit while keeping its data. `status`, `shell`, `stop`, `start` and
+`destroy` do what they say.
