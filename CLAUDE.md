@@ -615,6 +615,13 @@ GitHub: rehearse it non-root (a node:22 container, `su node`), never as
 root. Host tests must not assume root/HOME=/root nor touch live paths
 (tests/conftest.py points LAIKA_PROJECT_DATA at a temp dir).
 
+## Work list
+
+`laika-todo.md` (repo root, not shipped) is the persistent list of planned
+features and fixes, including the current release plan with its
+checkpoints. Read it at the start of every session and after a context
+compaction; keep it current.
+
 ## Status (2026-10-02)
 
 v1.0 checkpoints CP1-CP9 are done (see the sections above) and LAIka
