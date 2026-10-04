@@ -27,7 +27,8 @@ CHECKS = [
     ),
     (
         "python-compile",
-        [str(PYTHON), "-m", "compileall", "-q", "apps", "services", "scripts"],
+        # Project templates hold {{placeholders}}; tests/test_templates.py compiles and runs them filled in.
+        [str(PYTHON), "-m", "compileall", "-q", "-x", "project_templates", "apps", "services", "scripts"],
     ),
     (
         "tui-syntax",
