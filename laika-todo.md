@@ -28,7 +28,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       host network, the app's port), record console errors, failed requests
       and a screenshot; show them on the project page and flag a blank page
       or JS errors (notification "app looks broken").
-- [ ] **Smarter repair rounds.** A repair gets every open finding as a
+- [x] **Smarter repair rounds.** A repair gets every open finding as a
       checklist and must address all of them; the re-review states for each
       earlier finding whether it is fixed, and only blocks on new findings
       that are real regressions or blocking-severity. The safety contract

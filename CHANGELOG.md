@@ -15,6 +15,12 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   page and a screenshot, on the project page and as an "app looks broken"
   notification. Settings → Project defaults → Play-test web apps.
 
+- **Fewer review rounds.** A repair gets every blocking finding as a
+  checklist, fixes all of them (and other instances of the same mistake in
+  the change), and says what it changed for each; a review reports every
+  blocking problem in one round and starts a re-review by ticking off the
+  earlier findings. The review still checks the whole change.
+
 ## 1.3.1
 
 - Projects can be renamed: Settings → Name. Only the name shown changes;

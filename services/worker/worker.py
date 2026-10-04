@@ -1323,9 +1323,14 @@ NON-BLOCKING (report as notes, never a reason for CHANGES_REQUIRED):
 - pre-existing issues in code this candidate did not change
 - test coverage suggestions when the gate passed
 
-If previous findings are listed above, first confirm whether each one is now
-resolved. Do not invent new blocking findings in areas that previous reviews
-already examined unless the latest change introduced them.
+If previous findings are listed above, start with a checklist: each previous
+finding -> FIXED or NOT FIXED (with the reason). Do not invent new blocking
+findings in areas that previous reviews already examined unless the latest
+change introduced them.
+
+Review the whole change thoroughly ONCE and report every blocking problem you
+find in this round together, so a single repair can fix them all; do not hold
+findings back for a later round.
 
 Read surrounding code only to validate a concrete concern. Do not modify any
 files. Do not commit anything.

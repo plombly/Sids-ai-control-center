@@ -191,3 +191,12 @@ def test_planning_interrupted_by_a_restart_is_queued_again(orch):
     goal["status"] = "planning"
     orch.recover_interrupted_planning()
     assert goal["status"] == "planning_failed" and "interrupted" in goal["error"]
+
+
+def test_a_repair_gets_every_blocking_finding_as_a_checklist(orch):
+    findings = ("## spec review\n- MET: rooms\n- BLOCKING: path traversal in server/index.js:8 (fileFor)\n"
+                "- NOTE: naming\n- NOT MET (BLOCKING): the joined message lacks the slot\n- NON-BLOCKING: style")
+    checklist = orch.blocking_checklist(findings)
+    assert checklist.splitlines() == ["1. [ ] BLOCKING: path traversal in server/index.js:8 (fileFor)",
+                                      "2. [ ] NOT MET (BLOCKING): the joined message lacks the slot"]
+    assert "every BLOCKING item" in orch.blocking_checklist("all fine")

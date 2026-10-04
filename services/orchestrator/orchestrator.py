@@ -320,6 +320,18 @@ def recent_problems(project, limit=6, days=7):
     return "\nRecent problems in this project (newest first):\n" + "\n".join(lines) + "\n"
 
 
+def blocking_checklist(findings, limit=20):
+    """The BLOCKING findings of a review as a numbered checklist."""
+    items = []
+    for line in (findings or "").splitlines():
+        text = line.strip().lstrip("-*0123456789.) ").strip()
+        if "BLOCKING" in text.upper() and "NON-BLOCKING" not in text.upper() and len(text) > 12:
+            items.append(text[:400])
+    if not items:
+        return "(see the findings above; every BLOCKING item there)"
+    return "\n".join(f"{index}. [ ] {item}" for index, item in enumerate(items[:limit], 1))
+
+
 def group_planner_prompt(goal, atomic, project, members):
     """The normal planner prompt with the single repository replaced by the
     group's members and a "project" field on every job."""
@@ -988,6 +1000,9 @@ The immutable candidate was independently reviewed and changes were required.
 Reviewer findings:
 {findings}
 
+Checklist of blocking findings (fix EVERY one in this repair, not only the first):
+{blocking_checklist(findings)}
+
 Repair attempt:
 {next_attempt} of {repair_limit}
 {previous}
@@ -995,9 +1010,15 @@ Work ONLY on the concrete reviewer findings necessary to satisfy the original
 task. Preserve correct existing work. Do not broaden the scope, redesign
 unrelated code, merge branches, or commit changes yourself.
 
-Inspect the existing candidate first. Make the smallest correct repair.
-Validate the affected behavior. LAIka will run its deterministic test gate
-after you finish.
+Inspect the existing candidate first. Make the smallest correct repair for each
+finding. Where a finding is one instance of a pattern (the same check missing
+in a sibling handler, the same off-by-one in a similar loop), fix the other
+instances in this change too: otherwise the next review finds them and costs
+another round. Validate the affected behavior. LAIka will run its
+deterministic test gate after you finish.
+
+Finish with a short list: each blocking finding -> what you changed (or why it
+needed no change).
 """
 
         created = now()
