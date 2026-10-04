@@ -99,3 +99,13 @@ test('managed projects never ask anything on the home page', async () => {
   assert.doesNotMatch(select, /value="laika"|value="app"/);
   assert.match(projectSelectMarkup([{ id: 'laika' }]), /Create a project first/);
 });
+
+test('approved changes in the merge queue say so instead of offering Approve again', async () => {
+  const { needsYouMarkup } = await import('./lib/home.js');
+  const job = (id, extra = {}) => ({ id, project_id: 'game', status: 'awaiting_review', review_verdict: 'pass', goal_id: 'g1', title: id, integrated_candidate_commit: 'c'.repeat(40), ...extra });
+  const html = needsYouMarkup({ ready: [job('a', { merge_queue_state: 'queued' }), job('b', { merge_queue_state: 'waiting', merge_queue_reason: 'fresh review running' })], stuck: [] });
+  assert.match(html, /Approved · in the merge queue/);
+  assert.match(html, /Waiting: fresh review running/);
+  assert.doesNotMatch(html, /data-op="approve"/);
+  assert.doesNotMatch(html, /data-approve-all/);
+});

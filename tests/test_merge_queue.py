@@ -278,3 +278,21 @@ def test_operator_dispatches_queue_actions(job_review):
     op.ALLOWED_ACTIONS = frozenset(op.ACTIONS)
     with pytest.raises(op.Invalid, match="full 40-character"):
         op.validate(fields, "9999999999999-0", 9999999999.0)
+
+
+def test_a_project_whose_git_fails_never_blocks_the_others(job_review, queue_env, monkeypatch):
+    # Release installs: LAIka's own folder is no git checkout, and it came first.
+    intent(job_review)
+    real = job_review.laika_projects.all_projects
+    broken = type("P", (), {"id": "laika", "merge_queue_key": "laika:merge-queue:broken", "main_head_key": "x"})()
+    job_review.r.values["laika:merge-queue:broken"] = ["ghost"]
+    def all_projects(r):
+        return [broken, *real(r)]
+    monkeypatch.setattr(job_review.laika_projects, "all_projects", all_projects)
+    real_process = job_review._process_project_queue
+    def process(project):
+        if project is broken:
+            raise SystemExit("fatal: not a git repository")
+        return real_process(project)
+    monkeypatch.setattr(job_review, "_process_project_queue", process)
+    assert job_review.process_merge_queue() == [JOB]

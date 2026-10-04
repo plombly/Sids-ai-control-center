@@ -24,6 +24,11 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   concern and at most 6 files (tests not counted). A plan with a bigger job
   is sent back once to be split. Big jobs used to bounce between review and
   repair, each review finding something new.
+- **Approve all merged nothing on release installs.** The merge queue
+  walked every project and stopped at the first one whose folder is not a
+  git checkout (LAIka's own, on an install from a release), so no queued
+  change was ever merged. Each project's queue now runs on its own, and
+  approved changes waiting in the queue say so instead of showing Approve.
 - Job details: **Close** works again (and Esc, and leaving the page).
 - Releases no longer show red health for "live tree" (it only applies to
   git checkouts), which also pinged the health notification.
