@@ -133,6 +133,9 @@ def create_device(payload: DeviceCreate, request: Request):
     redis.set(f"laika:device-key:{key_hash(key)}", device_id)
     redis.sadd("laika:devices", device_id)
     pairing = {"v": 1, "name": server_name(), "url": payload.url.rstrip("/"), "key": key}
+    others = [url for url in tailnet_urls(redis, payload.url) if url != pairing["url"]]
+    if others:
+        pairing["alt_urls"] = others  # tried in order when the first address does not answer
     text = json.dumps(pairing, separators=(",", ":"))
     return {"device": _view(redis.hgetall(f"laika:devices:{device_id}")), "key": key, "pairing": pairing,
             "pairing_text": text, "qr_svg": _qr_svg(text)}
@@ -165,6 +168,23 @@ def revoke_device(device_id: str, request: Request):
     return {"id": device_id, "revoked": True}
 
 
+def tailnet_urls(redis, like_url=""):
+    """This server's addresses on the owner's Tailscale network (Settings ->
+    Remote access), with the port of the address the app was given (8080)."""
+    try:
+        status = json.loads(redis.get("laika:remote:status") or "{}")
+    except (TypeError, ValueError):
+        status = {}
+    if status.get("state") != "connected":
+        return []
+    import re
+    found = re.search(r":(\d+)/?$", like_url or "")
+    port = found.group(1) if found else "8080"
+    hosts = ([status["dns_name"]] if status.get("dns_name") and status.get("magic_dns") else []) + \
+        [ip for ip in status.get("ips") or [] if "." in ip]
+    return [f"http://{host}:{port}" for host in hosts]
+
+
 # --- the app API ---------------------------------------------------------------------------
 
 @router.get("/api/app/info")
@@ -182,6 +202,8 @@ def app_info(request: Request):
             "server_time": time.time(),
             "device": {"id": device.get("id"), "name": device.get("name")} if device else None,
             "token_required": bool(main.OPERATOR_TOKEN),
+            # Where else the app can reach this server (Tailscale; Settings -> Remote access).
+            "tailnet_urls": tailnet_urls(main.redis, str(request.base_url).rstrip("/")),
             "device_actions": sorted(DEVICE_JOB_ACTIONS)}
 
 

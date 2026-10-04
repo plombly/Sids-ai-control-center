@@ -121,3 +121,14 @@ def test_app_info_and_summary(api):
     assert [j["id"] for j in summary["needs_you"]["stuck"]] == ["j1"]
     assert summary["needs_you"]["stuck"][0]["needs_human_kind"] == "network"
     assert {p["id"] for p in summary["projects"]} >= {"shop", "laika"}
+
+
+def test_pairing_and_app_info_list_the_tailscale_addresses(api):
+    client, fake = api[0], api[1]
+    fake.strings["laika:remote:status"] = json.dumps({"state": "connected", "ips": ["100.64.0.5", "fd7a::5"],
+                                                      "dns_name": "laika.tail1.ts.net", "magic_dns": True})
+    made = client.post("/api/devices", headers=OPERATOR, json={"name": "Phone", "url": "http://192.168.1.20:8080"}).json()
+    assert made["pairing"]["url"] == "http://192.168.1.20:8080"
+    assert made["pairing"]["alt_urls"] == ["http://laika.tail1.ts.net:8080", "http://100.64.0.5:8080"]
+    fake.strings["laika:remote:status"] = json.dumps({"state": "needs_login"})
+    assert "alt_urls" not in client.post("/api/devices", headers=OPERATOR, json={"name": "P2", "url": "http://a:8080"}).json()["pairing"]
