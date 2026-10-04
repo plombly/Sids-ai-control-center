@@ -116,3 +116,14 @@ def test_data_is_plain_and_confined(tmp_path):
         data.rmdir("db")
     data.remove("db/y.json")
     data.rmdir("db")
+
+
+def test_a_batch_moves_by_copying_when_rename_is_impossible(code, tmp_path, monkeypatch):
+    area, repo = code
+    area.open_write("src/app.py", truncate=True).write_bytes(b"print(9)\n")
+    batch = area.current
+    old = batch.folder
+    monkeypatch.setattr(sftp_fs.os, "rename", lambda *a: (_ for _ in ()).throw(OSError(18, "Invalid cross-device link")))
+    batch.move_to(tmp_path / "uploads" / "sftp-1")
+    assert (tmp_path / "uploads" / "sftp-1" / "files" / "src" / "app.py").read_bytes() == b"print(9)\n"
+    assert (tmp_path / "uploads" / "sftp-1" / "manifest.json").is_file() and not old.exists()

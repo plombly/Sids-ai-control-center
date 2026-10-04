@@ -177,10 +177,27 @@ class Batch:
             or any(folder == rel or folder.startswith(prefix) for folder in self.dirs)
 
     def move_to(self, folder):
-        # shutil.move: the staging and upload folders may be different mounts
-        # (the service's ReadWritePaths), where a rename fails.
-        shutil.move(str(self.folder), str(folder))
-        self.folder = Path(folder)
+        folder = Path(folder)
+        try:
+            os.rename(self.folder, folder)
+        except OSError:
+            # Different mounts (the service's ReadWritePaths): copy the files
+            # only. Copying modes would try to set the setgid bit LAIka's
+            # folders carry, which the locked-down service may not do.
+            try:
+                for path in sorted(self.folder.rglob("*")):
+                    target = folder / path.relative_to(self.folder)
+                    if path.is_dir() and not path.is_symlink():
+                        target.mkdir(parents=True, exist_ok=True)
+                    elif path.is_file() and not path.is_symlink():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(path, target)
+                folder.mkdir(parents=True, exist_ok=True)
+            except BaseException:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+            shutil.rmtree(self.folder, ignore_errors=True)
+        self.folder = folder
 
 
 class CodeArea:
