@@ -62,7 +62,7 @@ def load(redis_client, session_id):
     if not data:
         return None
     session = dict(data)
-    for key, default in (("turns", []), ("questions", []), ("brief", {})):
+    for key, default in (("turns", []), ("questions", []), ("brief", {}), ("proposal", {})):
         try:
             session[key] = json.loads(data.get(key) or json.dumps(default))
         except ValueError:
@@ -190,8 +190,46 @@ Reply to the operator's last message, as a colleague would in chat:
 - Be concrete and honest: say what already exists, what is missing, what you would do and why.
   Offer 2-4 options when there is a real choice, with your recommendation.
 - Suggest ideas they have not mentioned when they are genuinely useful, not a long wish list.
-- When the idea is clear enough to build, say so and suggest pressing "Write the goal".
+- When the idea is clear enough to build, or you have found the cause of a problem the operator
+  wants fixed, PROPOSE THE GOAL at the end of your reply, so they can start it with one click:
+
+```goal
+title: short title (max 80 chars)
+atomic: true or false (true = one small change)
+<the goal text for LAIka's pipeline, markdown, at most ~300 words: what to build or fix and
+why; where (the files/functions involved, from what you read); for a problem, the cause with
+file:line evidence and a regression test that fails before the fix; acceptance criteria as a
+short checklist; out of scope if tempting>
+```
+  Only one goal block, only when it is genuinely ready (not for open questions), no ``` fences
+  inside it, and do not repeat its content in the text above it.
 """
+
+
+GOAL_BLOCK = re.compile(r"```goal[ \t]*\n(.*?)```", re.DOTALL)
+
+
+def split_proposal(text):
+    """(reply text without the goal block, proposal or None)."""
+    found = list(GOAL_BLOCK.finditer(text or ""))
+    if not found:
+        return text, None
+    block = found[-1]
+    lines = block.group(1).strip("\n").splitlines()
+    fields, body = {}, []
+    for index, line in enumerate(lines):
+        key, sep, value = line.partition(":")
+        if sep and key.strip().lower() in ("title", "atomic") and not body:
+            fields[key.strip().lower()] = value.strip()
+        else:
+            body = lines[index:]
+            break
+    goal = "\n".join(body).strip()
+    reply = (text[:block.start()] + text[block.end():]).strip()
+    if not goal:
+        return reply or text, None
+    return reply, {"title": (fields.get("title") or goal.splitlines()[0])[:120].strip("# ").strip(),
+                   "summary": "", "goal": goal[:20000], "atomic": fields.get("atomic", "").lower() == "true"}
 
 
 def parse_chat_reply(text):

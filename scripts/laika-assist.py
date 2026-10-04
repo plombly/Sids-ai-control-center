@@ -199,14 +199,17 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
                     return fail(r, session_id, "Claude is not available right now (usage limit or login). Try again later.")
                 return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")
             try:
-                text = goal_assist.parse_chat_reply(run.text)
+                text, proposal = goal_assist.split_proposal(goal_assist.parse_chat_reply(run.text))
             except ValueError as exc:
                 goal_assist.save(r, session_id, cost_usd=cost)
                 return fail(r, session_id, str(exc))
             if r.hget(goal_assist.session_key(session_id), "status") != "thinking":
                 return 0
-            goal_assist.save(r, session_id, status="reply", turns=session["turns"] + [{"from": "assistant", "message": text}],
-                             cost_usd=cost, model=CHAT_MODEL)
+            turn = {"from": "assistant", "message": text or "Here is the goal I would start:"}
+            if proposal:
+                turn["proposal"] = proposal
+            goal_assist.save(r, session_id, status="reply", turns=session["turns"] + [turn],
+                             proposal=proposal or {}, cost_usd=cost, model=CHAT_MODEL)
             return 0
         for force_brief in ((True,) if chatting else (False, True)):
             run = ask(r, session, project, force_brief=force_brief, runner=runner)

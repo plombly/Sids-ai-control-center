@@ -48,6 +48,7 @@ def view(session_id, session):
             "brief": session.get("brief") or None, "error": session.get("error") or "",
             "goal_id": session.get("goal_id") or "", "cost_usd": projects._numeric(session.get("cost_usd")) or 0,
             "mode": session.get("mode") or "plan", "want": session.get("want") or "",
+            "proposal": session.get("proposal") or None,
             "updated_at": projects._numeric(session.get("updated_at"))}
 
 
@@ -113,7 +114,7 @@ def reply(session_id: str, payload: AssistReply):
             raise HTTPException(status_code=409, detail="Wait for the reply first")
         if len([t for t in turns if t.get("from") == "you" and t.get("message")]) >= goal_assist.MAX_CHAT_MESSAGES:
             raise HTTPException(status_code=409, detail="This conversation is long: press Write the goal, or start a new one")
-        _queue(session_id, turns=turns + [{"from": "you", "message": payload.message.strip()}], want="reply")
+        _queue(session_id, turns=turns + [{"from": "you", "message": payload.message.strip()}], want="reply", proposal={})
         return view(session_id, goal_assist.load(_redis(), session_id))
     if len([t for t in turns if t.get("from") == "you"]) >= goal_assist.MAX_TURNS + goal_assist.MAX_CHAT_MESSAGES:
         raise HTTPException(status_code=409, detail="This conversation is long enough: edit the brief yourself or start over")
@@ -141,6 +142,18 @@ def write_goal(session_id: str):
     if session.get("mode") != "chat" or session.get("status") not in ("reply", "brief", "failed"):
         raise HTTPException(status_code=409, detail="Nothing to write a goal from yet")
     _queue(session_id, want="brief")
+    return view(session_id, goal_assist.load(_redis(), session_id))
+
+
+@router.post("/api/assistant/{session_id}/adopt")
+def adopt(session_id: str):
+    """The goal the Conversation proposed becomes the brief (no AI call), to
+    edit or start like any other."""
+    session = _session(session_id)
+    proposal = session.get("proposal") or {}
+    if session.get("mode") != "chat" or session.get("status") != "reply" or not proposal.get("goal"):
+        raise HTTPException(status_code=409, detail="There is no proposed goal to use")
+    goal_assist.save(_redis(), session_id, status="brief", brief=proposal, want="brief", proposal={})
     return view(session_id, goal_assist.load(_redis(), session_id))
 
 

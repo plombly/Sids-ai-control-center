@@ -180,7 +180,7 @@ def test_talk_it_through_replies_in_prose_then_writes_the_goal_from_the_conversa
     chat = calls[0]
     assert chat["model"] == module.CHAT_MODEL and chat["tools"] == "Read,Grep,Glob"
     assert chat["system_prompt"] == goal_assist.CHAT_SYSTEM_PROMPT
-    assert "OPERATOR:\nWhat would make the game better?" in chat["prompt"] and "Write the goal" in chat["prompt"]
+    assert "OPERATOR:\nWhat would make the game better?" in chat["prompt"] and "PROPOSE THE GOAL" in chat["prompt"]
     # "Write the goal": a brief from the whole conversation, no questions round.
     goal_assist.save(r, "a" * 16, status="queued", want="brief",
                      turns=session["turns"] + [{"from": "you", "message": "Do the pause menu."}])
@@ -203,3 +203,15 @@ def test_a_conversation_knows_the_apps_state_and_recent_failures(assist):
     prompt = calls[0]["prompt"]
     assert "App: running on port 8100" in prompt and "`npm start` (detected)" in prompt
     assert "TypeError: boom" in prompt and 'Job "Bots" test_failed: expected 3 got 2' in prompt
+
+
+def test_a_conversation_reply_can_carry_a_ready_goal(assist):
+    module, r, runner_for, calls = assist
+    goal_assist.save(r, "a" * 16, mode="chat", want="reply", turns=[{"from": "you", "message": "bots move early"}])
+    reply = "The countdown never freezes tanks (server/game.js:42).\n\n```goal\ntitle: Freeze tanks during the countdown\natomic: true\n## Fix\nSkip movement while `countdown > 0`.\n```"
+    module.main("a" * 16, r=r, runner=runner_for(Run(reply)))
+    session = goal_assist.load(r, "a" * 16)
+    assert session["turns"][-1]["message"] == "The countdown never freezes tanks (server/game.js:42)."
+    assert session["proposal"] == {"title": "Freeze tanks during the countdown", "summary": "", "atomic": True,
+                                   "goal": "## Fix\nSkip movement while `countdown > 0`."}
+    assert "```goal" in calls[0]["prompt"]

@@ -97,3 +97,19 @@ def test_talk_it_through_conversation_and_write_the_goal(api):
     goal_assist.save(fake, laika, status="failed", error="limit")
     assert client.post(f"/api/assistant/{laika}/retry").json()["status"] == "queued"
     assert client.post(f"/api/assistant/{laika}/retry").status_code == 409
+
+
+def test_a_proposed_goal_becomes_the_brief_without_another_ai_call(api):
+    client, fake, submitted = api
+    session = client.post("/api/projects/game/assistant", json={"idea": "bots move early", "mode": "chat"}).json()
+    laika = session["id"]
+    assert client.post(f"/api/assistant/{laika}/adopt").status_code == 409            # nothing proposed yet
+    proposal = {"title": "Freeze", "summary": "", "goal": "Freeze tanks during the countdown.", "atomic": True}
+    goal_assist.save(fake, laika, status="reply", proposal=proposal)
+    assert client.get(f"/api/assistant/{laika}").json()["proposal"] == proposal
+    adopted = client.post(f"/api/assistant/{laika}/adopt").json()
+    assert (adopted["status"], adopted["brief"], adopted["proposal"]) == ("brief", proposal, None)
+    queued_before = len(fake.lrange(goal_assist.QUEUE_KEY, 0, -1))
+    done = client.post(f"/api/assistant/{laika}/submit", json={"goal": proposal["goal"], "atomic": True, "request_id": "req-abcdefgh"})
+    assert done.status_code == 202 and submitted[-1][0].goal == proposal["goal"]
+    assert len(fake.lrange(goal_assist.QUEUE_KEY, 0, -1)) == queued_before             # no new AI turn

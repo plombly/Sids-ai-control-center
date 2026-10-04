@@ -73,9 +73,14 @@ export function chatText(text) {
 
 export function chatMarkup(box, state, session) {
   const working = WORKING.test(session.status);
-  const bubbles = (session.turns || [])
-    .filter(turn => turn.message)
-    .map(turn => `<div class="chat-bubble ${turn.from === 'you' ? 'from-you' : 'from-laika'}"><span class="chat-who">${turn.from === 'you' ? 'You' : 'LAIka'}</span>${chatText(turn.message)}</div>`)
+  const turns = (session.turns || []).filter(turn => turn.message);
+  const lastProposal = session.status === 'reply' && session.proposal?.goal ? turns.length - 1 : -1;
+  const proposalCard = (proposal, live) =>
+    `<div class="chat-proposal"><div class="chat-proposal-head"><b>Proposed goal:</b> ${esc(proposal.title || '')}${proposal.atomic ? ' <span class="pill">small change</span>' : ''}</div><details><summary>Show the goal</summary><div class="chat-proposal-goal">${chatText(proposal.goal)}</div></details>${
+      live ? `<div class="composer-buttons"><button type="button" data-assist-adopt="${attr(box)}">Edit first</button><button type="button" class="primary" data-assist-start-proposal="${attr(box)}">Start this goal</button></div>` : ''
+    }</div>`;
+  const bubbles = turns
+    .map((turn, index) => `<div class="chat-bubble ${turn.from === 'you' ? 'from-you' : 'from-laika'}"><span class="chat-who">${turn.from === 'you' ? 'You' : 'LAIka'}</span>${chatText(turn.message)}${turn.proposal ? proposalCard(turn.proposal, index === lastProposal) : ''}</div>`)
     .join('');
   const thinking = working
     ? `<div class="chat-bubble from-laika thinking"><span class="spinner" aria-hidden="true"></span> ${session.want === 'brief' ? 'Writing the goal from your conversation…' : 'Reading the project and thinking…'}</div>`
@@ -323,6 +328,25 @@ if (typeof document !== 'undefined') {
     act(button.dataset.assistWriteGoal, button, async state => {
       applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/write-goal`, { method: 'POST' }));
       state.chatting = false;
+    })
+  );
+  registerClick('assistAdopt', button =>
+    act(button.dataset.assistAdopt, button, async state => {
+      applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/adopt`, { method: 'POST' }));
+      state.chatting = false;
+    })
+  );
+  registerClick('assistStartProposal', button =>
+    act(button.dataset.assistStartProposal, button, async state => {
+      const box = button.dataset.assistStartProposal;
+      const adopted = await requestJSON(`/api/assistant/${encodeURIComponent(state.session.id)}/adopt`, { method: 'POST' });
+      const response = await requestJSON(`/api/assistant/${encodeURIComponent(adopted.id)}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ goal: adopted.brief.goal, atomic: Boolean(adopted.brief.atomic), request_id: newRequestId() })
+      });
+      state.draft = '';
+      storage.set(box, '');
+      submitted(response, state);
     })
   );
   registerClick('assistRetryTurn', button =>

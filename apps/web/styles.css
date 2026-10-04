@@ -2729,3 +2729,12 @@ table {
   margin: 0 0 10px;
   font-size: 1rem;
 }
+.chat-proposal {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent, #5b9dff);
+  border-radius: 8px;
+}
+.chat-proposal .composer-buttons {
+  margin-top: 6px;
+}

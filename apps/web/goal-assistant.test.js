@@ -75,3 +75,16 @@ test('conversation: idle offers it; the conversation shows as chat with Send and
   assert.equal(chatText('<script>x</script>'), '<p>&lt;script&gt;x&lt;/script&gt;</p>');
   assert.match(chatText('```js\nlet a = 1;\n```'), /<pre class="chat-code">let a = 1;\n<\/pre>/);
 });
+
+test('a proposed goal in the conversation can be started or edited first', async () => {
+  const { assistantInner, boxState, applySession } = await import('./lib/goal-assistant.js');
+  const state = boxState('project:prop');
+  const proposal = { title: 'Freeze bots in the countdown', goal: 'Bots move early. Fix it.', atomic: true };
+  applySession(state, { id: 'b'.repeat(16), mode: 'chat', status: 'reply', proposal, turns: [{ from: 'you', message: 'bots move early' }, { from: 'assistant', message: 'Found it.', proposal }] });
+  const html = assistantInner('project:prop', state);
+  assert.match(html, /Proposed goal:<\/b> Freeze bots in the countdown/);
+  assert.match(html, /data-assist-start-proposal=/);
+  assert.match(html, /data-assist-adopt=/);
+  applySession(state, { ...state.session, status: 'queued', proposal: null });
+  assert.doesNotMatch(assistantInner('project:prop', state), /data-assist-start-proposal=/); // older proposals stay as text
+});
