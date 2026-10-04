@@ -8,6 +8,7 @@ import { esc, escValue } from './format.js';
 export const EXTRA_SECTIONS = [
   { id: 'notifications', label: 'Server notifications', help: "The administrators' channel: every event, backups and health." },
   { id: 'my-notifications', label: 'My notifications', help: 'Your own Discord or ntfy: what you hear about your projects.' },
+  { id: 'my-sftp', label: 'SFTP access', help: 'Edit project files with an SFTP app, and your SSH keys.' },
   { id: 'phones', label: 'Phones & apps', help: 'Pair the LAIka app and revoke lost phones.' },
   { id: 'users', label: 'Users', help: 'Who uses this LAIka and what each person may do.' },
   { id: 'access', label: 'Access', help: 'Your password, signed-in browsers and the audit log.' },
@@ -16,7 +17,7 @@ export const EXTRA_SECTIONS = [
 
 // Sections members may open (their own phones and sign-ins); the rest are the
 // administrators' (apps/api/access.py).
-export const MEMBER_SECTIONS = ['my-notifications', 'access', 'phones'];
+export const MEMBER_SECTIONS = ['my-notifications', 'my-sftp', 'access', 'phones'];
 
 export function navMarkup(schema, current, admin = true) {
   const every = [...(schema?.sections || []).slice(0, 2), ...EXTRA_SECTIONS.slice(0, 2), ...(schema?.sections || []).slice(2), ...EXTRA_SECTIONS.slice(2)];

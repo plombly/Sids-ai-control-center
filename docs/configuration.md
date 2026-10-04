@@ -132,6 +132,16 @@ Starting values for new projects, apps, previews and builds.
 | Build time limit (seconds) | `2700` | 300–21600 | after **Apply now** |  |
 | Deleted projects can be restored for (hours) | `24` | 1–720 | after **Apply now** |  |
 
+### SFTP
+
+Edit project files with an SFTP app (WinSCP, FileZilla, VS Code), signed in as yourself.
+
+| Setting | Default | Allowed | Applies | Notes |
+| --- | --- | --- | --- | --- |
+| SFTP access | on |  | after **Apply now** | Lets people sign in with an SFTP app using their LAIka username and password (or an SSH key). |
+| SFTP port | `2222` | 1024–65535 | after **Apply now** | On Fedora / RHEL, run `sudo laika repair` after changing it so the firewall lets it in. |
+| Commit code changes after (seconds) | `30` | 10–300 | after **Apply now** | Code changes over SFTP become one commit on main this long after the last change (or when you disconnect). |
+
 ### Backups & upkeep
 
 Backups, restore checks and cleaning up old data.

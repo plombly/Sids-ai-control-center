@@ -130,6 +130,16 @@ def events(r, dashboard):
                                 f"App {APP_PROBLEMS[state]} · {project}",
                                 (app.get("error") or "See the log on its project page")[:200],
                                 f"{dashboard}/#/projects/{project}", project))
+    for raw in r.lrange("laika:sftp:conflicts", 0, 49) or []:
+        try:
+            item = json.loads(raw)
+        except ValueError:
+            continue
+        project, user = item.get("project", ""), item.get("user", "")
+        paths = ", ".join(item.get("paths", [])[:3]) + (" …" if len(item.get("paths", [])) > 3 else "")
+        found.append(_event(f"sftp:{item.get('id')}", "sftp_conflict", f"SFTP changes not applied · {project}",
+                            f"{user}: {paths} ({item.get('reason', 'changed on main')}). Your version is kept in "
+                            f"App data/{item.get('kept_in', '')}.", f"{dashboard}/#/projects/{project}/files", project, user))
     try:
         backup = json.loads(r.get("laika:backup:last") or "{}")
     except ValueError:
@@ -175,6 +185,8 @@ def for_person(r, user, settings, current):
             continue
         if kind in ("goal_done", "goal_failed") and settings["goals"] == "mine" and getattr(event, "owner", "") != user["name"]:
             continue
+        if kind == "sftp_conflict" and getattr(event, "owner", "") != user["name"]:
+            continue  # only the person whose changes they were
         mine.append(event)
     return mine
 

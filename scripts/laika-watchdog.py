@@ -28,7 +28,7 @@ REPO_ROOT = os.getenv("REPO_ROOT", "/opt/laika")
 EXPECTED_WORKERS = int(os.getenv("WATCHDOG_WORKERS", "6"))
 BACKUP_MAX_AGE_HOURS = float(os.getenv("WATCHDOG_BACKUP_MAX_AGE_HOURS", "36"))
 DISK_MIN_FREE_PERCENT = float(os.getenv("WATCHDOG_DISK_MIN_FREE_PERCENT", "10"))
-SERVICES = ["laika-orchestrator", "laika-operator", "laika-scaler"]
+SERVICES = ["laika-orchestrator", "laika-operator", "laika-scaler", "laika-sftp"]
 UNITS = SERVICES + [f"laika-worker@{n:02d}" for n in range(1, EXPECTED_WORKERS + 1)]
 
 

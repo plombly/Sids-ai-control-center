@@ -28,6 +28,7 @@ SECTIONS = [
     ("ai", "AI & pipeline", "Which AI does what, how much it may spend and how hard LAIka tries."),
     ("workers", "Workers", "How many jobs run at the same time."),
     ("projects", "Project defaults", "Starting values for new projects, apps, previews and builds."),
+    ("sftp", "SFTP server", "Edit project files with an SFTP app (WinSCP, FileZilla, VS Code), signed in as yourself."),
     ("backups", "Backups & upkeep", "Backups, restore checks and cleaning up old data."),
     ("health", "Health checks", "When the watchdog warns you."),
 ]
@@ -54,6 +55,14 @@ FIELDS = [
     _f("UPDATE_URL", "general", "Update address", "str", "",
        "Where releases are published. Empty: the address this edition ships with.", apply="restart",
        max_length=300, pattern=r"^(https://\S+)?$"),
+    # --- SFTP (services/sftp/laika_sftp.py) ------------------------------------------------------
+    _f("SFTP_ENABLED", "sftp", "SFTP access", "bool", "true",
+       "Lets people sign in with an SFTP app using their LAIka username and password (or an SSH key)."),
+    _f("SFTP_PORT", "sftp", "SFTP port", "int", 2222,
+       "On Fedora / RHEL, run `sudo laika repair` after changing it so the firewall lets it in.", min=1024, max=65535),
+    _f("SFTP_COMMIT_SECONDS", "sftp", "Commit code changes after (seconds)", "int", 30,
+       "Code changes over SFTP become one commit on main this long after the last change (or when you disconnect).",
+       min=10, max=300),
     # --- appearance ----------------------------------------------------------------------
     _f("THEME", "appearance", "Theme", "choice", "system", "System follows the device's light or dark mode.",
        apply="live", choices=["system", "dark", "light"]),

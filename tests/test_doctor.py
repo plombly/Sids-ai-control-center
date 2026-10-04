@@ -123,7 +123,12 @@ def test_firewalld_must_let_the_dashboard_and_apps_through(doc, monkeypatch):
             out = {"--state": "", "--get-default-zone": "public\n", "--get-active-zones": active}.get(argv[1], ports)
             return subprocess.CompletedProcess(argv, state if argv[1] == "--state" else 0, out, "")
         return run
-    assert doc.check_firewall(runner("ssh 8080/tcp 8100-8299/tcp"))["level"] == "ok"
+    monkeypatch.setenv("SFTP_PORT", "2222")
+    assert doc.check_firewall(runner("ssh 8080/tcp 8100-8299/tcp 2222/tcp"))["level"] == "ok"
+    assert "2222/tcp" in doc.check_firewall(runner("8080/tcp 8100-8299/tcp"))["detail"]
+    monkeypatch.setenv("SFTP_ENABLED", "false")
+    assert doc.check_firewall(runner("8080/tcp 8100-8299/tcp"))["level"] == "ok"           # SFTP off: no port
+    monkeypatch.delenv("SFTP_ENABLED")
     result = doc.check_firewall(runner("8080/tcp"))
     assert result["level"] == "fail" and "8100-8299/tcp in 'public'" in result["detail"] and "docker" not in result["detail"]
     assert doc.check_firewall(runner("", state=252))["level"] == "ok"           # firewalld not running

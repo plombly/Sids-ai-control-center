@@ -14,3 +14,7 @@ tomli==2.4.1 ; python_version < "3.11"
 typing_extensions==4.16.0 ; python_version < "3.13"
 pyte==0.8.2
 wcwidth==0.9.1
+asyncssh==2.24.0
+cffi==2.1.1
+cryptography==50.0.2
+pycparser==3.0

@@ -41,7 +41,7 @@ def supported(os_id, version):
     if os_id == "fedora":
         return major.isdigit() and int(major) >= 41
     return os_id in RHEL_LIKE and major in ("9", "10")
-SERVICES = ("laika-orchestrator", "laika-operator", "laika-apps", "laika-scaler")
+SERVICES = ("laika-orchestrator", "laika-operator", "laika-apps", "laika-scaler", "laika-sftp")
 TIMERS = ("laika-backup", "laika-watchdog", "laika-prune", "laika-notify", "laika-digest", "laika-restore-check")
 CONTAINERS = ("laika-redis", "laika-postgres", "laika-api", "laika-web")
 REPAIR = "sudo laika repair"
@@ -339,13 +339,26 @@ def check_firewall(runner=run):
     zones |= {line.split()[0] for line in runner(["firewall-cmd", "--get-active-zones"]).stdout.splitlines()
               if line.strip() and not line[0].isspace()}
     zones -= {"", "docker"}
+    wanted = ["8080/tcp", "8100-8299/tcp"] + ([f"{sftp_port()}/tcp"] if sftp_port() else [])
     missing = []
     for zone in sorted(zones):
         ports = set(runner(["firewall-cmd", f"--zone={zone}", "--list-ports"]).stdout.split())
-        missing += [f"{port} in '{zone}'" for port in ("8080/tcp", "8100-8299/tcp") if port not in ports]
+        missing += [f"{port} in '{zone}'" for port in wanted if port not in ports]
     if missing:
         return fail("firewall", f"firewalld blocks {', '.join(missing)}", "sudo laika repair opens them")
-    return ok("firewall", f"firewalld allows 8080 and 8100-8299 ({', '.join(sorted(zones))})")
+    return ok("firewall", f"firewalld allows {', '.join(p.split('/')[0] for p in wanted)} ({', '.join(sorted(zones))})")
+
+
+def sftp_port():
+    """The SFTP port from Settings (0 when SFTP is off)."""
+    try:
+        sys.path.insert(0, str(ROOT / "services"))
+        import laika_env  # noqa: F401  (stored settings -> environment)
+    except Exception:
+        pass
+    if os.environ.get("SFTP_ENABLED", "true").lower() in ("0", "false", "no", "off"):
+        return 0
+    return int(os.environ.get("SFTP_PORT", "2222"))
 
 
 def check_backups(client=None, now=None):

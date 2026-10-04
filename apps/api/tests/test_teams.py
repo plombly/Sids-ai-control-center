@@ -167,3 +167,24 @@ def test_everyone_sets_their_own_notifications(team):
     assert notify_core.load_targets(person="sam")
     admin.delete("/api/users/sam")
     assert notify_core.load_targets(person="sam") == {} and fake.get("laika:notify:settings:sam") is None
+
+
+ED25519 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGqAaVOQZ1YDJqRWOgbHHhSaKqk3nQ8Yb2xQvFVnHQo6 sam@laptop"
+
+
+def test_everyone_manages_their_own_ssh_keys_for_sftp(team):
+    admin, fake = team
+    sam = join(invite(admin, "sam", grants={"shop": "build"}))
+    fake.strings["laika:sftp:info"] = json.dumps({"enabled": True, "port": 2222, "fingerprint": "SHA256:abc"})
+    info = sam.get("/api/sftp").json()
+    assert info["online"] and info["port"] == 2222 and info["username"] == "sam"
+    added = sam.post("/api/me/ssh-keys", json={"name": "Laptop", "key": ED25519})
+    assert added.status_code == 201 and added.json()["fingerprint"].startswith("SHA256:")
+    assert sam.post("/api/me/ssh-keys", json={"name": "Again", "key": ED25519}).status_code == 409
+    for bad in ("-----BEGIN OPENSSH PRIVATE KEY----- abc", "ssh-ed25519 notbase64!!", "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIGqA"):
+        assert sam.post("/api/me/ssh-keys", json={"name": "x", "key": bad + " " * 20}).status_code == 422, bad
+    listed = sam.get("/api/me/ssh-keys").json()["keys"]
+    assert [k["name"] for k in listed] == ["Laptop"] and "key" not in listed[0]
+    assert admin.get("/api/me/ssh-keys").json()["keys"] == []                      # their own only
+    assert sam.delete(f"/api/me/ssh-keys/{listed[0]['id']}").status_code == 200
+    assert sam.get("/api/me/ssh-keys").json()["keys"] == []

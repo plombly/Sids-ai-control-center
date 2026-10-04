@@ -590,3 +590,58 @@ def test_an_edit_commits_only_over_the_version_it_opened(uploadable, capsys):
                                 "--on-conflict", "overwrite", "--expected-sha256", opened], capsys)
     assert code == 1 and "changed" in captured.err and (repo / "README.md").read_text() == "hello\n"
     assert not (uploads / "edit-0002").exists()
+
+
+# --- sftp-commit: a person's batch of SFTP changes as one commit ---------------------------------
+
+def _sftp_batch(uploads, upload_id, changes, files):
+    import json as _json
+    folder = uploads / upload_id
+    for rel, data in files.items():
+        (folder / "files" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / "files" / rel).write_bytes(data)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "manifest.json").write_text(_json.dumps({"user": "sam", "project": "shop", "changes": changes}))
+
+
+def test_sftp_batch_is_one_commit_by_the_person_and_conflicts_are_kept(uploadable, capsys, monkeypatch, tmp_path):
+    import hashlib
+    fake, repo, uploads, _ = uploadable
+    monkeypatch.setattr(laika_project.laika_projects, "DATA_BASE", tmp_path / "data")
+    monkeypatch.setattr(laika_project.laika_projects, "record_event", lambda *a, **k: None)
+    hi = hashlib.sha256(b"hi\n").hexdigest()
+    _sftp_batch(uploads, "sftp-0001", [{"path": "README.md", "action": "write", "base": hi},
+                                       {"path": "src/new.py", "action": "write", "base": ""}],
+                {"README.md": b"hello\n", "src/new.py": b"x = 1\n"})
+    code, captured, out = invoke(["sftp-commit", "shop", "--upload", "sftp-0001", "--author", "Sam"], capsys)
+    assert code == 0, captured.err
+    assert out["applied"] == ["README.md", "src/new.py"] and out["conflicts"] == []
+    log = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%an|%cn|%s"], capture_output=True, text=True).stdout
+    assert log.strip() == "Sam|LAIka operator|Edit over SFTP by Sam: README.md, src/new.py"
+    assert not (uploads / "sftp-0001").exists()
+    # Someone else changed README.md meanwhile: that file is kept aside, the rest goes in.
+    _sftp_batch(uploads, "sftp-0002", [{"path": "README.md", "action": "write", "base": hi},
+                                       {"path": "other.txt", "action": "write", "base": ""}],
+                {"README.md": b"stale\n", "other.txt": b"ok\n"})
+    code, captured, out = invoke(["sftp-commit", "shop", "--upload", "sftp-0002", "--author", "sam"], capsys)
+    assert code == 0, captured.err
+    assert out["applied"] == ["other.txt"] and out["conflicts"] == ["README.md"]
+    assert (repo / "README.md").read_bytes() == b"hello\n"
+    kept = list((tmp_path / "data" / "shop" / ".laika-sftp-conflicts").glob("*-sam/README.md"))
+    assert kept and kept[0].read_bytes() == b"stale\n"
+    assert '"README.md"' in fake.lists["laika:sftp:conflicts"][0]
+
+
+def test_sftp_batch_refuses_bad_paths_and_keeps_files_when_main_is_unusable(uploadable, capsys, monkeypatch, tmp_path):
+    fake, repo, uploads, _ = uploadable
+    monkeypatch.setattr(laika_project.laika_projects, "DATA_BASE", tmp_path / "data")
+    monkeypatch.setattr(laika_project.laika_projects, "record_event", lambda *a, **k: None)
+    _sftp_batch(uploads, "sftp-0003", [{"path": ".git/hooks/x", "action": "write", "base": ""}], {".git/hooks/x": b"evil"})
+    code, captured, _ = invoke(["sftp-commit", "shop", "--upload", "sftp-0003", "--author", "sam"], capsys)
+    assert code == 1 and not (repo / ".git/hooks/x").exists()
+    (repo / "dirty.txt").write_text("x")
+    _sftp_batch(uploads, "sftp-0004", [{"path": "a.txt", "action": "write", "base": ""}], {"a.txt": b"mine"})
+    code, captured, _ = invoke(["sftp-commit", "shop", "--upload", "sftp-0004", "--author", "sam"], capsys)
+    assert code == 1 and "kept in App data" in captured.err
+    assert list((tmp_path / "data" / "shop" / ".laika-sftp-conflicts").glob("*-sam/a.txt"))
+    assert invoke(["sftp-commit", "laika", "--upload", "sftp-0005", "--author", "sam"], capsys)[0] == 1

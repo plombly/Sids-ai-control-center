@@ -499,7 +499,7 @@ def repo_path_parts(rel):
     return parts
 
 
-def change_main(record, project_id, change, message_for):
+def change_main(record, project_id, change, message_for, author=None):
     """Run change(repo) on the project's main checkout and commit whatever it
     changed as "LAIka operator" (hooks off). Holds the project's approval lock
     so it never races a merge; refuses unless the checkout is clean on main.
@@ -522,6 +522,8 @@ def change_main(record, project_id, change, message_for):
                 return {"id": project_id, "status": "unchanged", **result}
             who = {"GIT_AUTHOR_NAME": "LAIka operator", "GIT_AUTHOR_EMAIL": "operator@laika.local",
                    "GIT_COMMITTER_NAME": "LAIka operator", "GIT_COMMITTER_EMAIL": "operator@laika.local"}
+            if author:  # a person's own change (SFTP): they are the author, LAIka commits it
+                who.update(GIT_AUTHOR_NAME=author, GIT_AUTHOR_EMAIL=f"{author.lower()}@laika.local")
             run_git(["-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", message_for(result)],
                     cwd=repo, env={**os.environ, **who})
         except BaseException:
@@ -592,6 +594,117 @@ def commit_upload(args):
     finally:
         if staged_dir.is_dir() and not staged_dir.is_symlink() and staged_dir.parent == UPLOADS_BASE:
             shutil.rmtree(staged_dir, ignore_errors=True)
+
+
+SFTP_CONFLICTS = "laika:sftp:conflicts"
+LOCK_RETRY_SECONDS = 90
+
+
+def sftp_commit(args, sleep=time.sleep):
+    """Commit one person's batch of SFTP changes (services/sftp) to main as
+    one commit authored by them. UPLOADS_BASE/<upload>/manifest.json lists
+    {path, action write|delete, base}; files/<path> holds what was written.
+    A change is applied only if main still has the version it was made on
+    (base: SHA-256, "" = no file); otherwise the person's version is kept in
+    the app's data folder under .laika-sftp-conflicts/ and reported. If main
+    cannot be changed at all, every written file is kept there the same way:
+    nothing is ever lost."""
+    validate_id(args.id)
+    if args.id == "laika":
+        raise ProjectError("LAIka's own code cannot be changed over SFTP")
+    if not UPLOAD_ID.fullmatch(args.upload or "") or not re.fullmatch(r"[A-Za-z0-9._-]{2,40}", args.author or ""):
+        raise ProjectError("invalid upload id or author")
+    folder = UPLOADS_BASE / args.upload
+    r = get_redis()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    conflict_root = laika_projects.data_dir(args.id) / ".laika-sftp-conflicts" / f"{stamp}-{args.author.lower()}"
+    checked = []
+
+    def keep_conflict(rel, staged):
+        target = conflict_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(staged, target)
+
+    try:
+        if folder.is_symlink() or not (folder / "manifest.json").is_file():
+            raise ProjectError("the SFTP changes were not found")
+        changes = json.loads((folder / "manifest.json").read_text()).get("changes", [])
+        for change in changes:
+            parts = repo_path_parts(change.get("path", ""))
+            if change.get("action") not in ("write", "delete") or not re.fullmatch(r"(|[0-9a-f]{64})", change.get("base", "")):
+                raise ProjectError("invalid change list")
+            staged = folder / "files" / Path(*parts)
+            if change["action"] == "write" and (staged.is_symlink() or not staged.is_file()):
+                raise ProjectError(f"{'/'.join(parts)}: the written file is missing")
+            checked.append(("/".join(parts), change["action"], change.get("base", ""), staged))
+        record = project(r, args.id)
+
+        def apply(repo):
+            applied, conflicts = [], []
+            for rel, action, base, staged in checked:
+                dest = repo / rel
+                current = ""
+                if dest.is_symlink() or dest.is_dir():
+                    current = "not-a-file"
+                elif dest.is_file():
+                    current = hashlib.sha256(dest.read_bytes()).hexdigest()
+                for parent in list(dest.relative_to(repo).parents)[:-1]:
+                    if (repo / parent).is_symlink() or (repo / parent).is_file():
+                        current = "not-a-file"
+                if current != base:
+                    conflicts.append(rel)
+                    if action == "write":
+                        keep_conflict(rel, staged)
+                    continue
+                if action == "write":
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(staged, dest)
+                elif dest.is_file():
+                    dest.unlink()
+                applied.append(rel)
+            return {"applied": applied, "conflicts": conflicts}
+
+        def message(result):
+            names = result["applied"]
+            shown = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
+            return f"Edit over SFTP by {args.author}: {shown}"
+
+        deadline = time.time() + LOCK_RETRY_SECONDS
+        while True:
+            try:
+                result = change_main(record, args.id, apply, message, author=args.author)
+                break
+            except ProjectError as exc:
+                if "being advanced" not in str(exc) or time.time() > deadline:
+                    raise
+                sleep(3)  # an approval is merging right now: wait for it
+    except ProjectError as exc:
+        # Main could not be changed: keep every written file for the person.
+        kept = []
+        for rel, action, _, staged in checked:
+            if action == "write" and staged.is_file():
+                keep_conflict(rel, staged)
+                kept.append(rel)
+        if kept:
+            _record_sftp_conflict(r, args, kept, conflict_root, str(exc))
+        raise ProjectError(f"{exc}" + (f"; your files are kept in App data/{conflict_root.relative_to(laika_projects.data_dir(args.id))}" if kept else ""))
+    finally:
+        if folder.is_dir() and not folder.is_symlink() and folder.parent == UPLOADS_BASE:
+            shutil.rmtree(folder, ignore_errors=True)
+    if result.get("conflicts"):
+        _record_sftp_conflict(r, args, result["conflicts"], conflict_root, "changed on main since you started editing")
+        result["kept_in"] = f".laika-sftp-conflicts/{conflict_root.name}"
+    return result
+
+
+def _record_sftp_conflict(r, args, paths, conflict_root, reason):
+    entry = {"id": uuid.uuid4().hex[:12], "project": args.id, "user": args.author.lower(), "paths": paths[:50],
+             "kept_in": f".laika-sftp-conflicts/{conflict_root.name}", "reason": reason, "at": time.time()}
+    r.lpush(SFTP_CONFLICTS, json.dumps(entry))
+    r.ltrim(SFTP_CONFLICTS, 0, 199)
+    laika_projects.record_event(r, args.id, "sftp_conflict",
+                                f"SFTP changes by {args.author} not applied ({reason}): {', '.join(paths[:3])}"
+                                f"{' …' if len(paths) > 3 else ''}; kept in App data/{entry['kept_in']}")
 
 
 CHANGE_MESSAGES = {
@@ -795,6 +908,7 @@ def main(argv=None):
     p = sub.add_parser("restore"); p.add_argument("trash_id")
     sub.add_parser("purge-trash")
     sub.add_parser("trash")
+    p = sub.add_parser("sftp-commit"); p.add_argument("id"); p.add_argument("--upload", required=True); p.add_argument("--author", required=True)
     p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"]); p.add_argument("--expected-sha256", default=None)
     p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
     p = sub.add_parser("code-batch"); p.add_argument("id"); p.add_argument("--spec", required=True, help="JSON batch from the dashboard")
@@ -824,6 +938,8 @@ def main(argv=None):
             result = list_trash(args)
         elif args.command == "commit-upload":
             result = commit_upload(args)
+        elif args.command == "sftp-commit":
+            result = sftp_commit(args)
         elif args.command == "code-change":
             result = code_change(args)
         elif args.command == "code-batch":

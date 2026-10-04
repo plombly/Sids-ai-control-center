@@ -79,6 +79,24 @@ image and output in Settings. The newest builds are kept.
 - **History** lists every change on main; **Undo** reverts one (as a new
   commit, so history is never lost).
 
+## SFTP
+
+Prefer your own editor? **Settings → SFTP access** shows the address (port
+2222), your username and the server's key. Connect any SFTP app (WinSCP,
+FileZilla, Cyberduck, VS Code with an SFTP extension, `sftp`) with your
+LAIka username and password, or add your SSH public key there.
+
+- Each project you can open is a folder with **code** (main) and **data**
+  (the app's data folder). With View access everything is read-only.
+- **data** changes at once.
+- **code** changes are collected and committed to main as **one commit by
+  you** 30 seconds after your last change (or when you disconnect).
+  Until then only you see them. Every batch is one entry in History, so
+  **Undo** takes back a whole editing session.
+- If someone changed a file on main while you were editing it, your version
+  is not forced over theirs: it is kept in App data under
+  `.laika-sftp-conflicts/` and you get a notification.
+
 ## Groups
 
 Related projects (for example an app and its API) can form a group: one

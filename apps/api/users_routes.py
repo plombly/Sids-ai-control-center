@@ -10,6 +10,10 @@ DELETE /api/users/{name}           remove (never yourself, never the last
 GET    /api/invites/{token}        public: whose invite, still valid?
 POST   /api/invites/{token}        public: {password} -> account ready, signed in
 GET    /api/me                     the signed-in person and what they may do
+GET    /api/sftp                   how to reach the SFTP server (address, port, host key)
+GET    /api/me/ssh-keys            the signed-in person's SSH keys for SFTP
+POST   /api/me/ssh-keys            {name, key}: add one (OpenSSH public key)
+DELETE /api/me/ssh-keys/{id}       remove one
 
 Invites: a random token shown once to the administrator (laika:invites:
 <sha256> -> user, 24 h). The person sets their own password; nobody else
@@ -207,6 +211,110 @@ def accept_invite(token: str, payload: AcceptInvite, request: Request, response:
     auth.new_session(redis, request, response, user["name"])
     auth.audit(redis, request, 200, f"user {user['name']} accepted their invite")
     return {"signed_in": True, "user": user.get("username")}
+
+
+SSH_KEY_TYPES = ("ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+                 "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com")
+MAX_SSH_KEYS = 10
+
+
+def parse_ssh_key(text):
+    """(type, base64) of an OpenSSH public key line, or ValueError."""
+    import base64
+    import struct
+    parts = (text or "").strip().split()
+    if len(parts) < 2 or parts[0] not in SSH_KEY_TYPES or len(parts[1]) > 4096:
+        raise ValueError("Paste an OpenSSH public key (the .pub file: it starts with ssh-ed25519 or ssh-rsa)")
+    try:
+        blob = base64.b64decode(parts[1], validate=True)
+        length = struct.unpack(">I", blob[:4])[0]
+        inner = blob[4:4 + length].decode()
+    except Exception:
+        raise ValueError("That key is damaged: copy the whole line from the .pub file")
+    if inner != parts[0]:
+        raise ValueError("That key is damaged: its type does not match")
+    if "PRIVATE" in text.upper():
+        raise ValueError("That is a private key: never share it. Paste the .pub file instead")
+    return parts[0], parts[1]
+
+
+def _key_fingerprint(b64):
+    import base64
+    return "SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(b64)).digest()).decode().rstrip("=")
+
+
+def _my_account(request):
+    ctx = _ctx(request)
+    user = access.get_user(_redis(), ctx.name) if ctx is not None else None
+    if not user:
+        raise HTTPException(status_code=409, detail="Sign in with your own account to manage your keys")
+    return user
+
+
+def _keys(user):
+    import json
+    try:
+        keys = json.loads(user.get("ssh_keys") or "[]")
+    except ValueError:
+        keys = []
+    return keys if isinstance(keys, list) else []
+
+
+@router.get("/api/sftp")
+def sftp_info(request: Request):
+    import json
+    ctx = _ctx(request)
+    try:
+        info = json.loads(_redis().get("laika:sftp:info") or "null") or {}
+    except ValueError:
+        info = {}
+    return {"online": bool(info), "enabled": bool(info.get("enabled")), "port": info.get("port") or 2222,
+            "fingerprint": info.get("fingerprint", ""), "commit_seconds": info.get("commit_seconds") or 30,
+            "username": getattr(ctx, "display", "") if access.get_user(_redis(), getattr(ctx, "name", "")) else ""}
+
+
+@router.get("/api/me/ssh-keys")
+def my_ssh_keys(request: Request):
+    user = _my_account(request)
+    return {"keys": [{k: item.get(k) for k in ("id", "name", "type", "fingerprint", "added")} for item in _keys(user)]}
+
+
+class NewKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=60)
+    key: str = Field(min_length=20, max_length=8000)
+
+
+@router.post("/api/me/ssh-keys", status_code=201)
+def add_ssh_key(payload: NewKey, request: Request):
+    import json
+    user = _my_account(request)
+    try:
+        kind, b64 = parse_ssh_key(payload.key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    keys = _keys(user)
+    if len(keys) >= MAX_SSH_KEYS:
+        raise HTTPException(status_code=409, detail=f"At most {MAX_SSH_KEYS} keys; remove one first")
+    if any(item.get("key", "").split()[1:2] == [b64] for item in keys):
+        raise HTTPException(status_code=409, detail="You added this key already")
+    item = {"id": secrets.token_hex(6), "name": payload.name.strip(), "type": kind, "key": f"{kind} {b64}",
+            "fingerprint": _key_fingerprint(b64), "added": time.time()}
+    access.save_user(_redis(), user["name"], ssh_keys=json.dumps(keys + [item]))
+    auth.audit(_redis(), request, 201, f"user {user['name']} added SSH key {item['fingerprint']}")
+    return {k: item[k] for k in ("id", "name", "type", "fingerprint", "added")}
+
+
+@router.delete("/api/me/ssh-keys/{key_id}")
+def remove_ssh_key(key_id: str, request: Request):
+    import json
+    user = _my_account(request)
+    keys = _keys(user)
+    kept = [item for item in keys if item.get("id") != key_id]
+    if len(kept) == len(keys):
+        raise HTTPException(status_code=404, detail="No such key")
+    access.save_user(_redis(), user["name"], ssh_keys=json.dumps(kept))
+    return {"removed": key_id}
 
 
 @router.get("/api/me")

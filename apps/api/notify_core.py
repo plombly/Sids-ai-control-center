@@ -41,11 +41,13 @@ EVENTS = {
     "app_problem": ("An app crashed or could not install", "ping", False),
     "backup_failed": ("A backup or restore check failed", "ping", True),
     "health_red": ("System health turned red", "ping", True),
+    "sftp_conflict": ("SFTP changes could not be applied", "ping", False),
     "digest": ("Weekly digest", "post", False),
 }
 # What a person needs to receive an event (access.LEVELS names, or admin).
 EVENT_LEVEL = {"approval": "approve", "needs_human": "build", "app_problem": "build", "goal_done": "view",
-               "goal_failed": "view", "backup_failed": "admin", "health_red": "admin", "digest": "view"}
+               "goal_failed": "view", "backup_failed": "admin", "health_red": "admin", "digest": "view",
+               "sftp_conflict": "build"}
 GOAL_SCOPES = ("mine", "all")
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DEFAULT_SETTINGS = {

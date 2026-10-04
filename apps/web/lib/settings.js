@@ -11,6 +11,7 @@ import { isAdmin, loadMe, currentMe } from './access.js';
 import { usersData } from './users.js';
 import { MEMBER_SECTIONS } from './system-settings.js';
 import { providerCard } from './setup-wizard.js';
+import { sftpData } from './sftp-access.js';
 
 export const KINDS = {
   server: { base: '/api/notifications', targets: 'notify-targets-form', rules: 'notify-rules-form', targetsStatus: 'notify-targets-status', rulesStatus: 'notify-rules-status' },
@@ -104,6 +105,8 @@ async function load(section = currentSection) {
       } catch (error) {
         body = `<div class="settings-card"><p class="subtle">${esc(error.message)}</p></div>`;
       }
+    } else if (section === 'my-sftp') {
+      body = await sftpData();
     } else if (section === 'phones') {
       body = '<section class="settings-section" id="devices-section"></section>';
     } else if (section === 'ai') {

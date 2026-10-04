@@ -83,7 +83,7 @@ REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
     "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
-    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit", "expected_sha256",
+    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit", "expected_sha256", "author",
 )
 # project_commit_upload commits one dashboard file change to a project's main:
 # an upload (op "upload", the default) or a file-browser operation.
@@ -293,6 +293,12 @@ def validate_project_request(action, fields):
                 request["expected_sha256"] = expected
         elif op == "batch":
             request.update(op="batch", path=path, batch=validate_batch(fields.get("batch", "")))
+        elif op == "sftp":  # a person's SFTP changes (services/sftp): one commit, authored by them
+            if not REQUEST_ID.fullmatch(fields.get("upload", "")):
+                raise Invalid("invalid upload id")
+            if not re.fullmatch(r"[A-Za-z0-9._-]{2,40}", fields.get("author", "")):
+                raise Invalid("invalid author")
+            request.update(op="sftp", path=path, upload=fields["upload"], author=fields["author"])
         elif op in CODE_OPS:
             request.update(op=op, path=path, dest=dest)
         else:
@@ -335,6 +341,8 @@ def project_cli_args(request):
                     *([f"--expected-sha256={request['expected_sha256']}"] if request.get("expected_sha256") else [])]
         if request["op"] == "batch":
             return ["code-batch", project_id, f"--spec={request['batch']}"]
+        if request["op"] == "sftp":
+            return ["sftp-commit", project_id, f"--upload={request['upload']}", f"--author={request['author']}"]
         return ["code-change", project_id, f"--op={request['op']}", f"--path={request['path']}",
                 f"--dest={request.get('dest', '')}"]
     return ["push-setup", project_id, request["url"]]

@@ -2,7 +2,7 @@
 # Restart LAIka's own services safely, then check they came back.
 #
 #   scripts/laika-restart.sh [--wait SECONDS] TARGET...
-#   TARGET: operator | orchestrator | apps | scaler | workers | worker@NN | all
+#   TARGET: operator | orchestrator | apps | scaler | sftp | workers | worker@NN | all
 #   (workers / all: only the running workers; the scaler stopped the rest)
 #
 # Workers are never restarted mid-job: each one is paused first (the
@@ -32,11 +32,11 @@ all_workers() { systemctl list-units --plain --no-legend --state=active,activati
 units=()
 for target in "${targets[@]}"; do
   case "$target" in
-    operator|orchestrator|apps|scaler) units+=("laika-$target.service") ;;
+    operator|orchestrator|apps|scaler|sftp) units+=("laika-$target.service") ;;
     workers) mapfile -t found < <(all_workers); units+=("${found[@]}") ;;
     worker@[0-9][0-9]) units+=("laika-$target.service") ;;
-    all) mapfile -t found < <(all_workers); units+=(laika-operator.service laika-orchestrator.service laika-apps.service laika-scaler.service "${found[@]}") ;;
-    *) echo "unknown target: $target (operator, orchestrator, apps, scaler, workers, worker@NN, all)" >&2; exit 2 ;;
+    all) mapfile -t found < <(all_workers); units+=(laika-operator.service laika-orchestrator.service laika-apps.service laika-scaler.service laika-sftp.service "${found[@]}") ;;
+    *) echo "unknown target: $target (operator, orchestrator, apps, scaler, sftp, workers, worker@NN, all)" >&2; exit 2 ;;
   esac
 done
 mapfile -t units < <(printf '%s\n' "${units[@]}" | awk '!seen[$0]++')

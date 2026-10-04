@@ -71,6 +71,9 @@ if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; t
   echo "==> Closing LAIka's ports in firewalld"
   for zone in $(firewall-cmd --get-zones); do
     firewall-cmd -q --permanent --zone="$zone" --remove-port=8080/tcp --remove-port=8100-8299/tcp 2>/dev/null || true
+    for port in $(firewall-cmd --permanent --zone="$zone" --list-ports); do
+      case "$port" in 2222/tcp) firewall-cmd -q --permanent --zone="$zone" --remove-port="$port" ;; esac
+    done
   done
   firewall-cmd -q --reload || true
 fi

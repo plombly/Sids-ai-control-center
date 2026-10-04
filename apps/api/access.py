@@ -150,10 +150,11 @@ SIGNED_IN = [
             rf"|/api/goals|/api/goals/recent|/api/jobs|/api/jobs/recent|/api/approvals|/api/jobs/approvals|/api/failures"
             rf"|/api/action-required|/api/actions-required|/api/queue|/api/merge-queue|/api/dismissals|/api/projects"
             rf"|/api/usage|/api/devices|/api/repository|/api/operator/status|/api/operator-requests/{ID}|/api/me"
-            rf"|/api/me/notifications|/api/me/notifications/digest-preview"),
-    ("POST", r"/api/auth/logout|/api/auth/password|/api/devices|/api/dismissals|/api/me/notifications/test"),
+            rf"|/api/me/notifications|/api/me/notifications/digest-preview|/api/sftp|/api/me/ssh-keys"),
+    ("POST", r"/api/auth/logout|/api/auth/password|/api/devices|/api/dismissals|/api/me/notifications/test"
+             r"|/api/me/ssh-keys"),
     ("PUT", r"/api/me/notifications/(?:settings|targets)"),
-    ("DELETE", rf"/api/auth/sessions/[a-f0-9]{{16}}|/api/devices/{ID}|/api/dismissals/.+"),
+    ("DELETE", rf"/api/auth/sessions/[a-f0-9]{{16}}|/api/devices/{ID}|/api/dismissals/.+|/api/me/ssh-keys/[a-f0-9]{{12}}"),
 ]
 # (method, path pattern, what the id names, level). First match wins.
 PROJECT_RULES = [

@@ -2,6 +2,25 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.3.0 (not released yet)
+
+- **SFTP.** Edit project files with WinSCP, FileZilla, Cyberduck, VS Code or
+  `sftp`, signed in with your LAIka username and password (or your own SSH
+  key, Settings → SFTP access). Port 2222.
+  - You see a folder per project you can open, each with `code` (main) and
+    `data` (the app's data folder). View access is read-only.
+  - `data` changes at once. `code` changes collect and become **one
+    commit by you** 30 seconds after your last change (Settings → SFTP
+    server), or when you disconnect. Until then only you see them.
+  - A file someone else changed on main meanwhile is never overwritten:
+    your version is kept in App data/.laika-sftp-conflicts and you are
+    notified ("SFTP changes could not be applied").
+  - SFTP only: no shell, commands or forwarding. It runs as the laika user
+    with a locked-down service. Failed sign-ins are limited per address
+    like the dashboard's.
+  - The installer makes the server key and opens the port in firewalld;
+    `laika doctor` checks the service and the port.
+
 ## 1.2.0
 
 - **Edit files in the browser.** Files → double-click a text file (or

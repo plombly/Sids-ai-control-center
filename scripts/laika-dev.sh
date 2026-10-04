@@ -10,11 +10,12 @@
 #   scripts/laika-dev.sh setup-code     a one-time setup code for its first administrator
 #   scripts/laika-dev.sh shell          a root shell inside (laika doctor, logs, ...)
 #   scripts/laika-dev.sh stop | start   pause it (frees memory) / resume it
+#   scripts/laika-dev.sh recreate       new container, same data (after changing ports or limits)
 #   scripts/laika-dev.sh destroy        delete the machine AND all of its data
 #
 # Dashboard: http://<this server>:DEV_PORT (default 9080). Project apps,
 # which run on 8100-8139 inside, are published on 9100-9139 (8105 -> 9105),
-# previews 8200-8209 on 9200-9209. Limits: DEV_MEMORY (3g), DEV_CPUS (2), so
+# previews 8200-8209 on 9200-9209, SFTP 2222 on 9222. Limits: DEV_MEMORY (3g), DEV_CPUS (2), so
 # it cannot starve the real LAIka. Needs Docker and root.
 set -euo pipefail
 
@@ -53,6 +54,26 @@ wait_for_systemd() {
   die "systemd did not start in $NAME"
 }
 
+start_container() {
+  # Data lives in named volumes, so stop/start, recreate and deploys keep it.
+  docker run -d --name "$NAME" --hostname "$NAME" --privileged --cgroupns=private --restart unless-stopped \
+    --tmpfs /run --tmpfs /run/lock --memory="$MEMORY" --cpus="$CPUS" \
+    -v "$NAME-docker:/var/lib/docker" -v "$NAME-containerd:/var/lib/containerd" \
+    -v "$NAME-data:/var/lib/laika" -v "$NAME-etc:/etc/laika" -v "$NAME-logs:/var/log/laika" \
+    -v "$NAME-backups:/var/backups/laika" -v "$NAME-opt:/opt" \
+    -p "$PORT:8080" -p "${DEV_SFTP_PORT:-9222}:2222" -p 9100-9139:8100-8139 -p 9200-9209:8200-8209 "$IMAGE" >/dev/null
+}
+
+recreate() {
+  # A new container on the same volumes (new published ports or limits);
+  # everything inside the volumes is kept.
+  exists || die "No $NAME yet: scripts/laika-dev.sh create"
+  docker rm -f "$NAME" >/dev/null
+  start_container
+  wait_for_systemd
+  status
+}
+
 create() {
   exists && die "$NAME already exists (deploy updates it; destroy removes it)."
   say "Base machine (Ubuntu 24.04 with systemd)"
@@ -66,13 +87,7 @@ EOF
   docker build -q -t "$IMAGE" "$work" >/dev/null
   rm -rf "$work"
   say "Starting $NAME (memory $MEMORY, $CPUS CPUs, dashboard on port $PORT)"
-  # Data lives in named volumes, so stop/start and deploys keep it.
-  docker run -d --name "$NAME" --hostname "$NAME" --privileged --cgroupns=private --restart unless-stopped \
-    --tmpfs /run --tmpfs /run/lock --memory="$MEMORY" --cpus="$CPUS" \
-    -v "$NAME-docker:/var/lib/docker" -v "$NAME-containerd:/var/lib/containerd" \
-    -v "$NAME-data:/var/lib/laika" -v "$NAME-etc:/etc/laika" -v "$NAME-logs:/var/log/laika" \
-    -v "$NAME-backups:/var/backups/laika" -v "$NAME-opt:/opt" \
-    -p "$PORT:8080" -p 9100-9139:8100-8139 -p 9200-9209:8200-8209 "$IMAGE" >/dev/null
+  start_container
   wait_for_systemd
   copy_source "${1:-HEAD}"
   say "Installing LAIka inside (a few minutes)"
@@ -122,6 +137,7 @@ case "${1:-}" in
   setup-code) setup_code ;;
   shell) docker exec -it "$NAME" bash -l ;;
   stop) docker stop "$NAME" >/dev/null && echo "$NAME stopped (its data is kept)" ;;
+  recreate) recreate ;;
   start) docker start "$NAME" >/dev/null && wait_for_systemd && status ;;
   destroy)
     exists || die "No $NAME"

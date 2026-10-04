@@ -2627,3 +2627,35 @@ table {
   max-width: 100%;
   overflow-x: auto;
 }
+/* Settings → SFTP access (lib/sftp-access.js) */
+.sftp-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 10px 0;
+  align-items: baseline;
+}
+.sftp-facts code {
+  overflow-wrap: anywhere;
+}
+.plain-list {
+  padding-left: 18px;
+}
+.ssh-keys {
+  list-style: none;
+  padding: 0;
+}
+.ssh-key {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ssh-key .mono,
+.sftp-facts .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

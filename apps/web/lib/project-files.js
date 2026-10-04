@@ -157,7 +157,7 @@ export function filesPageMarkup(state, listing) {
       : '<div class="empty">Loading…</div>';
   return `<section class="panel wide file-browser" id="project-files"><div class="panel-heading"><div><p class="eyebrow">FILES</p><h2>Code and data</h2></div><div class="file-tabs">${tabs}</div></div><p class="subtle">${esc(
     AREA_NOTES[area]
-  )} Right-click for actions.</p>${breadcrumbMarkup(area, path)}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label><button type="button" data-file-cmd="newfile">New file</button><button type="button" data-file-cmd="mkdir">New folder</button><button type="button" data-file-cmd="download-folder">Download this folder</button>${clipNote}</div><div class="selection-slot">${selectionBarMarkup(
+  )} Right-click for actions, double-click a text file to edit it, or use your own editor over <a href="#/settings/my-sftp">SFTP</a>.</p>${breadcrumbMarkup(area, path)}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label><button type="button" data-file-cmd="newfile">New file</button><button type="button" data-file-cmd="mkdir">New folder</button><button type="button" data-file-cmd="download-folder">Download this folder</button>${clipNote}</div><div class="selection-slot">${selectionBarMarkup(
     state.selected?.length || 0
   )}</div><div id="project-file-status" class="form-status" role="status">${escValue(message)}</div>${body}</section>`;
 }

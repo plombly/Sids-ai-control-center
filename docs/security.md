@@ -9,7 +9,7 @@ accounts. It is designed for one owner on a private network.
 - Reach the dashboard on your LAN, or from outside **through a VPN**
   (WireGuard, OpenVPN, Tailscale…). The LAIka phone app connects through
   your VPN too.
-- Do not forward port 8080 (or the app ports 8100–8299) on your router,
+- Do not forward port 8080 (or the app ports 8100–8299, or SFTP on 2222) on your router,
   and do not put LAIka behind a public reverse proxy or tunnel.
 - On a cloud server, firewall every LAIka port to your VPN only.
   `sudo laika doctor`, the setup guide and the health page warn when the
@@ -49,7 +49,7 @@ it anyway, you take full responsibility for the consequences.
 
 | Runs as | What |
 | --- | --- |
-| `laika` (unprivileged) | workers, AI agents, tests, your projects' apps and previews, the goal assistant, AI sign-ins |
+| `laika` (unprivileged) | workers, AI agents, tests, your projects' apps and previews, the goal assistant, AI sign-ins, the SFTP server (locked-down unit; it never commits itself: code changes go to the operator service) |
 | root | the control services that start units, run Docker and set firewall rules (operator, apps, scaler, backups, health) |
 | Docker | Redis, Postgres, the API, the dashboard, project builds |
 

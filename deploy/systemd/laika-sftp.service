@@ -1,0 +1,38 @@
+[Unit]
+Description=LAIka: SFTP access to project files (services/sftp/laika_sftp.py)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=laika
+Group=laika
+# Network-facing, so it runs as the laika user with the least it needs: it
+# reads project checkouts, writes app data and its own staging, and hands
+# code changes to the operator service (it never commits itself).
+UMask=0007
+Environment=HOME=/var/lib/laika/home
+EnvironmentFile=-/etc/laika/redis.env
+EnvironmentFile=-/etc/laika/laika.env
+Type=simple
+WorkingDirectory=/opt/laika
+Environment=PYTHONUNBUFFERED=1
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+ExecStart=/var/lib/laika/venv/bin/python /opt/laika/services/sftp/laika_sftp.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/laika/sftp /var/lib/laika/uploads /var/lib/laika/project-data
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
