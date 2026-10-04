@@ -4,6 +4,13 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 1.2.0
 
+- **Edit files in the browser.** Files → double-click a text file (or
+  right-click → Edit, or New file). App data saves at once; code saves as
+  one commit on main. A file that changed since you opened it is never
+  overwritten: you are told, and keep your text. Tab indents, Enter keeps
+  the indentation, Ctrl+S saves, optional line wrap. Files up to 2 MB; View
+  access opens them read-only.
+
 - **Fedora and RHEL.** Fedora 41+ and RHEL / AlmaLinux / Rocky Linux 9 and
   10 are supported. Fedora 42, AlmaLinux 9 and Rocky Linux 9 pass the same
   clean-machine test as Ubuntu and Debian; version 10 needs an x86-64-v3

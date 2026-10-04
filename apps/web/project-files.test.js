@@ -43,7 +43,7 @@ test('selection: click, ctrl+click toggles, shift+click ranges from the anchor',
 
 test('menu: background, single file, folder with clipboard, many, zip and links', () => {
   const keys = items => items.filter(item => item !== '-').map(([key]) => key);
-  assert.deepEqual(keys(menuItems({})), ['mkdir', 'upload', 'select-all']);
+  assert.deepEqual(keys(menuItems({})), ['newfile', 'mkdir', 'upload', 'select-all']);
   const clip = { names: ['x.txt'] };
   assert.equal(menuItems({ clipboard: clip })[0][1], 'Paste x.txt here');
   assert.deepEqual(keys(menuItems({ entries: [{ name: 'a.zip', type: 'file' }] })),

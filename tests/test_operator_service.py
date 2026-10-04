@@ -577,3 +577,12 @@ def test_provider_actions_run_the_provider_helper(op):
     status, _, _ = op.execute_system(request, runner=lambda argv, **k: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""))
     assert status == "succeeded" and calls[0][-3:] == [str(op.ROOT / "scripts/laika-providers.py"), "login", "codex"]
     assert "--property=EnvironmentFile=-/etc/laika/providers/providers.env" in calls[0]
+
+
+def test_an_editor_save_carries_the_opened_hash(op):
+    request = op.validate({"action": "project_commit_upload", "project_id": "web", "path": "a.txt", "upload": "edit-0001",
+                           "on_conflict": "overwrite", "expected_sha256": "b" * 64}, f"{int(NOW * 1000)}-0", NOW)
+    assert op.project_cli_args(request)[-1] == "--expected-sha256=" + "b" * 64
+    with pytest.raises(op.Invalid, match="hash"):
+        op.validate({"action": "project_commit_upload", "project_id": "web", "path": "a.txt", "upload": "edit-0001",
+                     "expected_sha256": "--evil"}, f"{int(NOW * 1000)}-0", NOW)

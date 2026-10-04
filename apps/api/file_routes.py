@@ -9,6 +9,9 @@ The API container sees (docker-compose volumes):
                              committed by the host)
 It never writes a repository: code uploads are staged and committed by
 scripts/laika-project.py commit-upload (operator action project_commit_upload).
+The text editor (1.2) reads with GET .../files/text and saves through the
+same uploads with expected_sha256: a file that changed since it was opened
+is never overwritten (409, "changed").
 Every path is confined to its area (no "..", no .git in code, symlinks may
 not lead outside). LAIka's own repository is not exposed here.
 """
@@ -28,6 +31,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+import hashlib
+
 import file_ops
 import project_routes as projects
 
@@ -40,6 +45,8 @@ UPLOADS_MOUNT = Path(os.environ.get("LAIKA_UPLOADS_MOUNT", "/uploads"))
 MAX_UPLOAD = int(os.environ.get("LAIKA_MAX_UPLOAD_BYTES", str(1024 ** 3)))  # 1 GiB
 STAGED_MAX_AGE = 24 * 3600
 LIST_LIMIT = 2000
+TEXT_LIMIT = 2 * 1024 ** 2  # the editor opens files up to 2 MB
+SHA256 = r"^[0-9a-f]{64}$"
 
 
 def _project(project_id):
@@ -165,6 +172,41 @@ def download(project_id: str, area: Literal["code", "data"] = "code", path: List
     return FileResponse(real, filename=target.name)
 
 
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _changed():
+    return HTTPException(status_code=409, detail="This file changed since you opened it. Copy your text, reopen the file, and apply it again.")
+
+
+@router.get("/api/projects/{project_id}/files/text")
+def read_text(project_id: str, area: Literal["code", "data"] = "code", path: str = Query(min_length=1)):
+    """A text file for the editor: its text and the SHA-256 to save against."""
+    project_id, data = _project(project_id)
+    root = _area_root(project_id, data, area)
+    target, rel = _resolve(root, path, area)
+    real = target.resolve()
+    if target.is_symlink() or not real.is_file():
+        raise HTTPException(status_code=422, detail="Only files can be edited")
+    size = real.stat().st_size
+    if size > TEXT_LIMIT:
+        raise HTTPException(status_code=413, detail=f"Too large to edit here ({size // 1024} KB; the limit is {TEXT_LIMIT // 1024 ** 2} MB). Download it instead.")
+    raw = real.read_bytes()
+    try:
+        if b"\0" in raw:
+            raise UnicodeDecodeError("utf-8", raw, 0, 1, "binary")
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=415, detail="This is not a text file. Download it instead.")
+    return {"area": area, "path": rel, "text": text, "size": size, "sha256": hashlib.sha256(raw).hexdigest(),
+            "modified": real.stat().st_mtime}
+
+
 async def _receive(request, dest_dir):
     """Stream the request body into a temp file in dest_dir (size-capped)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +228,8 @@ async def _receive(request, dest_dir):
 
 @router.put("/api/projects/{project_id}/files/data")
 async def upload_data(project_id: str, request: Request, path: str = Query(min_length=1),
-                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask"):
+                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask",
+                      expected_sha256: Optional[str] = Query(default=None, pattern=SHA256)):
     project_id, data = _project(project_id)
     root = _area_root(project_id, data, "data", create=True)
     target, rel = _resolve(root, path, "data", must_exist=False)
@@ -196,6 +239,10 @@ async def upload_data(project_id: str, request: Request, path: str = Query(min_l
     _resolve(root, "/".join(PurePosixPath(rel).parts[:-1]), "data", must_exist=False)
     temp, size = await _receive(request, parent)  # always read the body, then decide
     try:
+        if expected_sha256 is not None:  # the editor: only over the version it opened
+            if not target.is_file() or target.is_symlink() or _sha256(target) != expected_sha256:
+                raise _changed()
+            on_conflict = "overwrite"
         if os.path.lexists(target):
             if on_conflict == "ask":
                 raise _conflict([target.name])
@@ -254,7 +301,8 @@ def _prune_staged():
 @router.put("/api/projects/{project_id}/files/code", status_code=202)
 async def upload_code(project_id: str, request: Request, path: str = Query(min_length=1),
                       request_id: str = Query(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$"),
-                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask"):
+                      on_conflict: Literal["ask", "overwrite", "skip", "keep"] = "ask",
+                      expected_sha256: Optional[str] = Query(default=None, pattern=SHA256)):
     """Stage a file and ask the host to commit it to main (no review: the
     operator is the authority). Poll /api/operator-requests/<request_id>."""
     project_id, data = _project(project_id)
@@ -269,9 +317,10 @@ async def upload_code(project_id: str, request: Request, path: str = Query(min_l
     temp, size = await _receive(request, staging)
     os.replace(temp, staging / "file")
     try:
-        result = projects._operator_request("project_commit_upload", request_id,
-                                            {"project_id": project_id, "path": rel, "upload": request_id,
-                                             "on_conflict": on_conflict})
+        fields = {"project_id": project_id, "path": rel, "upload": request_id, "on_conflict": on_conflict}
+        if expected_sha256 is not None:  # the host compares it with main before committing
+            fields.update(on_conflict="overwrite", expected_sha256=expected_sha256)
+        result = projects._operator_request("project_commit_upload", request_id, fields)
     except HTTPException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

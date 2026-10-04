@@ -197,3 +197,35 @@ def test_upload_conflict_choices(files):
     client.put("/api/projects/shop/files/code", params={"path": "a.txt", "request_id": "upload-k001", "on_conflict": "keep"},
                content=b"x")
     assert fake.stream[-1][1]["on_conflict"] == "keep"
+
+
+def test_the_editor_reads_text_and_saves_only_over_what_it_opened(files):
+    import hashlib
+    client, fake, repo, data, _ = files
+    opened = client.get("/api/projects/shop/files/text", params={"area": "code", "path": "src/app.js"}).json()
+    assert opened["text"] == "console.log(1)\n" and opened["sha256"] == hashlib.sha256(b"console.log(1)\n").hexdigest()
+    (repo / "logo.png").write_bytes(b"\x89PNG\0\0")
+    assert client.get("/api/projects/shop/files/text", params={"path": "logo.png"}).status_code == 415
+    assert client.get("/api/projects/shop/files/text", params={"path": "src"}).status_code == 422
+    assert client.get("/api/projects/shop/files/text", params={"path": "escape/secret.txt"}).status_code == 403
+    data.mkdir(parents=True)
+    (data / "notes.txt").write_text("one\n")
+    sha = client.get("/api/projects/shop/files/text", params={"area": "data", "path": "notes.txt"}).json()["sha256"]
+    saved = client.put("/api/projects/shop/files/data", params={"path": "notes.txt", "expected_sha256": sha}, content=b"two\n")
+    assert saved.status_code == 200 and (data / "notes.txt").read_text() == "two\n"
+    stale = client.put("/api/projects/shop/files/data", params={"path": "notes.txt", "expected_sha256": sha}, content=b"three\n")
+    assert stale.status_code == 409 and "changed" in stale.json()["detail"] and (data / "notes.txt").read_text() == "two\n"
+    assert not [p for p in data.iterdir() if p.name.startswith(".laika-upload")]   # no temp left behind
+
+
+def test_editing_code_sends_the_opened_hash_to_the_host(files):
+    client, fake, repo, _, uploads = files
+    _operator_ready(fake, allowed="project_commit_upload")
+    sha = "a" * 64
+    response = client.put("/api/projects/shop/files/code", params={"path": "src/app.js", "request_id": "edit-00000001",
+                                                                   "expected_sha256": sha}, content=b"x\n")
+    assert response.status_code == 202
+    fields = fake.stream[-1][1]
+    assert (fields["expected_sha256"], fields["on_conflict"]) == (sha, "overwrite")
+    assert client.put("/api/projects/shop/files/code", params={"path": "a", "request_id": "edit-00000002",
+                                                               "expected_sha256": "nothex"}, content=b"").status_code == 422

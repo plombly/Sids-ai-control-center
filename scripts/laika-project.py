@@ -2,6 +2,7 @@
 """Manage the LAIka project registry and project checkouts."""
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -549,6 +550,8 @@ def commit_upload(args):
         raise ProjectError("LAIka's own code cannot be changed by upload")
     if not UPLOAD_ID.fullmatch(args.upload or ""):
         raise ProjectError("invalid upload id")
+    if getattr(args, "expected_sha256", None) and not re.fullmatch(r"[0-9a-f]{64}", args.expected_sha256):
+        raise ProjectError("invalid file hash")
     staged_dir = UPLOADS_BASE / args.upload
     staged = staged_dir / "file"
     try:
@@ -564,6 +567,11 @@ def commit_upload(args):
                 if current.is_symlink() or (current.exists() and not current.is_dir()):
                     raise ProjectError(f"{args.path}: a parent is a file or a link")
             dest = repo.joinpath(*parts)
+            expected = getattr(args, "expected_sha256", None)
+            if expected:  # the dashboard editor: only over the version it opened
+                current = hashlib.sha256(dest.read_bytes()).hexdigest() if dest.is_file() and not dest.is_symlink() else ""
+                if current != expected:
+                    raise ProjectError("changed: this file changed on main since you opened it")
             if os.path.lexists(dest):
                 choice = args.on_conflict
                 if choice == "skip":
@@ -579,7 +587,8 @@ def commit_upload(args):
             shutil.copyfile(staged, dest)
             return {"path": dest.relative_to(repo).as_posix()}
 
-        return change_main(record, args.id, place, lambda result: f"Upload {result['path']} from the dashboard")
+        verb = "Edit" if getattr(args, "expected_sha256", None) else "Upload"
+        return change_main(record, args.id, place, lambda result: f"{verb} {result['path']} from the dashboard")
     finally:
         if staged_dir.is_dir() and not staged_dir.is_symlink() and staged_dir.parent == UPLOADS_BASE:
             shutil.rmtree(staged_dir, ignore_errors=True)
@@ -786,7 +795,7 @@ def main(argv=None):
     p = sub.add_parser("restore"); p.add_argument("trash_id")
     sub.add_parser("purge-trash")
     sub.add_parser("trash")
-    p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"])
+    p = sub.add_parser("commit-upload"); p.add_argument("id"); p.add_argument("--path", required=True); p.add_argument("--upload", required=True); p.add_argument("--on-conflict", default="ask", choices=["ask", "overwrite", "skip", "keep"]); p.add_argument("--expected-sha256", default=None)
     p = sub.add_parser("code-change"); p.add_argument("id"); p.add_argument("--op", required=True); p.add_argument("--path", required=True); p.add_argument("--dest", default="")
     p = sub.add_parser("code-batch"); p.add_argument("id"); p.add_argument("--spec", required=True, help="JSON batch from the dashboard")
     p = sub.add_parser("revert"); p.add_argument("id"); target = p.add_mutually_exclusive_group(required=True); target.add_argument("--job"); target.add_argument("--commit")

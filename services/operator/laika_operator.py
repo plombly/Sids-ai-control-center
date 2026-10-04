@@ -83,7 +83,7 @@ REQUEST_FIELDS = (
     "request_id", "job_id", "action", "expected_status",
     "expected_candidate", "extra", "requested_from",
     "project_id", "name", "importance", "source", "url", "gate", "confirm", "path", "upload", "op", "dest",
-    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit",
+    "batch", "on_conflict", "trash_id", "undo_job", "undo_commit", "expected_sha256",
 )
 # project_commit_upload commits one dashboard file change to a project's main:
 # an upload (op "upload", the default) or a file-browser operation.
@@ -286,6 +286,11 @@ def validate_project_request(action, fields):
             if on_conflict not in ("ask", *CONFLICT_CHOICES):
                 raise Invalid("invalid conflict choice")
             request.update(op="upload", path=path, upload=fields["upload"], on_conflict=on_conflict)
+            expected = fields.get("expected_sha256", "")
+            if expected:
+                if not re.fullmatch(r"[0-9a-f]{64}", expected):
+                    raise Invalid("invalid file hash")
+                request["expected_sha256"] = expected
         elif op == "batch":
             request.update(op="batch", path=path, batch=validate_batch(fields.get("batch", "")))
         elif op in CODE_OPS:
@@ -326,7 +331,8 @@ def project_cli_args(request):
         # --opt=value: a name starting with "-" must not read as an option.
         if request.get("op", "upload") == "upload":
             return ["commit-upload", project_id, f"--path={request['path']}", f"--upload={request['upload']}",
-                    f"--on-conflict={request.get('on_conflict') or 'ask'}"]
+                    f"--on-conflict={request.get('on_conflict') or 'ask'}",
+                    *([f"--expected-sha256={request['expected_sha256']}"] if request.get("expected_sha256") else [])]
         if request["op"] == "batch":
             return ["code-batch", project_id, f"--spec={request['batch']}"]
         return ["code-change", project_id, f"--op={request['op']}", f"--path={request['path']}",

@@ -823,6 +823,71 @@ label {
 .laika-dialog::backdrop {
   background: rgba(0, 0, 0, 0.55);
 }
+/* Text editor (lib/file-editor.js): nearly the whole window, on phones too. */
+.laika-dialog.file-editor {
+  width: min(1200px, calc(100vw - 24px));
+  height: calc(100vh - 24px);
+  height: calc(100dvh - 24px);
+  max-height: none;
+  padding: 12px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+.laika-dialog.file-editor[open] {
+  display: flex;
+}
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.editor-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.editor-actions {
+  display: flex;
+  gap: 8px;
+}
+.editor-note {
+  margin: 0;
+}
+.editor-text {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+.editor-text[wrap='soft'] {
+  white-space: pre-wrap;
+}
+.editor-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.editor-status [data-editor-state] {
+  margin-left: auto;
+}
+@media (pointer: coarse) {
+  .editor-text {
+    font-size: 16px; /* no zoom on focus */
+  }
+}
 .laika-dialog-body {
   padding: 18px 20px 8px;
   max-height: 60vh;

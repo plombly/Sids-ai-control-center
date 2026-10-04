@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body>
+<script type="module">
+window.calls = [];
+const files = { 'src/app.py': 'def f():\n    return 1\n' };
+window.fetch = async (url, options = {}) => {
+  const u = new URL(url, location.href);
+  let body = null;
+  if (options.body) body = await (options.body.text ? options.body.text() : options.body);
+  window.calls.push({ method: options.method || 'GET', path: u.pathname, query: Object.fromEntries(u.searchParams), body });
+  if (u.pathname.endsWith('/files/text')) return new Response(JSON.stringify({ text: files[u.searchParams.get('path')], sha256: 'a'.repeat(64) }), { status: 200 });
+  if (options.method === 'PUT') return new Response(JSON.stringify({ path: u.searchParams.get('path') }), { status: 200 });
+  return new Response('{}', { status: 404 });
+};
+const { openEditor } = await import('/lib/file-editor.js');
+window.run = () => openEditor({ projectId: 'shop', area: 'data', path: 'src/app.py', areaLabel: 'App data' }).then(v => (window.closed = v));
+window.ready = true;
+</script></body></html>

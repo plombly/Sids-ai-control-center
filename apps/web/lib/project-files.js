@@ -9,6 +9,8 @@ import { authHeaders, errorMessage, operatorRequest, newRequestId } from './api.
 import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
 import { askConfirm, askConflicts, askFolder, askText, entryBadge } from './file-dialogs.js';
+import { isEditable, openEditor } from './file-editor.js';
+import { currentMe } from './access.js';
 
 export const AREA_LABELS = { code: 'Code (main)', data: 'App data' };
 const AREA_NOTES = {
@@ -65,6 +67,7 @@ export function menuItems({ entries = [], clipboard = null }) {
     const what = canPaste ? (clipboard.names.length === 1 ? clipboard.names[0] : `${clipboard.names.length} items`) : '';
     return [
       ...(canPaste ? [['paste', `Paste ${what} here`]] : []),
+      ['newfile', 'New file'],
       ['mkdir', 'New folder'],
       ['upload', 'Upload files'],
       ['select-all', 'Select all']
@@ -74,6 +77,7 @@ export function menuItems({ entries = [], clipboard = null }) {
   const hasLink = entries.some(entry => entry.type === 'link');
   const items = [];
   if (single?.type === 'dir') items.push(['open', 'Open']);
+  if (isEditable(single)) items.push(['edit', 'Edit']);
   if (!hasLink) items.push(['download', single && single.type === 'file' ? 'Download' : 'Download as zip']);
   if (single) items.push(['rename', 'Rename']);
   items.push('-', ['cut', 'Cut'], ['copy', 'Copy']);
@@ -153,7 +157,7 @@ export function filesPageMarkup(state, listing) {
       : '<div class="empty">Loading…</div>';
   return `<section class="panel wide file-browser" id="project-files"><div class="panel-heading"><div><p class="eyebrow">FILES</p><h2>Code and data</h2></div><div class="file-tabs">${tabs}</div></div><p class="subtle">${esc(
     AREA_NOTES[area]
-  )} Right-click for actions.</p>${breadcrumbMarkup(area, path)}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label><button type="button" data-file-cmd="mkdir">New folder</button><button type="button" data-file-cmd="download-folder">Download this folder</button>${clipNote}</div><div class="selection-slot">${selectionBarMarkup(
+  )} Right-click for actions.</p>${breadcrumbMarkup(area, path)}<div class="form-row file-actions"><label class="button">Upload files<input type="file" id="project-file-input" multiple hidden></label><button type="button" data-file-cmd="newfile">New file</button><button type="button" data-file-cmd="mkdir">New folder</button><button type="button" data-file-cmd="download-folder">Download this folder</button>${clipNote}</div><div class="selection-slot">${selectionBarMarkup(
     state.selected?.length || 0
   )}</div><div id="project-file-status" class="form-status" role="status">${escValue(message)}</div>${body}</section>`;
 }
@@ -431,8 +435,17 @@ async function command(action) {
   switch (action) {
     case 'open':
       if (single?.type === 'dir') navigate(joinPath(view.path, single.name));
+      else if (isEditable(single)) await edit(joinPath(view.path, single.name));
       else if (single?.type === 'file') download([single.name]);
       return;
+    case 'edit':
+      if (isEditable(single)) await edit(joinPath(view.path, single.name));
+      return;
+    case 'newfile': {
+      const name = await askText({ title: 'New file', label: 'File name', value: 'notes.txt', confirm: 'Create', selectStem: true });
+      if (name) await edit(joinPath(view.path, name), true);
+      return;
+    }
     case 'download':
       if (names.length) download(names);
       return;
@@ -502,6 +515,22 @@ async function command(action) {
     case 'clear':
       view.selected = [];
       return paint();
+  }
+}
+
+// View access opens files read-only (the server refuses writes either way).
+const readOnly = () => {
+  const mine = currentMe()?.projects;
+  return Boolean(mine && mine[view.projectId] === 'view');
+};
+
+async function edit(path, isNew = false) {
+  const { projectId, area } = view;
+  try {
+    const saved = await openEditor({ projectId, area, path, isNew, readOnly: readOnly(), areaLabel: AREA_LABELS[area] });
+    if (saved && view?.projectId === projectId && view.area === area) load(true);
+  } catch (error) {
+    say(error.message);
   }
 }
 

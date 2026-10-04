@@ -573,3 +573,20 @@ def test_code_changes_are_recorded_for_the_activity_tab(uploadable, capsys):
     assert invoke(["commit-upload", "shop", "--path=notes.txt", "--upload=upload-ev01"], capsys)[0] == 0
     entry = json.loads(fake.lists["laika:events:shop"][0])
     assert entry["kind"] == "code_change" and entry["title"] == "Upload notes.txt"
+
+
+def test_an_edit_commits_only_over_the_version_it_opened(uploadable, capsys):
+    import hashlib
+    fake, repo, uploads, stage = uploadable
+    opened = hashlib.sha256(b"hi\n").hexdigest()
+    stage("edit-0001", b"hello\n")
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", "README.md", "--upload", "edit-0001",
+                                "--on-conflict", "overwrite", "--expected-sha256", opened], capsys)
+    assert code == 0, captured.err and (repo / "README.md").read_text() == "hello\n"
+    log = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout
+    assert log.strip() == "Edit README.md from the dashboard"
+    stage("edit-0002", b"stale\n")                     # opened "hi", but main now has "hello"
+    code, captured, _ = invoke(["commit-upload", "shop", "--path", "README.md", "--upload", "edit-0002",
+                                "--on-conflict", "overwrite", "--expected-sha256", opened], capsys)
+    assert code == 1 and "changed" in captured.err and (repo / "README.md").read_text() == "hello\n"
+    assert not (uploads / "edit-0002").exists()

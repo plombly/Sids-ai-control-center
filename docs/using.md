@@ -72,6 +72,10 @@ image and output in Settings. The newest builds are kept.
 
 - **Files** browses the code on main and the app's data; upload, move,
   rename and delete (changes to code become one commit on main).
+  Double-click a text file to edit it (or right-click → **Edit**, or **New
+  file**): app data saves at once, code saves as a commit on main. If the
+  file changed since you opened it, LAIka refuses to overwrite it and you
+  keep your text.
 - **History** lists every change on main; **Undo** reverts one (as a new
   commit, so history is never lost).
 
