@@ -540,9 +540,14 @@ def effective_run(project):
     return command
 
 
+def with_git(projects):
+    """LAIka's own project only where it is a git checkout (not a release install)."""
+    return [p for p in projects if not p.is_builtin or (Path(p.repo) / ".git").exists()]
+
+
 def loop_once():
-    publish_histories(laika_projects.all_projects(redis))  # LAIka too (read-only history)
-    publish_types(laika_projects.all_projects(redis))
+    publish_histories(with_git(laika_projects.all_projects(redis)))  # LAIka too (read-only history)
+    publish_types(with_git(laika_projects.all_projects(redis)))
     launch_builds([p for p in laika_projects.all_projects(redis) if not p.is_builtin])
     projects = [p for p in laika_projects.all_projects(redis) if not p.is_builtin]
     known = set(redis.smembers("laika:projects") or [])

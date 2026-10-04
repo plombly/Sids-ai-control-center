@@ -706,6 +706,8 @@ def _job_record(job_id):
 
 
 def _submit_goal(payload, project_id=None):
+    if (project_id or "laika") == "laika" and os.environ.get("LAIKA_BUILTIN_PROJECT", "1") == "0":
+        raise HTTPException(status_code=404, detail="This server has no built-in LAIka project; give goals to a project")
     goal = " ".join(payload.goal.split())
     if not goal:
         raise HTTPException(status_code=422, detail="Goal cannot be blank")

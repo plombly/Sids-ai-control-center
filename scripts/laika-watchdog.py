@@ -347,6 +347,8 @@ def system_info(runner=subprocess.run):
     """What the dashboard shows on LAIka's own project page (the API container
     has no git): its GitHub remote, branch and current commit."""
     def git(*args):
+        if not os.path.exists(os.path.join(REPO_ROOT, ".git")):
+            return ""  # a release install: no git checkout to describe
         result = runner(["git", "-C", REPO_ROOT, *args], text=True, capture_output=True)
         return result.stdout.strip() if result.returncode == 0 else ""
     remote = git("remote", "get-url", "origin")
