@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.2.0 (not released yet)
+## 1.2.0
 
 - **Fedora and RHEL.** Fedora 41+ and RHEL / AlmaLinux / Rocky Linux 9 and
   10 are supported. Fedora 42, AlmaLinux 9 and Rocky Linux 9 pass the same
