@@ -157,6 +157,58 @@ else
   bad "could not add a user: $made"
 fi
 
+step "SFTP: edit as yourself, code arrives on main as one commit"
+cat > "$WORK/sftp-check.py" <<'PYEOF'
+import asyncio, sys
+import asyncssh
+
+async def session(user, password, body):
+    async with asyncssh.connect("127.0.0.1", 2222, username=user, password=password, known_hosts=None,
+                                client_keys=None) as conn:
+        async with conn.start_sftp_client() as client:
+            return await body(client)
+
+async def write(client):
+    async with client.open("/demo/code/hello.txt", "w") as handle:
+        await handle.write("hello over sftp\n")
+    async with client.open("/demo/code/docs/notes.md", "w") as handle:
+        await handle.write("# notes\n")
+    async with client.open("/demo/data/settings.json", "w") as handle:
+        await handle.write("{}")
+    return "wrote"
+
+async def viewer(client):
+    try:
+        async with client.open("/demo/code/blocked.txt", "w") as handle:
+            await handle.write("x")
+    except asyncssh.SFTPError:
+        return "refused"
+    return "allowed"
+
+async def main():
+    which = sys.argv[1]
+    if which == "write":
+        await session("tester", "correct horse battery", lambda c: c.mkdir("/demo/code/docs"))
+        print(await session("tester", "correct horse battery", write))
+    else:
+        print(await session("sam", "another long password", viewer))
+
+asyncio.run(main())
+PYEOF
+docker cp "$WORK/sftp-check.py" "$NAME:/root/sftp-check.py" >>"$LOG" 2>&1
+result=$(out_box "/var/lib/laika/venv/bin/python /root/sftp-check.py write" || true)
+[ "$result" = wrote ] && pass "signed in over SFTP and wrote code and data" || bad "SFTP write: $result"
+for _ in $(seq 1 45); do
+  out_box "git -C /var/lib/laika/projects/demo/repo log -1 --format=%s 2>/dev/null" | grep -q "SFTP" && break
+  sleep 2
+done
+subject=$(out_box "git -C /var/lib/laika/projects/demo/repo log -1 --format='%an|%s'")
+case "$subject" in "tester|Edit over SFTP by tester: docs/notes.md, hello.txt") pass "one commit by the person: $subject" ;;
+  *) bad "SFTP commit: ${subject:-none}" ;; esac
+out_box "test -f /var/lib/laika/project-data/demo/settings.json" && pass "data written at once" || bad "data file missing"
+[ "$(out_box "/var/lib/laika/venv/bin/python /root/sftp-check.py viewer" || true)" = refused ] \
+  && pass "View access cannot write over SFTP" || bad "a viewer could write over SFTP"
+
 step "repair is harmless"
 in_box "laika repair --yes" && pass "laika repair" || bad "laika repair"
 api "http://127.0.0.1:8080/api/auth/state" | grep -q '"signed_in":true' && pass "still signed in after repair (secrets kept)" || bad "repair changed secrets"
