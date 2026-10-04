@@ -76,6 +76,8 @@ recreate() {
   docker rm -f "$NAME" >/dev/null
   start_container
   wait_for_systemd
+  # Units and other files outside the volumes are new: put them back.
+  inside "bash /opt/laika/install.sh --repair --yes" | grep -E '==>|!!|xx' || true
   dev_ports
   status
 }
