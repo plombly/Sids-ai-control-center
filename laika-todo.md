@@ -47,10 +47,17 @@ Order and checkpoints. Report to the owner at each checkpoint.
       apps; doctor checks it; nothing public (VPN-only stays the rule).
 
 ### Checkpoint 5: the LAIka phone app (exists: laika-app project, Flutter)
-- [ ] Continue the existing app (see dylan-todo.md "LAIka App" and "MAJOR
-      (later)"): finish what the owner's device tests find, real push
-      notifications, Tailscale as an alternative to the in-app OpenVPN,
-      release signing. Built from the host by Claude (view-only project).
+- [x] Server: pairing codes and /api/app/info carry the Tailscale addresses
+      (alt_urls / tailnet_urls).
+- [ ] App: try the other addresses when the first does not answer (goal
+      given to the production pipeline 2026-10-04; Claude reviews/approves).
+- [ ] Android APK rebuilt and handed to the owner for device tests
+      (dylan-todo.md "LAIka App").
+- [ ] Needs the owner's decision/accounts: real push notifications (FCM/
+      APNs need a Firebase project / Apple account; alternative without
+      accounts: the per-person ntfy notifications of 1.2 + the ntfy app),
+      Android release signing key (kept like the release key), iOS VPN
+      (paid Apple account).
 
 ## Backlog (not scheduled)
 
