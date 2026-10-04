@@ -49,10 +49,10 @@ Order and checkpoints. Report to the owner at each checkpoint.
 ### Checkpoint 5: the LAIka phone app (exists: laika-app project, Flutter)
 - [x] Server: pairing codes and /api/app/info carry the Tailscale addresses
       (alt_urls / tailnet_urls).
-- [ ] App: try the other addresses when the first does not answer (goal
-      given to the production pipeline 2026-10-04; Claude reviews/approves).
-- [ ] Android APK rebuilt and handed to the owner for device tests
-      (dylan-todo.md "LAIka App").
+- [x] App: try the other addresses when the first does not answer (merged
+      2026-10-04, job b7aa7c2a, reviewed and approved by Claude).
+- [x] Android APK rebuilt: build apk9 on the real LAIka (LAIka App -> Builds).
+      Owner's device tests: dylan-todo.md "LAIka App".
 - [ ] Needs the owner's decision/accounts: real push notifications (FCM/
       APNs need a Firebase project / Apple account; alternative without
       accounts: the per-person ntfy notifications of 1.2 + the ntfy app),

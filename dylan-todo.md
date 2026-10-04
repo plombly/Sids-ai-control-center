@@ -15,7 +15,7 @@ that felt wrong; we'll go through the notes together.
 
 ## LAIka App (checkpoint B)
 - [ ] Install the APK on your Android phone: dashboard → LAIka App → Builds →
-      Download (build apk5), unzip, open laika-app.apk (allow "install unknown apps").
+      Download (build apk9 or newer), unzip, open laika-app.apk (allow "install unknown apps").
 - [ ] LAIka dashboard → Settings → Phones & apps → Add a phone; in the app
       Settings → Add server → Scan QR code. The server appears and is active.
 - [ ] App Settings → the server's key icon (VPN): import your .ovpn, enter the
