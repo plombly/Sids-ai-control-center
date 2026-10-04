@@ -457,10 +457,15 @@ def process_merge_queue():
 def _process_project_queue(project):
     queue = project.merge_queue_key
     ids = r.lrange(queue, 0, -1)
+    try:
+        main_head = git("rev-parse", "HEAD").stdout.strip()
+    except (SystemExit, Exception):
+        if not ids:
+            return None  # no git here (a release install's own folder) and nothing queued
+        raise
+    r.set(project.main_head_key, main_head)  # also shown as the dashboard's repository head
     if not ids:
-        return None  # nothing queued: no git needed
-    main_head = git("rev-parse", "HEAD").stdout.strip()
-    r.set(project.main_head_key, main_head)
+        return None
     for job_id in ids:
         key = f"laika:jobs:{job_id}"
         data = r.hgetall(key)
