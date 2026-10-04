@@ -8,7 +8,7 @@ project's sandbox. A turn returns either up to MAX_QUESTIONS questions
 (only before the first brief and only once) or a brief the operator edits
 and submits as a normal goal. Nothing here submits or changes anything.
 
-"Talk it through" (1.3, mode "chat"): an open conversation about the project
+"Conversation" (1.3, mode "chat"; the goal box's Questionnaire is the mode above): an open conversation about the project
 (ASSIST_CHAT_MODEL, Sonnet by default): ideas, changes, features the person
 has not thought of, risks. Each message queues one reply (status "reply");
 "Write the goal" (want "brief") turns the whole conversation into the same

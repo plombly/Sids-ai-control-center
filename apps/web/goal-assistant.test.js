@@ -12,7 +12,7 @@ test('idle box: typed text survives redraws; both ways to send', () => {
   assert.match(html, /What should LAIka do in &lt;G&gt;\?/);
   assert.match(html, />add &lt;a&gt; pause menu<\/textarea>/);
   assert.match(html, /data-assist-plain="project:g">Send as written/);
-  assert.match(html, /data-assist-start="project:g">Plan it with me/);
+  assert.match(html, /data-assist-start="project:g"[^>]*>Questionnaire/);
   assert.doesNotMatch(html, /—/);
   assert.equal(projectOf('project:g'), 'g');
 });
@@ -55,9 +55,9 @@ test('a failed session offers retry and sending the idea as written', () => {
   assert.match(html, /data-assist-plain="home">Send my idea as written/);
 });
 
-test('talk it through: idle offers it; the conversation shows as chat with Send and Write the goal', async () => {
+test('conversation: idle offers it; the conversation shows as chat with Send and Write the goal', async () => {
   const { assistantInner, boxState, chatText, applySession } = await import('./lib/goal-assistant.js');
-  assert.match(assistantInner('project:zz'), /data-assist-chat="project:zz"[^>]*>Talk it through/);
+  assert.match(assistantInner('project:zz'), /data-assist-chat="project:zz"[^>]*>Conversation/);
   const state = boxState('project:chat');
   applySession(state, { id: 'a'.repeat(16), mode: 'chat', status: 'reply', turns: [{ from: 'you', message: 'Ideas?' }, { from: 'assistant', message: 'Try **this**:\n- a `pause` menu\n- scores' }] });
   const html = assistantInner('project:chat', state);

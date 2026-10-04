@@ -19,9 +19,9 @@ first when workers are busy.
 Type what you want into a goal box, as you would tell a developer:
 
 - **Send as written** plans it straight away.
-- **Plan it with me** first asks up to three questions and writes a precise
+- **Questionnaire** first asks up to three quick questions and writes a precise
   brief for you to check, change or send.
-- **Talk it through** is an open conversation with Claude about the
+- **Conversation** is an open conversation with Claude about the
   project: discuss changes, ask what could be better, get ideas you had not
   thought of. Claude reads the code to answer concretely. When you are
   ready, **Write the goal** turns the conversation into a brief; you can

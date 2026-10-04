@@ -2714,3 +2714,6 @@ table {
 .chat-input {
   width: 100%;
 }
+.composer-modes {
+  margin: 6px 0 0;
+}

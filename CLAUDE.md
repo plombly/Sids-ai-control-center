@@ -330,7 +330,8 @@ Project types and builds (2026-10-01):
   tab, type/build fields in Settings).
 
 Goal assistant (2026-10-01): the goal boxes (home + project Overview,
-web lib/goal-assistant.js) offer "Plan it with me" and "Send as written".
+web lib/goal-assistant.js) offer "Send as written", "Questionnaire" (was "Plan it with me": up to 3
+questions -> brief) and, since 1.3, "Conversation" (mode chat, Sonnet).
 - POST /api/projects/<id>/assistant {idea} creates laika:assist:<16 hex>
   (hash, 24 h; turns/questions/brief JSON; apps/api/goal_assist.py, shared
   with the host) and RPUSHes the id on laika:assist-queue; GET

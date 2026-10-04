@@ -1,7 +1,7 @@
-// The goal box with its assistant: "Plan it with me" sends the idea to the
+// The goal box with its assistant: "Questionnaire" sends the idea to the
 // goal assistant (Haiku reads the project, may ask up to 3 questions, then
-// writes a brief you can edit); "Send as written" submits the text as is;
-// "Talk it through" (1.3) is an open conversation about the project
+// writes a brief you can edit) — shown as "Questionnaire"; "Send as written"
+// submits the text as is; "Conversation" (1.3) is an open chat about the project
 // (apps/api/goal_assist.py, mode chat) that "Write the goal" turns into the
 // same editable brief.
 // Used on the dashboard home ('home', with a project picker) and on each
@@ -83,12 +83,12 @@ export function chatMarkup(box, state, session) {
     ? `<div class="chat-bubble from-laika failed"><b>That did not work.</b> ${opt(session.error)} <button type="button" class="detail-button" data-assist-retry-turn="${attr(box)}">Try again</button></div>`
     : '';
   const id = `${domId(box)}-chat`;
-  return `<p class="assist-step">Talking it through <span class="subtle">· nothing is built until you start a goal</span></p><div class="chat-log" aria-live="polite">${bubbles}${thinking}${failed}</div><label class="sr-only" for="${id}">Your message</label><textarea id="${id}" class="chat-input" rows="2" data-assist-field="chatDraft" data-box="${attr(box)}" placeholder="${working ? 'Wait for the reply…' : 'Reply, ask, or suggest… (Ctrl+Enter sends)'}"${working ? ' disabled' : ''}>${opt(state.chatDraft)}</textarea><div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.brief?.goal ? `<button type="button" data-assist-to-brief="${attr(box)}"${working ? ' disabled' : ''}>Back to the goal</button>` : ''}<button type="button" data-assist-write-goal="${attr(box)}"${working ? ' disabled' : ''}>Write the goal</button><button type="button" class="primary" data-assist-send="${attr(box)}"${working ? ' disabled' : ''}>Send</button></span></div>`;
+  return `<p class="assist-step">Conversation <span class="subtle">· nothing is built until you start a goal</span></p><div class="chat-log" aria-live="polite">${bubbles}${thinking}${failed}</div><label class="sr-only" for="${id}">Your message</label><textarea id="${id}" class="chat-input" rows="2" data-assist-field="chatDraft" data-box="${attr(box)}" placeholder="${working ? 'Wait for the reply…' : 'Reply, ask, or suggest… (Ctrl+Enter sends)'}"${working ? ' disabled' : ''}>${opt(state.chatDraft)}</textarea><div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.brief?.goal ? `<button type="button" data-assist-to-brief="${attr(box)}"${working ? ' disabled' : ''}>Back to the goal</button>` : ''}<button type="button" data-assist-write-goal="${attr(box)}"${working ? ' disabled' : ''}>Write the goal</button><button type="button" class="primary" data-assist-send="${attr(box)}"${working ? ' disabled' : ''}>Send</button></span></div>`;
 }
 
 function idleMarkup(box, state, o) {
   const id = `${domId(box)}-text`;
-  return `<label class="composer-label" for="${id}">${esc(o.label)}</label><textarea id="${id}" rows="3" data-assist-field="draft" data-box="${attr(box)}" placeholder="${escValue(o.placeholder)}">${opt(state.draft)}</textarea><div class="composer-row">${typeof o.extra === 'function' ? o.extra() : o.extra || ''}<label class="composer-atomic"><input type="checkbox" data-assist-field="atomic" data-box="${attr(box)}"${state.atomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-plain="${attr(box)}">Send as written</button><button type="button" data-assist-chat="${attr(box)}" title="Discuss ideas, changes and features with Claude before building anything">Talk it through</button><button type="button" class="primary" data-assist-start="${attr(box)}">Plan it with me</button></span></div>`;
+  return `<label class="composer-label" for="${id}">${esc(o.label)}</label><textarea id="${id}" rows="3" data-assist-field="draft" data-box="${attr(box)}" placeholder="${escValue(o.placeholder)}">${opt(state.draft)}</textarea><div class="composer-row">${typeof o.extra === 'function' ? o.extra() : o.extra || ''}<label class="composer-atomic"><input type="checkbox" data-assist-field="atomic" data-box="${attr(box)}"${state.atomic ? ' checked' : ''}> Small change (one step)</label><span class="composer-buttons"><button type="button" data-assist-plain="${attr(box)}">Send as written</button><button type="button" data-assist-chat="${attr(box)}" title="Talk ideas through with Claude, as long as you like; nothing is built until you say so">Conversation</button><button type="button" class="primary" data-assist-start="${attr(box)}" title="LAIka asks up to three quick questions, then writes the goal for you to check">Questionnaire</button></span></div><p class="field-hint composer-modes"><b>Send as written</b>: starts now. <b>Questionnaire</b>: up to 3 quick questions, then a goal to check. <b>Conversation</b>: discuss ideas and features with Claude first; nothing is built until you say so.</p>`;
 }
 
 function ideaQuote(session) {
@@ -105,7 +105,7 @@ function questionsMarkup(box, state, session) {
       return `<div class="assist-question"><label for="${domId(box)}-a${index}">${esc(question.question)}</label>${chips ? `<div class="template-chips">${chips}</div>` : ''}<input id="${domId(box)}-a${index}" data-assist-field="answer" data-index="${index}" data-box="${attr(box)}" value="${escValue(state.answers[index] || '')}" placeholder="Your answer (or leave empty: LAIka picks a sensible default)" autocomplete="off"></div>`;
     })
     .join('');
-  return `<p class="assist-step">A few questions first</p>${ideaQuote(session)}${items}<div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button><button type="button" data-assist-skip="${attr(box)}">Skip questions</button><button type="button" class="primary" data-assist-answer="${attr(box)}">Continue</button></span></div>`;
+  return `<p class="assist-step">Questionnaire: a few questions first</p>${ideaQuote(session)}${items}<div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button><button type="button" data-assist-skip="${attr(box)}">Skip questions</button><button type="button" class="primary" data-assist-answer="${attr(box)}">Continue</button></span></div>`;
 }
 
 function briefMarkup(box, state, session) {

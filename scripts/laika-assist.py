@@ -100,7 +100,7 @@ def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
 
 
 def chat(r, session, project, runner=agent_cli.run_claude):
-    """One reply in a "Talk it through" conversation."""
+    """One reply in a goal-box Conversation."""
     try:
         note = group_note(r, project)
     except Exception as exc:

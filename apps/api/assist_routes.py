@@ -106,9 +106,9 @@ def reply(session_id: str, payload: AssistReply):
     session = _session(session_id)
     turns = session["turns"]
     if (payload.message or "").strip():
-        # Talk it through: any time the assistant is not busy, also after a brief.
+        # Conversation: any time the assistant is not busy, also after a brief.
         if session.get("mode") != "chat":
-            raise HTTPException(status_code=409, detail="This session plans a goal; start 'Talk it through' to chat")
+            raise HTTPException(status_code=409, detail="This session plans a goal; start a Conversation to chat")
         if session.get("status") not in ("reply", "brief", "failed"):
             raise HTTPException(status_code=409, detail="Wait for the reply first")
         if len([t for t in turns if t.get("from") == "you" and t.get("message")]) >= goal_assist.MAX_CHAT_MESSAGES:
@@ -136,7 +136,7 @@ def reply(session_id: str, payload: AssistReply):
 
 @router.post("/api/assistant/{session_id}/write-goal", status_code=202)
 def write_goal(session_id: str):
-    """Talk it through -> the goal brief, from the whole conversation."""
+    """Conversation -> the goal brief, from the whole conversation."""
     session = _session(session_id)
     if session.get("mode") != "chat" or session.get("status") not in ("reply", "brief", "failed"):
         raise HTTPException(status_code=409, detail="Nothing to write a goal from yet")

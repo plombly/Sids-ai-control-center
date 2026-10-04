@@ -4,8 +4,11 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 1.3.0 (not released yet)
 
-- **Talk it through.** The goal box has a third way in: an open conversation
-  with Claude about the project. Discuss changes and additions, ask what
+- **Conversation.** The goal box has a third way in: an open conversation
+  with Claude about the project. The goal box's three buttons now say what
+  they do: **Send as written**, **Questionnaire** (the former "Plan it with
+  me": up to three quick questions, then a goal to check) and
+  **Conversation**. Discuss changes and additions, ask what
   could be better, and get suggestions you had not thought of; Claude reads
   the project's code to make its answers concrete. **Write the goal** turns
   the conversation into the usual editable brief, and you can keep talking

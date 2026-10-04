@@ -22,7 +22,7 @@ that felt wrong; we'll go through the notes together.
       password, Save, Connect now. Android asks for VPN permission once.
 - [ ] Off Wi-Fi (mobile data): open Home; the app connects the VPN by itself
       and shows LAIka's status, Needs you, In progress and Recently finished.
-- [ ] Projects tab: open LAIka App, press "Give LAIka work", try "Plan it with me".
+- [ ] Projects tab: open LAIka App, press "Give LAIka work", try "Questionnaire".
 - [ ] Answer a stuck job or an internet request from the Home tab.
 - [ ] Revoke the phone in LAIka Settings: the app says its key is no longer valid.
 - [ ] iPhone (on your Mac): flutter build ios / run from Xcode works for
@@ -45,7 +45,7 @@ that felt wrong; we'll go through the notes together.
       network or this server).
 
 ## Goal assistant (checkpoint 3, deployed 2026-10-01)
-- [ ] On a real project, type a rough idea and press **Plan it with me**.
+- [ ] On a real project, type a rough idea and press **Questionnaire**.
       Are the questions useful, and is the brief right, too long or too short?
 - [ ] Try **Skip questions**, **Change something** and editing the brief by hand.
 - [ ] Use it from the dashboard home with a project picked in the picker.

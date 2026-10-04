@@ -93,10 +93,10 @@ Which AI does what, how much it may spend and how hard LAIka tries.
 | Review time limit (seconds) | `240` | 60–7200 | after **Apply now** |  |
 | Planning time limit (seconds) | `180` | 60–3600 | after **Apply now** |  |
 | Goals planned at the same time | `4` | 1–20 | after **Apply now** |  |
-| Goal assistant model | `claude-haiku-4-5-20251001` |  | after **Apply now** | The quick model behind 'Plan it with me'. |
+| Goal assistant model | `claude-haiku-4-5-20251001` |  | after **Apply now** | The quick model behind the goal box's Questionnaire. |
 | Goal assistant cap per turn ($) | `0.3` | 0.05–5 | after **Apply now** |  |
-| 'Talk it through' model | `sonnet` |  | after **Apply now** | The model you discuss ideas with in the goal box (a Claude model name or alias). |
-| 'Talk it through' cap per reply ($) | `0.5` | 0.05–5 | after **Apply now** |  |
+| Goal box Conversation model | `sonnet` |  | after **Apply now** | The model you discuss ideas with in the goal box (a Claude model name or alias). |
+| Goal box Conversation cap per reply ($) | `0.5` | 0.05–5 | after **Apply now** |  |
 
 ### Workers
 
