@@ -321,6 +321,33 @@ def detect_setup(path):
     return " && ".join(steps)
 
 
+def detect_run(read):
+    """The command that runs a project's app, from its files, or "".
+    read(name) returns a file's text on main (or None). Used when the owner
+    left the run command empty ("off" there means: never run it)."""
+    import json as _json
+    package = read("package.json")
+    if package:
+        try:
+            scripts = (_json.loads(package) or {}).get("scripts") or {}
+        except ValueError:
+            scripts = {}
+        if isinstance(scripts, dict) and scripts.get("start"):
+            return "npm start"
+    procfile = read("Procfile")
+    for line in (procfile or "").splitlines():
+        if line.strip().startswith("web:"):
+            return line.split(":", 1)[1].strip()
+    python = "$(test -x .venv/bin/python && echo .venv/bin/python || echo python3)"
+    if read("manage.py") is not None:
+        return f"{python} manage.py runserver 0.0.0.0:$PORT"
+    for name in ("app.py", "main.py", "server.py"):
+        text = read(name)
+        if text and "PORT" in text:  # a server that listens where LAIka tells it
+            return f"{python} {name}"
+    return ""
+
+
 PUSH_TIMEOUT = 120
 
 

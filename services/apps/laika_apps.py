@@ -507,12 +507,50 @@ def wait_for_assist_requests(seconds):
                 print(f"[laika-apps] assistant {item[1]}: {exc}", flush=True)
 
 
+_detected = {}  # project id -> (main head, command)
+
+
+def effective_run(project):
+    """The run command to use: the owner's, or what main implies when they
+    left it empty ("off": never). Published as detected_run_command for the
+    dashboard and previews."""
+    own = (project.run_command or "").strip()
+    if own.lower() == "off":
+        return ""
+    if own:
+        return own
+    try:
+        head = git(["rev-parse", f"refs/heads/{project.default_branch}"], project.repo)
+    except Exception:
+        return ""
+    cached = _detected.get(project.id)
+    if cached and cached[0] == head:
+        command = cached[1]
+    else:
+        def read(name):
+            result = run(["git", "show", f"{head}:{name}"], cwd=str(project.repo))
+            return result.stdout if result.returncode == 0 else None
+        command = laika_projects.detect_run(read)
+        _detected[project.id] = (head, command)
+        key = f"laika:projects:{project.id}"
+        if command:
+            redis.hset(key, "detected_run_command", command)
+        else:
+            redis.hdel(key, "detected_run_command")
+    return command
+
+
 def loop_once():
     publish_histories(laika_projects.all_projects(redis))  # LAIka too (read-only history)
     publish_types(laika_projects.all_projects(redis))
     launch_builds([p for p in laika_projects.all_projects(redis) if not p.is_builtin])
     projects = [p for p in laika_projects.all_projects(redis) if not p.is_builtin]
     known = set(redis.smembers("laika:projects") or [])
+    for project in projects:
+        try:
+            project.run_command = effective_run(project)
+        except Exception as exc:
+            print(f"[laika-apps] {project.id}: run command: {exc}", flush=True)
     for project in projects:
         try:
             reconcile(project)

@@ -216,7 +216,8 @@ const APP_STATES = {
 // The running app: state, link from this browser, restart, last log lines.
 export function appStatusMarkup(project, hostname = globalThis.location?.hostname || 'localhost') {
   const id = text(project?.id, '');
-  if (!id || id === 'laika' || !text(project?.run_command, '')) return '';
+  const own = text(project?.run_command, '').trim();
+  if (!id || id === 'laika' || own.toLowerCase() === 'off' || !(own || text(project?.detected_run_command, ''))) return '';
   const app = project.app || {};
   const port = app.port || project.run_port;
   const state = text(app.state, 'starting');
@@ -232,12 +233,13 @@ export function appStatusMarkup(project, hostname = globalThis.location?.hostnam
 export function buildSettingsMarkup(project) {
   const id = text(project?.id, '');
   if (!id || id === 'laika') return '';
+  const detected = text(project.detected_run_command, '');
   const input = (name, label, placeholder, hint) =>
     `<label class="field">${esc(label)}<input name="${name}" value="${escValue(project[name])}" placeholder="${escValue(placeholder)}" autocomplete="off"></label><span class="field-hint">${esc(hint)}</span>`;
   return `<form id="project-settings-form" class="goal-form build-settings"><h3>Build &amp; run</h3>${input(
     'setup_command', 'Install dependencies', 'Detect automatically', 'Runs with internet access before builds and tests (npm ci, pip install …). Tests themselves run offline.'
   )}${input('gate_command', 'Test command', 'Detect automatically', 'Must pass before anything is merged (npm test, pytest …).')}${input(
-    'run_command', 'Run command', 'Not running', 'Keeps the app running from the latest main, e.g. npm start. Listen on the PORT environment variable and 0.0.0.0.'
+    'run_command', 'Run command', detected ? `Detected: ${detected}` : 'Not running (nothing detected yet)', `Keeps the app running from the latest main. Empty: LAIka uses what it detects (npm start, a Procfile, a Python server reading PORT); type off to never run it. The app must listen on the PORT environment variable and 0.0.0.0.`
   )}${input('run_port', 'Port', 'Assigned automatically (8100-8199)', 'Open it from your PC at this server\'s address and this port.')}<div class="form-row limits-row">${input(
     'run_memory_mb', 'Memory limit (MB)', '1024', 'Killed and restarted if it uses more.'
   )}${input('run_cpus', 'CPU limit (cores)', '1', 'e.g. 0.5 or 2.')}${input('run_tasks', 'Process limit', '512', 'Threads and processes.')}</div><div class="form-row"><button type="submit">Save settings</button><span id="project-settings-status" class="form-status" role="status"></span></div></form>${appStatusMarkup(project)}`;

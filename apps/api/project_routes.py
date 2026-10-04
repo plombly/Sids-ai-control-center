@@ -264,6 +264,7 @@ def _item(project_id, data=None):
         "gate_command": "scripts/integration-check.py" if project_id == "laika" else _text(data.get("gate_command")),
         "setup_command": _text(data.get("setup_command")),
         "run_command": _text(data.get("run_command")),
+        "detected_run_command": _text(data.get("detected_run_command")),
         "run_port": _numeric(data.get("run_port")),
         "run_memory_mb": _numeric(data.get("run_memory_mb")) or 1024,
         "run_cpus": _numeric(data.get("run_cpus")) or 1,

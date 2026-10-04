@@ -33,7 +33,9 @@ def previewable(job):
     project_id = job.get("project_id") or "laika"
     if project_id == "laika":
         return False
-    return bool(_main()._hash(f"laika:projects:{project_id}").get("run_command"))
+    data = _main()._hash(f"laika:projects:{project_id}")
+    own = (data.get("run_command") or "").strip()
+    return own.lower() != "off" and bool(own or data.get("detected_run_command"))
 
 
 def _ready_job(job_id):

@@ -8,7 +8,12 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   jobs of a project (and its child projects) show at the top of its page,
   with the same Approve / Preview / Reject / Try again buttons as the home
   page.
-- **Smaller jobs.** The planner keeps every job reviewable in one pass: one
+- **Apps start without a run command.** When a project's run command is
+  empty, LAIka runs what its code implies: `npm start`, a Procfile's `web:`
+  line, Django's `manage.py`, or a Python server that reads `PORT`. Settings
+  shows what it detected; type `off` to never run it. (A finished game used
+  to sit there unplayable because nobody had set its run command.)
+- - **Smaller jobs.** The planner keeps every job reviewable in one pass: one
   concern and at most 6 files (tests not counted). A plan with a bigger job
   is sent back once to be split. Big jobs used to bounce between review and
   repair, each review finding something new.

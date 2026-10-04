@@ -60,7 +60,7 @@ always for this project, or keep tests offline.
 
 ## Apps and previews
 
-Give a project a **run command** (or let LAIka detect it) and its app runs
+Give a project a **run command**, or leave it empty and LAIka runs what the code implies (`npm start`, a Procfile, a Python server reading `PORT`; type `off` to never run it), and its app runs
 on this server from the latest main, on a port in 8100–8199, restarted if
 it crashes. Its data lives in `/var/lib/laika/project-data/<project>`
 (the **App data** tab under Files). Secrets for the app go in the project's

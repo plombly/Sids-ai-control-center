@@ -157,6 +157,9 @@ def detect(paths, texts):
             score.add("api_service", 6, f"package.json depends on {found[0]}", "node")
         if found := dep("ws", "socket.io", "node-pcap", "net-snmp", "dns2", "http-proxy"):
             score.add("networking_tool", 3, f"package.json depends on {found[0]}", "node")
+        # A browser game with its own server (ws for multiplayer) is a game, not a network tool.
+        if any(PurePosixPath(p).stem.lower() in ("game", "games") for p in paths) and any(p.endswith(".html") for p in paths):
+            score.add("game", 5, "a game module and a web page", "node")
         if isinstance(data.get("bin"), (str, dict)):
             score.add("cli_tool", 6, "package.json has a bin (a command-line tool)", "node")
         if (data.get("main") or data.get("exports")) and not data.get("private") and not score.points:
