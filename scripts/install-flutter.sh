@@ -20,7 +20,6 @@ echo "Downloading Flutter $3"
 curl -fsSL -o "$TMP/flutter.tar.xz" "$1"
 echo "$2  $TMP/flutter.tar.xz" | sha256sum -c -
 tar -xJf "$TMP/flutter.tar.xz" -C /opt
-chown -R root:root "$DEST"   # git refuses SDK checkouts owned by someone else
 # The SDK's own tool packages live inside the SDK, so sandboxes (which hide
 # /root) and per-project PUB_CACHEs still find them offline.
 export PATH="$DEST/bin:$PATH" PUB_CACHE="$DEST/.pub-cache"
@@ -28,3 +27,12 @@ flutter --disable-analytics >/dev/null 2>&1 || true
 dart --disable-analytics >/dev/null 2>&1 || true
 flutter precache --universal
 flutter --version
+# The laika user runs Flutter inside project sandboxes, where the SDK is a
+# throwaway overlay. overlayfs can only copy up files whose owner exists in
+# the sandbox's user namespace (root's do not: "Value too large for defined
+# data type"), and Flutter rewrites stamps in bin/cache on every run, so the
+# SDK belongs to the laika user (which also keeps git's ownership check
+# happy). Nothing outside the sandboxes runs it.
+if id laika >/dev/null 2>&1; then
+  chown -R laika:laika "$DEST"
+fi
