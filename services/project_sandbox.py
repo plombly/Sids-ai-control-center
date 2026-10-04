@@ -145,6 +145,20 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
             args += ["--setenv", "HOME", str(cache)]
         args += ["--setenv", "PUB_CACHE", str(cache / ".pub-cache"),
                  "--setenv", "FLUTTER_SUPPRESS_ANALYTICS", "true", "--setenv", "DART_SUPPRESS_ANALYTICS", "true"]
+        # Toolchains (Flutter) are git checkouts owned by root; the laika user
+        # runs them, and git refuses repositories owned by someone else unless
+        # its global config says so. LAIka's own global config is hidden here,
+        # so the sandbox gets one that trusts the toolchains only.
+        toolchains = [path for path in TOOLCHAINS if os.path.isdir(path)]
+        if toolchains:
+            config = cache / ".laika-gitconfig"
+            wanted = "[safe]\n" + "".join(f"\tdirectory = {path}\n" for path in toolchains)
+            try:
+                if not config.is_file() or config.read_text() != wanted:
+                    config.write_text(wanted)
+            except OSError:
+                pass
+            args += ["--setenv", "GIT_CONFIG_GLOBAL", str(config)]
     if kind in ("agent", "gate"):
         # No caches in the worktree (they would end up in the candidate).
         args += ["--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider"]

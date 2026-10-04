@@ -64,3 +64,15 @@ def test_setup_runs_again_when_dependencies_change(tmp_path):
     assert worker.setup_fingerprint(tmp_path, "flutter pub get") != first
     assert worker.setup_fingerprint(tmp_path, "npm ci") != worker.setup_fingerprint(tmp_path, "flutter pub get")
     assert ".dart_tool/" in worker.STANDARD_EXCLUDES
+
+
+def test_git_trusts_the_root_owned_toolchains_inside_the_sandbox(project):
+    # Found on the real server: the laika user's `flutter pub get` died with
+    # "detected dubious ownership in repository at '/opt/flutter'".
+    p, sdk = project
+    for kind in ("setup", "agent", "gate"):
+        args = project_sandbox.command(["true"], p, p.repo, kind=kind)
+        env = dict(zip(pairs(args, "--setenv"), [args[i + 2] for i, a in enumerate(args) if a == "--setenv"]))
+        config = p.root / "cache" / ".laika-gitconfig"
+        assert env["GIT_CONFIG_GLOBAL"] == str(config)
+        assert config.read_text() == f"[safe]\n\tdirectory = {sdk}\n"
