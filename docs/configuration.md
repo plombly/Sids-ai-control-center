@@ -132,7 +132,7 @@ Starting values for new projects, apps, previews and builds.
 | Build time limit (seconds) | `2700` | 300–21600 | after **Apply now** |  |
 | Deleted projects can be restored for (hours) | `24` | 1–720 | after **Apply now** |  |
 
-### SFTP
+### SFTP server
 
 Edit project files with an SFTP app (WinSCP, FileZilla, VS Code), signed in as yourself.
 
