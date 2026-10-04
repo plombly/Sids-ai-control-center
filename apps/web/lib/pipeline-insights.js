@@ -1,6 +1,7 @@
 // Pipeline insights feature module: renders non-actionable job insights in its own panel.
 import { asObject, esc, pill, text } from './format.js';
 import { registerPanel } from './registry.js';
+import { setHTML } from './dom.js';
 
 const nonEmpty = value => typeof value === 'string' && value.trim() !== '';
 const jobButton = id => `<button type="button" class="item-title" data-detail="${esc(id)}">${esc(id)}</button>`;
@@ -96,7 +97,7 @@ function renderInsights(state) {
     grid.append(panel);
   }
   const content = document.getElementById('pipeline-insights-content');
-  if (content) content.innerHTML = insightsMarkup(state?.jobs?.data);
+  if (content) setHTML(content, insightsMarkup(state?.jobs?.data));
 }
 
 registerPanel(renderInsights);

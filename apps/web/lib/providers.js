@@ -1,6 +1,7 @@
 import { requestJSON } from './api.js';
 import { esc, pill, text } from './format.js';
 import { registerPanel } from './registry.js';
+import { setHTML } from './dom.js';
 
 export function providersMarkup(data) {
   const source = data && typeof data === 'object' ? data : {};
@@ -58,7 +59,7 @@ function ensurePanel() {
 function render() {
   const panel = ensurePanel();
   const body = panel?.querySelector('[data-providers-body]');
-  if (body) body.innerHTML = providersMarkup(lastData);
+  if (body) setHTML(body, providersMarkup(lastData));
 }
 
 async function refresh() {

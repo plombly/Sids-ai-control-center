@@ -1,6 +1,7 @@
 import { requestJSON } from './api.js';
 import { esc, pill, text } from './format.js';
 import { registerPanel } from './registry.js';
+import { setHTML } from './dom.js';
 
 const reportEmpty = '<div class="empty">No watchdog report yet (is laika-watchdog.timer running?)</div>';
 
@@ -66,7 +67,7 @@ function render() {
   if (typeof document === 'undefined') return;
   const panel = ensurePanel();
   const body = panel?.querySelector('[data-system-health-body]');
-  if (body && lastData) body.innerHTML = healthMarkup(lastData);
+  if (body && lastData) setHTML(body, healthMarkup(lastData));
 }
 
 async function refresh() {

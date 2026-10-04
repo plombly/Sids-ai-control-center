@@ -4,6 +4,7 @@
 import { requestJSON } from './api.js';
 import { esc } from './format.js';
 import { clockText } from './elapsed.js';
+import { setHTML } from './dom.js';
 
 export function scaleMarkup(data, now = Date.now() / 1000, withLog = false) {
   const state = data?.state;
@@ -28,7 +29,7 @@ if (typeof document !== 'undefined') {
     if (!nodes.length) return;
     const data = await requestJSON('/api/workers/scale').catch(() => null);
     if (!data) return;
-    for (const node of nodes) node.innerHTML = scaleMarkup(data, Date.now() / 1000, node.dataset.workerScale === 'log');
+    for (const node of nodes) setHTML(node, scaleMarkup(data, Date.now() / 1000, node.dataset.workerScale === 'log'));
   }
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-scale]');

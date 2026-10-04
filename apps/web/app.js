@@ -23,6 +23,7 @@ import { dispatchClick, renderPanels } from './lib/registry.js';
 import { applyRoute, currentRoute } from './lib/router.js';
 // Feature modules register panels/click handlers (see lib/registry.js).
 import './lib/features.js';
+import { setHTML } from './lib/dom.js';
 
 // app.js stays the public entry point: tests and callers import from here.
 export * from './lib/api.js';
@@ -65,7 +66,7 @@ export async function poll(fetchImpl = fetch) {
 }
 const list = (id, items, template, empty) => {
   const node = document.getElementById(id);
-  if (node) node.innerHTML = items.length ? items.map(template).join('') : `<div class="empty">${empty}</div>`;
+  setHTML(node, items.length ? items.map(template).join('') : `<div class="empty">${empty}</div>`);
 };
 const active = item => !TERMINAL.test(text(item.status, '')) && !state.dismissed.has(item.id);
 export function render() {
@@ -108,7 +109,7 @@ export function render() {
     ? `${signals.length} status signals reporting`
     : 'Awaiting telemetry';
   document.getElementById('metric-branch').textContent = text(repo.branch);
-  document.getElementById('metric-repo').innerHTML = pill(repo.status);
+  setHTML(document.getElementById('metric-repo'), pill(repo.status));
   document.getElementById('metric-queue').textContent = number(queue.depth);
   document.getElementById('metric-queue-name').textContent = text(queue.name, 'Queue unavailable');
   document.getElementById('metric-workers').textContent = number(
@@ -151,8 +152,8 @@ export function render() {
     items.length
       ? `<table class="job-table"><thead><tr><th>Job</th><th>Status</th><th>Review</th><th>Tokens</th><th>Duration</th><th>Telemetry</th><th>Execution</th><th>Commits / Tests</th><th>Failure</th><th>Actions</th></tr></thead><tbody>${items.map(j => `<tr><td><button class="detail-button" data-detail="${esc(j.id)}">${esc(j.id)}</button></td><td>${pill(j.status)}</td><td>${esc(j.review_status || '—')}</td><td>${number(j.effective_tokens)}</td><td>${duration(j.duration)}</td><td>${esc(j.provider || '—')} · ${esc(j.model || '—')} · ${esc(j.worker || '—')}</td><td>commands ${number(j.command_count)} · files ${number(j.files)}</td><td>base ${esc(j.base || '—')}<br>candidate ${esc(j.candidate || '—')}<br>tests ${esc(j.tests || '—')}</td><td>${esc(j.error || '—')}</td><td>${jobActionsMarkup(j)}</td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">No jobs found</div>';
-  document.getElementById('jobs').innerHTML = table(actionJobs);
-  document.getElementById('history').innerHTML = table(history);
+  setHTML(document.getElementById('jobs'), table(actionJobs));
+  setHTML(document.getElementById('history'), table(history));
   document.querySelector('[data-dismiss-all="failures"]').disabled = visibleFailures.length === 0;
   document.querySelector('[data-dismiss-all="history"]').disabled = history.length === 0;
   const historyRange = document.getElementById('history-range'),

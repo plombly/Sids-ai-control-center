@@ -1,6 +1,7 @@
 import { requestJSON, jobAction, newRequestId } from './api.js';
 import { esc, pill, text } from './format.js';
 import { registerPanel, registerClick } from './registry.js';
+import { setHTML } from './dom.js';
 
 let latestQueue = null;
 let lastState = null;
@@ -71,8 +72,8 @@ function renderMergeQueue(state) {
     grid.append(panel);
   }
 
-  panel.innerHTML = `<div class="panel-heading"><div><p class="eyebrow">MERGE QUEUE</p><h2>Approved changes waiting to merge</h2></div></div>
-    <div class="stack">${queueControlsMarkup(lastState?.approvals?.data)}${mergeQueueMarkup(latestQueue)}</div>`;
+  setHTML(panel, `<div class="panel-heading"><div><p class="eyebrow">MERGE QUEUE</p><h2>Approved changes waiting to merge</h2></div></div>
+    <div class="stack">${queueControlsMarkup(lastState?.approvals?.data)}${mergeQueueMarkup(latestQueue)}</div>`);
 }
 
 const showBanner = message => {

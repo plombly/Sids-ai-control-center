@@ -1,6 +1,7 @@
 import { requestJSON } from './api.js';
 import { esc, pill, number } from './format.js';
 import { registerPanel } from './registry.js';
+import { setHTML } from './dom.js';
 
 const emptyMarkup = '<div class="empty">No projects</div>';
 
@@ -59,7 +60,7 @@ function render() {
   if (typeof document === 'undefined') return;
   const panel = ensurePanel();
   const body = panel?.querySelector('[data-project-overview-body]');
-  if (body && hasResult) body.innerHTML = overviewMarkup(lastProjects);
+  if (body && hasResult) setHTML(body, overviewMarkup(lastProjects));
 }
 
 async function refresh() {

@@ -3,6 +3,7 @@
 import { requestJSON } from './api.js';
 import { esc, escValue, number } from './format.js';
 import { registerPanel } from './registry.js';
+import { setHTML } from './dom.js';
 
 const RANGES = [7, 30, 90];
 
@@ -68,7 +69,7 @@ async function refresh() {
   const body = ensurePanel()?.querySelector('[data-usage-body]');
   if (!body) return;
   try {
-    body.innerHTML = usageMarkup(await requestJSON(`/api/usage?days=${days}`), days);
+    setHTML(body, usageMarkup(await requestJSON(`/api/usage?days=${days}`), days));
   } catch (error) {
     body.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
   }

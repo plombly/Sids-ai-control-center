@@ -12,6 +12,7 @@ import { previewMarkup } from './markup.js';
 import { elapsedMarkup } from './elapsed.js';
 import { approveAllMarkup } from './group-actions.js';
 import { can } from './access.js';
+import { inUse, setHTML } from './dom.js';
 
 const ACTIVE_GOAL = /^(queued|planning|planned|running|blocked|in_progress|dispatched)$/;
 const FINISHED_GOAL = { completed: 'done', failed: 'failed', planning_failed: 'failed' };
@@ -166,10 +167,7 @@ const drawn = {};
 
 function paint(id, html) {
   const node = document.getElementById(id);
-  if (node && drawn[id] !== html) {
-    node.innerHTML = html;
-    drawn[id] = html;
-  }
+  if (node && drawn[id] !== html && setHTML(node, html)) drawn[id] = html;
 }
 
 function draw(state) {
@@ -201,7 +199,7 @@ async function refreshSide() {
   if (select && select.dataset.ids !== ids) {
     const chosen = select.value;
     // projectSelectMarkup's <option>s, without its <label>/<select> wrapper.
-    select.innerHTML = projectSelectMarkup(projects).replace(/^.*?<select[^>]*>|<\/select>.*$/g, '');
+    if (!inUse(select)) select.innerHTML = projectSelectMarkup(projects).replace(/^.*?<select[^>]*>|<\/select>.*$/g, '');
     select.dataset.ids = ids;
     if (chosen && workable(projects).some(project => project.id === chosen)) select.value = chosen;
   }

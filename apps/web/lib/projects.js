@@ -7,6 +7,7 @@ import { assistantMarkup } from './goal-assistant.js';
 import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
 import { buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
 import { can } from './access.js';
+import { setHTML } from './dom.js';
 
 const requestId = newRequestId;
 
@@ -357,7 +358,7 @@ if (typeof document !== 'undefined') {
           requestJSON('/api/projects?limit=25'),
           requestJSON('/api/projects-trash').catch(() => [])
         ]);
-        if (version === renderVersion) container.innerHTML = `<div class="projects-page"><div class="page-head"><h2>Projects</h2><a class="button primary" href="#/projects/new">Create a project</a></div>${homeProjectsMarkup(projects)}${trashMarkup(trashed)}</div>`;
+        if (version === renderVersion) setHTML(container, `<div class="projects-page"><div class="page-head"><h2>Projects</h2><a class="button primary" href="#/projects/new">Create a project</a></div>${homeProjectsMarkup(projects)}${trashMarkup(trashed)}</div>`, { force });
       } catch (error) {
         container.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
       }
@@ -388,7 +389,7 @@ if (typeof document !== 'undefined') {
         project.allProjects = Array.isArray(allProjects) ? allProjects : [];
       }
       if (version === renderVersion) {
-        detailMain().innerHTML = projectDetailMarkup(project, tab);
+        setHTML(detailMain(), projectDetailMarkup(project, tab), { force });
         const files = document.getElementById('project-files-panel');
         if (files) files.hidden = tab !== 'files';
       }
