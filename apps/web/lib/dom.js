@@ -26,13 +26,35 @@ export function inUse(node, doc = globalThis.document) {
   return Boolean(pointerIn && node.contains(pointerIn));
 }
 
+// Scroll positions inside node that should survive a redraw: elements with
+// data-keep-scroll="<key>". One that was scrolled to the bottom stays at the
+// bottom (a chat log showing a new message); others keep their position.
+function scrollState(node) {
+  const kept = new Map();
+  node.querySelectorAll?.('[data-keep-scroll]').forEach(element => {
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+    kept.set(element.dataset.keepScroll, { top: element.scrollTop, atBottom });
+  });
+  return kept;
+}
+
+function restoreScroll(node, kept) {
+  node.querySelectorAll?.('[data-keep-scroll]').forEach(element => {
+    const before = kept.get(element.dataset.keepScroll);
+    if (!before) element.scrollTop = element.dataset.startAt === 'bottom' ? element.scrollHeight : 0;
+    else element.scrollTop = before.atBottom ? element.scrollHeight : before.top;
+  });
+}
+
 // node.innerHTML = html, unless nothing changed or the node is in use.
 // force: draw anyway (the person's own action asked for it). True if drawn.
 export function setHTML(node, html, { force = false } = {}) {
   if (!node) return false;
   if (!force && node.__laikaHtml === html) return false;
   if (!force && inUse(node)) return false;
+  const kept = scrollState(node);
   node.innerHTML = html;
   node.__laikaHtml = html;
+  restoreScroll(node, kept);
   return true;
 }

@@ -10,6 +10,7 @@
 import { requestJSON, newRequestId } from './api.js';
 import { esc, escValue } from './format.js';
 import { registerClick } from './registry.js';
+import { setHTML } from './dom.js';
 
 const boxes = new Map(); // box id -> state
 const options = new Map(); // box id -> { label, placeholder, extra, projectId }
@@ -83,7 +84,7 @@ export function chatMarkup(box, state, session) {
     ? `<div class="chat-bubble from-laika failed"><b>That did not work.</b> ${opt(session.error)} <button type="button" class="detail-button" data-assist-retry-turn="${attr(box)}">Try again</button></div>`
     : '';
   const id = `${domId(box)}-chat`;
-  return `<p class="assist-step">Conversation <span class="subtle">· nothing is built until you start a goal</span></p><div class="chat-log" aria-live="polite">${bubbles}${thinking}${failed}</div><label class="sr-only" for="${id}">Your message</label><textarea id="${id}" class="chat-input" rows="2" data-assist-field="chatDraft" data-box="${attr(box)}" placeholder="${working ? 'Wait for the reply…' : 'Reply, ask, or suggest… (Ctrl+Enter sends)'}"${working ? ' disabled' : ''}>${opt(state.chatDraft)}</textarea><div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.brief?.goal ? `<button type="button" data-assist-to-brief="${attr(box)}"${working ? ' disabled' : ''}>Back to the goal</button>` : ''}<button type="button" data-assist-write-goal="${attr(box)}"${working ? ' disabled' : ''}>Write the goal</button><button type="button" class="primary" data-assist-send="${attr(box)}"${working ? ' disabled' : ''}>Send</button></span></div>`;
+  return `<p class="assist-step">Conversation <span class="subtle">· nothing is built until you start a goal</span></p><div class="chat-log" aria-live="polite" data-keep-scroll="chat-${attr(box)}" data-start-at="bottom">${bubbles}${thinking}${failed}</div><label class="sr-only" for="${id}">Your message</label><textarea id="${id}" class="chat-input" rows="2" data-assist-field="chatDraft" data-box="${attr(box)}" placeholder="${working ? 'Wait for the reply…' : 'Reply, ask, or suggest… (Enter sends, Shift+Enter for a new line)'}"${working ? ' disabled' : ''}>${opt(state.chatDraft)}</textarea><div class="composer-row"><span class="composer-buttons"><button type="button" data-assist-cancel="${attr(box)}">Start over</button>${session.brief?.goal ? `<button type="button" data-assist-to-brief="${attr(box)}"${working ? ' disabled' : ''}>Back to the goal</button>` : ''}<button type="button" data-assist-write-goal="${attr(box)}"${working ? ' disabled' : ''}>Write the goal</button><button type="button" class="primary" data-assist-send="${attr(box)}"${working ? ' disabled' : ''}>Send</button></span></div>`;
 }
 
 function idleMarkup(box, state, o) {
@@ -207,7 +208,23 @@ const pollers = new Map();
 function paintBox(box) {
   if (typeof document === 'undefined') return;
   const node = document.getElementById(domId(box));
-  if (node) node.innerHTML = assistantInner(box);
+  // force: the person's own step; the chat log keeps its place (or follows new messages).
+  if (node) setHTML(node, assistantInner(box), { force: true });
+}
+
+// The reply is in: put the cursor back in the message box, so Enter continues
+// the conversation (unless the person is typing somewhere else).
+// A new reply starts where you can read it (not scrolled past its beginning).
+function showNewReply(box) {
+  const log = document.querySelector(`#${domId(box)} .chat-log`);
+  const last = log?.querySelector('.chat-bubble.from-laika:last-child');
+  if (log && last) log.scrollTop = Math.max(0, last.offsetTop - 8);
+}
+
+function focusChat(box) {
+  const input = document.getElementById(`${domId(box)}-chat`);
+  const active = document.activeElement;
+  if (input && !input.disabled && !(active && active !== document.body && active.matches?.('input, textarea, select'))) input.focus({ preventScroll: true });
 }
 
 function poll(box) {
@@ -221,7 +238,11 @@ function poll(box) {
     }
     try {
       applySession(state, await requestJSON(`/api/assistant/${encodeURIComponent(id)}`));
-      if (!WORKING.test(state.session.status)) paintBox(box);
+      if (!WORKING.test(state.session.status)) {
+        paintBox(box);
+        showNewReply(box);
+        focusChat(box);
+      }
     } catch (error) {
       state.message = error.message;
     }
@@ -276,9 +297,9 @@ if (typeof document !== 'undefined') {
     else if (field === 'atomic' || field === 'briefAtomic') state[field] = event.target.checked;
     else state[{ draft: 'draft', brief: 'briefText', feedback: 'feedback', chatDraft: 'chatDraft' }[field]] = event.target.value;
   });
-  // Ctrl/Cmd+Enter sends a chat message (Enter alone is a new line).
+  // Enter sends a chat message; Shift+Enter is a new line.
   document.addEventListener('keydown', event => {
-    if (event.target?.dataset?.assistField !== 'chatDraft' || event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
+    if (event.target?.dataset?.assistField !== 'chatDraft' || event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     document.querySelector(`[data-assist-send="${CSS.escape(event.target.dataset.box)}"]`)?.click();
   });

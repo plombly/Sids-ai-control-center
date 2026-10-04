@@ -2661,6 +2661,7 @@ table {
 }
 /* Goal box: Talk it through (lib/goal-assistant.js) */
 .chat-log {
+  position: relative; /* bubbles' offsetTop is measured from the log */
   display: flex;
   flex-direction: column;
   gap: 8px;

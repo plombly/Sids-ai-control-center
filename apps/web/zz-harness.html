@@ -1,6 +1,24 @@
-<!doctype html><html><body><div id="panel"></div><script type="module">
-import { setHTML } from '/lib/dom.js';
-let n = 0;
-const draw = () => setHTML(document.getElementById('panel'), `<p id="t">Handoff text to copy: alpha beta gamma delta · tick ${n++}</p><textarea id="ta">draft</textarea>`);
-draw(); setInterval(draw, 300); window.ready = true;
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"></head><body><main style="padding:16px"><div id="slot"></div></main>
+<script type="module">
+const long = 'Here are some thoughts.\n\n' + Array.from({ length: 30 }, (_, i) => `- idea number ${i + 1}`).join('\n');
+let session = null, sent = [];
+window.fetch = async (url, options = {}) => {
+  const u = new URL(url, location.href);
+  const body = options.body ? JSON.parse(options.body) : {};
+  if (u.pathname.endsWith('/assistant') && options.method === 'POST') {
+    session = { id: 'a'.repeat(16), mode: 'chat', status: 'queued', turns: [{ from: 'you', message: body.idea }] };
+  } else if (u.pathname.endsWith('/reply')) {
+    sent.push(body.message);
+    session = { ...session, status: 'queued', turns: [...session.turns, { from: 'you', message: body.message }] };
+  } else if (session && WORKING.test(session.status)) {
+    session = { ...session, status: 'reply', turns: [...session.turns, { from: 'assistant', message: long }] };
+  }
+  return new Response(JSON.stringify(session), { status: 200, headers: { 'content-type': 'application/json' } });
+};
+const WORKING = /^(queued|thinking)$/;
+const { assistantMarkup } = await import('/lib/goal-assistant.js');
+const { dispatchClick } = await import('/lib/registry.js');
+document.addEventListener('click', e => { const b = e.target.closest('button'); if (b) dispatchClick(b, e); });
+document.getElementById('slot').innerHTML = assistantMarkup('project:demo', { label: 'Goal', placeholder: 'x' });
+window.sent = () => sent; window.ready = true;
 </script></body></html>
