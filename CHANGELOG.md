@@ -5,7 +5,9 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 ## 1.2.0 (not released yet)
 
 - **Fedora and RHEL.** Fedora 41+ and RHEL / AlmaLinux / Rocky Linux 9 and
-  10 are supported, with the same clean-machine tests as Ubuntu and Debian.
+  10 are supported. Fedora 42, AlmaLinux 9 and Rocky Linux 9 pass the same
+  clean-machine test as Ubuntu and Debian; version 10 needs an x86-64-v3
+  CPU (checked before installing) and is not yet tested.
   - RHEL 9 gets Python 3.11 from its own packages.
   - Docker's packages and the nftables-based iptables are installed.
   - If firewalld is running, the installer opens 8080 and 8100–8299 (and

@@ -72,6 +72,13 @@ case "$OS:$OS_VERSION" in
     fi ;;
 esac
 case "$(uname -m)" in x86_64|aarch64) ;; *) die "Unsupported CPU: $(uname -m) (x86_64 or aarch64 needed)." ;; esac
+# RHEL 10 and its clones (and Docker's packages for them) are built for
+# x86-64-v3: on older or generic virtual CPUs Docker dies with "Illegal
+# instruction". Say so before installing anything.
+if [ "$FAMILY" = fedora ] && [ "$OS" != fedora ] && [ "${OS_VERSION%%.*}" -ge 10 ] && [ "$(uname -m)" = x86_64 ] \
+  && ! /lib64/ld-linux-x86-64.so.2 --help 2>/dev/null | grep -q 'x86-64-v3 (supported'; then
+  die "${PRETTY_NAME} needs a CPU with x86-64-v3 for Docker, and this one lacks it (a virtual machine: set its CPU type to 'host'). Version 9 works on this CPU."
+fi
 [ -d /run/systemd/system ] || die "LAIka needs systemd."
 memory_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 [ "$memory_mb" -ge 1800 ] || warn "Only ${memory_mb} MB of memory: LAIka needs 2 GB, 4 GB or more is better."

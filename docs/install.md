@@ -26,9 +26,12 @@ Other systems are refused unless you set `LAIKA_FORCE_OS=1`.
   dashboard) and **8100–8299** (project apps and previews) in the zones of the server's
   network (not Docker's), and says so. `laika uninstall` closes them again, and `laika doctor`
   checks them.
-- **RHEL 10** itself needs a CPU with x86-64-v3 (most from 2015 on); on
-  older CPUs and many virtual machines with a generic CPU model, use
-  AlmaLinux 10's x86-64-v2 edition, or set the VM's CPU type to "host".
+- **RHEL 10 family** needs a CPU with x86-64-v3 (most from 2015 on), as
+  do Docker's packages for it. Many virtual machines show a generic CPU
+  without it: set the VM's CPU type to "host", or use version 9. The
+  installer checks this first.
+- **Tested** on Fedora 42, AlmaLinux 9 and Rocky Linux 9 (full clean-install
+  test). Version 10 is accepted but not yet tested.
 - **SELinux** may stay enforcing: LAIka's containers use Docker's own
   labels. Its use with SELinux enforcing on a physical machine has not yet
   been verified; the clean-install tests run in containers.
