@@ -106,6 +106,23 @@ def log_tail(project_id, lines=30):
     return out[-4000:]
 
 
+LIVE_LOG_LINES = 200
+
+
+def publish_log(project_id):
+    """The app's recent log (with times) and restart count for the project
+    page's live log: laika:app-log:<id>, refreshed every loop while it runs."""
+    lines = run([JOURNALCTL, "-u", unit_name(project_id), "-n", str(LIVE_LOG_LINES), "--no-pager",
+                 "-o", "short-iso"]).stdout.splitlines()
+    shown = run([SYSTEMCTL, "show", unit_name(project_id), "-p", "NRestarts", "-p", "Result", "-p",
+                 "ActiveEnterTimestamp"]).stdout
+    info = dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)
+    redis.set(f"laika:app-log:{project_id}", json.dumps({
+        "lines": [line[-1000:] for line in lines if not line.startswith("-- ")],
+        "restarts": int(info.get("NRestarts") or 0), "result": info.get("Result", ""),
+        "since": info.get("ActiveEnterTimestamp", ""), "at": time.time()}), ex=300)
+
+
 def set_status(project_id, **fields):
     fields["updated_at"] = str(time.time())
     redis.hset(STATUS_PREFIX + project_id, mapping={k: str(v) for k, v in fields.items()})
@@ -233,6 +250,11 @@ def reconcile(project):
         deploy(project, head, port)
         return
     state = unit_state(project.id)
+    if state in ("active", "activating", "failed"):
+        try:
+            publish_log(project.id)
+        except Exception as exc:  # the log is a convenience
+            print(f"[laika-apps] log of {project.id}: {exc}", flush=True)
     if state == "active":
         if status.get("state") != "running":
             set_status(project.id, state="running", error="")

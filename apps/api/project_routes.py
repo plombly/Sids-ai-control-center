@@ -189,6 +189,22 @@ def _system_info():
             "gate": "scripts/integration-check.py (tests, self-tests, diagnostics)"}
 
 
+@router.get("/api/projects/{project_id}/app/log")
+def app_log(project_id: str):
+    """The running app's recent log lines (published by the apps service)."""
+    project_id = _id(project_id)
+    if not _known(project_id) or project_id == "laika":
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        data = json.loads(_redis().redis.get(f"laika:app-log:{project_id}") or "null")
+    except ValueError:
+        data = None
+    if not data:
+        return {"lines": [], "restarts": 0, "result": "", "since": "", "at": None}
+    return {"lines": [str(line) for line in data.get("lines", [])][-400:], "restarts": int(data.get("restarts") or 0),
+            "result": _text(data.get("result")), "since": _text(data.get("since")), "at": data.get("at")}
+
+
 def _app_status(project_id):
     status = _data(_redis().redis.hgetall(f"laika:app-status:{project_id}"))
     if not status:

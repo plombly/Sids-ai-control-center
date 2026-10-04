@@ -330,3 +330,13 @@ def test_bad_build_ids_are_ignored_and_vanished_builds_fail(apps):
     units["laika-build-shop-b8"] = "active"
     module.launch_builds(projects)
     assert module.redis.records["laika:build:shop:b8"]["status"] == "running"
+
+
+def test_a_running_app_publishes_its_live_log(apps):
+    import json
+    module, repo, root, calls, units = apps
+    module.loop_once()   # deploys
+    module.loop_once()   # running: the log is published
+    published = json.loads(module.redis.values["laika:app-log:shop"])
+    assert published["lines"] == ["boom"] and published["restarts"] == 0
+    assert any(c[:3] == ["journalctl", "-u", module.unit_name("shop")] and "short-iso" in c for c in calls)

@@ -2738,3 +2738,15 @@ table {
 .chat-proposal .composer-buttons {
   margin-top: 6px;
 }
+/* Project page: the app's live log (lib/app-log.js) */
+.app-log.live {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.app-log-box summary {
+  cursor: pointer;
+  margin-top: 8px;
+}

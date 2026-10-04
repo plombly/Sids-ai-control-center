@@ -475,3 +475,17 @@ def test_a_project_can_be_renamed_but_not_to_markup_or_blank(monkeypatch):
     assert client.patch("/api/projects/web", json={"name": "Tank Tumble"}).json()["name"] == "Tank Tumble"
     for bad in ("", "   ", "a\nb", "<script>"):
         assert client.patch("/api/projects/web", json={"name": bad}).status_code == 422, bad
+
+
+def test_the_apps_live_log_is_served_from_what_the_apps_service_published(monkeypatch):
+    import json as _json
+    from fastapi.testclient import TestClient
+    import main
+    fake = FakeRedis({"laika:projects:web": {"id": "web", "name": "web", "status": "active"}}, members=["web"])
+    monkeypatch.setattr(main, "redis", fake)
+    client = TestClient(main.app)
+    assert client.get("/api/projects/web/app/log").json()["lines"] == []
+    fake.strings["laika:app-log:web"] = _json.dumps({"lines": ["2026-10-04T09:30:00 listening on 8100"], "restarts": 1, "result": "success", "since": "x", "at": 1})
+    body = client.get("/api/projects/web/app/log").json()
+    assert body["lines"] == ["2026-10-04T09:30:00 listening on 8100"] and body["restarts"] == 1
+    assert client.get("/api/projects/nope/app/log").status_code == 404

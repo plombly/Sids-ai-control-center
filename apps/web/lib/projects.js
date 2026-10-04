@@ -8,6 +8,7 @@ import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './projec
 import { buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
 import { can } from './access.js';
 import { setHTML } from './dom.js';
+import { appLogMarkup } from './app-log.js';
 
 const requestId = newRequestId;
 
@@ -227,7 +228,7 @@ export function appStatusMarkup(project, hostname = globalThis.location?.hostnam
   const commit = app.commit ? `<span class="subtle">main ${esc(String(app.commit).slice(0, 8))}</span>` : '';
   const error = app.error ? `<div class="form-status">${esc(app.error)}</div>` : '';
   const log = app.log ? `<pre class="app-log">${esc(app.log)}</pre>` : '';
-  return `<div class="app-status"><div class="item-head"><span class="item-title">App ${pill(state)} ${esc(APP_STATES[state] || '')}</span>${commit}</div><div class="form-row">${link}<button type="button" data-app-restart="${esc(id)}">Restart</button></div>${error}${log}</div>`;
+  return `<div class="app-status"><div class="item-head"><span class="item-title">App ${pill(state)} ${esc(APP_STATES[state] || '')}</span>${commit}</div><div class="form-row">${link}<button type="button" data-app-restart="${esc(id)}">Restart</button></div>${error}${log}${appLogMarkup(id)}</div>`;
 }
 
 // Dependency setup, tests and the run command; empty means automatic/off.

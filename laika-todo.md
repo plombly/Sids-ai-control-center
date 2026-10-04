@@ -15,11 +15,11 @@ the owner to try, then release and deploy to production when they say so.
 Order and checkpoints. Report to the owner at each checkpoint.
 
 ### Checkpoint 1: polish from the week's testing
-- [ ] **Diagnose and fix in one go.** The goal-box Conversation can propose a
+- [x] **Diagnose and fix in one go.** The goal-box Conversation can propose a
       ready goal inside its reply (when it has found a cause or the idea is
       clear); the chat shows it with "Start this goal" / "Edit first", so a
       found cause becomes a goal without re-explaining.
-- [ ] **App logs on the project page.** The apps service publishes the app
+- [x] **App logs on the project page.** The apps service publishes the app
       unit's recent log (journal of laika-app-<id>, last ~200 lines) to Redis;
       the project page shows it live (like job logs), with why it last
       crashed / restarted.
