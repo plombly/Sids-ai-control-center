@@ -190,3 +190,16 @@ def test_talk_it_through_replies_in_prose_then_writes_the_goal_from_the_conversa
     brief_call = calls[1]
     assert "Write the brief now" in brief_call["prompt"] and "YOU (earlier reply):" in brief_call["prompt"]
     assert brief_call["model"] == module.MODEL
+
+
+def test_a_conversation_knows_the_apps_state_and_recent_failures(assist):
+    module, r, runner_for, calls = assist
+    r.records["laika:app-status:game"] = {"state": "running", "port": "8100", "log": "listening\nTypeError: boom"}
+    r.records["laika:projects:game"]["detected_run_command"] = "npm start"
+    r.records["laika:jobs:j9"] = {"id": "j9", "project_id": "game", "status": "test_failed", "title": "Bots",
+                                  "error": "expected 3 got 2", "updated_at": str(__import__("time").time())}
+    goal_assist.save(r, "a" * 16, mode="chat", want="reply", turns=[{"from": "you", "message": "refused to connect"}])
+    module.main("a" * 16, r=r, runner=runner_for(Run("Let us check the port.")))
+    prompt = calls[0]["prompt"]
+    assert "App: running on port 8100" in prompt and "`npm start` (detected)" in prompt
+    assert "TypeError: boom" in prompt and 'Job "Bots" test_failed: expected 3 got 2' in prompt

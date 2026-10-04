@@ -159,7 +159,7 @@ Set "atomic" true when this is one small change (a single job), false when it ne
 """
 
 
-def build_chat_prompt(project_name, project_id, kind, turns, recent_goals=(), group_note=""):
+def build_chat_prompt(project_name, project_id, kind, turns, recent_goals=(), group_note="", situation=""):
     kind = kind or {}
     kind_line = f"{kind.get('type') or 'unknown'}" + (f" (stack: {kind['stack']})" if kind.get("stack") else "")
     recent = "\n".join(f"- {goal}" for goal in recent_goals) or "- (none)"
@@ -172,6 +172,10 @@ other computers at http://<server address>:<port>. Each project in a group is it
 
 Your working directory is the project's code at its latest main. Read/Grep/Glob it when that makes
 your answer concrete (name real files, screens, routes); keep it to a handful of lookups.
+
+What LAIka knows about this project right now (use it when diagnosing; do not ask the operator
+for what is here):
+{situation.strip() or "- (nothing recorded)"}
 
 Recent goals in this project (what is done or underway):
 {recent}

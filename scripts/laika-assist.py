@@ -99,6 +99,47 @@ def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
                   wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
 
 
+def situation(r, project, limit=5, days=7):
+    """The project's live state for a conversation: its app (state, port,
+    command, error, last log lines) and recently failed or stuck jobs."""
+    lines = []
+    app = r.hgetall(f"laika:app-status:{project.id}") or {}
+    own = (r.hget(f"laika:projects:{project.id}", "run_command") or "").strip()
+    detected = r.hget(f"laika:projects:{project.id}", "detected_run_command") or ""
+    command = own if own and own.lower() != "off" else detected
+    if not command:
+        lines.append("- App: not set up to run (no run command set or detected).")
+    else:
+        lines.append(f"- App: {app.get('state') or 'not started yet'}"
+                     + (f" on port {app['port']} (open http://<this server's address>:{app['port']}/)" if app.get("port") else "")
+                     + f"; command `{command}`" + (" (detected)" if not own else "")
+                     + (f"; error: {app['error'][:300]}" if app.get("error") else ""))
+        if app.get("log"):
+            lines.append("- App log, last lines:\n" + "\n".join("    " + line for line in app["log"].splitlines()[-12:]))
+    cutoff = time.time() - days * 86400
+    failed = []
+    for key in r.scan_iter("laika:jobs:*"):
+        if key.count(":") != 2:
+            continue
+        try:
+            job = r.hgetall(key)
+        except Exception:  # not a job record
+            continue
+        if (job.get("project_id") or "laika") != project.id or job.get("status") not in ("failed", "test_failed", "integration_failed", "needs_human"):
+            continue
+        try:
+            when = float(job.get("updated_at") or job.get("created_at") or 0)
+        except ValueError:
+            when = 0
+        if when >= cutoff:
+            failed.append((when, job))
+    for _, job in sorted(failed, key=lambda item: -item[0])[:limit]:
+        why = (job.get("error") or job.get("needs_human_reason") or "").strip()
+        lines.append(f"- Job \"{(job.get('title') or job.get('id', ''))[:80]}\" {job.get('status')}"
+                     + (f": {why.splitlines()[0][:240]}" if why else ""))
+    return "\n".join(lines)
+
+
 def chat(r, session, project, runner=agent_cli.run_claude):
     """One reply in a goal-box Conversation."""
     try:
@@ -106,8 +147,13 @@ def chat(r, session, project, runner=agent_cli.run_claude):
     except Exception as exc:
         print(f"[assist] group context: {exc}", flush=True)
         note = ""
+    try:
+        now = situation(r, project)
+    except Exception as exc:  # context, never a reason to fail
+        print(f"[assist] situation: {exc}", flush=True)
+        now = ""
     prompt = goal_assist.build_chat_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
-                                           recent_goals(r, project.id), group_note=note)
+                                           recent_goals(r, project.id), group_note=note, situation=now)
     log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}-chat.json"
     return runner("assistant", prompt, project.repo, log_path, CHAT_TIMEOUT, model=CHAT_MODEL, budget_usd=CHAT_BUDGET_USD,
                   tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.CHAT_SYSTEM_PROMPT,

@@ -13,9 +13,10 @@
 #   scripts/laika-dev.sh recreate       new container, same data (after changing ports or limits)
 #   scripts/laika-dev.sh destroy        delete the machine AND all of its data
 #
-# Dashboard: http://<this server>:DEV_PORT (default 9080). Project apps,
-# which run on 8100-8139 inside, are published on 9100-9139 (8105 -> 9105),
-# previews 8200-8209 on 9200-9209, SFTP 2222 on 9222. Limits: DEV_MEMORY (3g), DEV_CPUS (2), so
+# Dashboard: http://<this server>:DEV_PORT (default 9080). Inside, project
+# apps use ports 9100-9139 and previews 9200-9209 (a drop-in for the apps
+# service), published as the same numbers, so the dashboard's app links work
+# from your PC and never collide with the real LAIka's 8100+. SFTP 2222 is on 9222. Limits: DEV_MEMORY (3g), DEV_CPUS (2), so
 # it cannot starve the real LAIka. Needs Docker and root.
 set -euo pipefail
 
@@ -46,6 +47,10 @@ copy_source() { # REF -> /root/laika-src inside, a plain copy of that commit
   say "Source: $(git -C "$REPO" log -1 --format='%h %s' "$ref")"
 }
 
+dev_ports() { # apps and previews on 91xx / 92xx inside too (see the header)
+  inside "mkdir -p /etc/systemd/system/laika-apps.service.d && printf '[Service]\nEnvironment=APPS_PORT_MIN=9100\nEnvironment=APPS_PORT_MAX=9139\nEnvironment=PREVIEW_PORT_MIN=9200\nEnvironment=PREVIEW_PORT_MAX=9209\n' > /etc/systemd/system/laika-apps.service.d/dev-ports.conf && systemctl daemon-reload && systemctl restart laika-apps"
+}
+
 wait_for_systemd() {
   for _ in $(seq 1 60); do
     case "$(inside 'systemctl is-system-running' 2>/dev/null || true)" in running|degraded) return 0 ;; esac
@@ -61,7 +66,7 @@ start_container() {
     -v "$NAME-docker:/var/lib/docker" -v "$NAME-containerd:/var/lib/containerd" \
     -v "$NAME-data:/var/lib/laika" -v "$NAME-etc:/etc/laika" -v "$NAME-logs:/var/log/laika" \
     -v "$NAME-backups:/var/backups/laika" -v "$NAME-opt:/opt" \
-    -p "$PORT:8080" -p "${DEV_SFTP_PORT:-9222}:2222" -p 9100-9139:8100-8139 -p 9200-9209:8200-8209 "$IMAGE" >/dev/null
+    -p "$PORT:8080" -p "${DEV_SFTP_PORT:-9222}:2222" -p 9100-9139:9100-9139 -p 9200-9209:9200-9209 "$IMAGE" >/dev/null
 }
 
 recreate() {
@@ -71,6 +76,7 @@ recreate() {
   docker rm -f "$NAME" >/dev/null
   start_container
   wait_for_systemd
+  dev_ports
   status
 }
 
@@ -93,6 +99,7 @@ EOF
   say "Installing LAIka inside (a few minutes)"
   inside "bash /root/laika-src/install.sh --source /root/laika-src --yes" | grep -E '==>|!!|xx' || true
   inside "test -f /opt/laika/VERSION" || die "The installation failed: scripts/laika-dev.sh shell, then look at the output of install.sh"
+  dev_ports
   status
   echo
   say "Open http://$(hostname -I | awk '{print $1}'):$PORT and use this setup code:"
@@ -109,6 +116,7 @@ deploy() {
   inside "rsync -a --delete --exclude=.env /root/laika-src/ /opt/laika/ && bash /opt/laika/install.sh --repair --yes" \
     | grep -E '==>|!!|xx' || true
   inside "/opt/laika/scripts/laika-restart.sh --wait 60 all" >/dev/null 2>&1 || true
+  dev_ports
   status
   # install.sh makes a new setup code while no administrator exists (the old one stops working).
   if inside "/var/lib/laika/venv/bin/python /opt/laika/scripts/laika-doctor.py --json" 2>/dev/null | grep -q 'no administrator account yet'; then
