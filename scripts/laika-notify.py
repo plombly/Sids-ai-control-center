@@ -130,6 +130,17 @@ def events(r, dashboard):
                                 f"App {APP_PROBLEMS[state]} · {project}",
                                 (app.get("error") or "See the log on its project page")[:200],
                                 f"{dashboard}/#/projects/{project}", project))
+    for key in r.scan_iter("laika:playtest:*"):
+        try:
+            test = json.loads(r.get(key) or "{}")
+        except ValueError:
+            continue
+        if test.get("ok") is False and test.get("commit"):
+            project = key.split(":", 2)[2]
+            why = test.get("error") or ("the page is blank" if test.get("blank") else
+                                        "; ".join((test.get("page_errors") or [])[:2]) or "errors on the page")
+            found.append(_event(f"playtest:{project}:{test['commit']}", "app_problem", f"App looks broken · {project}",
+                                f"Play-test of the latest version: {why}"[:300], f"{dashboard}/#/projects/{project}", project))
     for raw in r.lrange("laika:sftp:conflicts", 0, 49) or []:
         try:
             item = json.loads(raw)

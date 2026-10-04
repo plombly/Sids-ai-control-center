@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -189,6 +190,25 @@ def _system_info():
             "gate": "scripts/integration-check.py (tests, self-tests, diagnostics)"}
 
 
+@router.get("/api/projects/{project_id}/app/playtest.png")
+def playtest_screenshot(project_id: str):
+    """The last play-test's screenshot (scripts/laika-playtest.py)."""
+    from fastapi.responses import FileResponse
+    import file_routes
+    project_id = _id(project_id)
+    if not _known(project_id) or project_id == "laika":
+        raise HTTPException(status_code=404, detail="Project not found")
+    root = _text(_project_data(project_id).get("root"))
+    try:
+        rel = Path(root).relative_to(file_routes.HOST_PROJECTS)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="No screenshot")
+    shot = file_routes.PROJECTS_MOUNT / rel / "playtest" / "latest.png"
+    if not shot.is_file() or shot.is_symlink():
+        raise HTTPException(status_code=404, detail="No screenshot yet")
+    return FileResponse(shot, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @router.get("/api/projects/{project_id}/app/log")
 def app_log(project_id: str):
     """The running app's recent log lines (published by the apps service)."""
@@ -211,7 +231,22 @@ def _app_status(project_id):
         return None
     return {"state": _text(status.get("state"), "unknown"), "port": _numeric(status.get("port")),
             "commit": _text(status.get("commit")), "error": _text(status.get("error")),
-            "log": _text(status.get("log")), "updated_at": _numeric(status.get("updated_at"))}
+            "log": _text(status.get("log")), "updated_at": _numeric(status.get("updated_at")),
+            "playtest": _playtest(project_id)}
+
+
+def _playtest(project_id):
+    try:
+        data = json.loads(_redis().redis.get(f"laika:playtest:{project_id}") or "null")
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    keep = ("ok", "skipped", "error", "commit", "at", "title", "status", "blank", "console_errors", "page_errors",
+            "failed_requests")
+    result = {k: data[k] for k in keep if k in data}
+    result["screenshot"] = bool(data.get("screenshot"))
+    return result
 
 
 # --- project groups (services/laika_projects.py: one level, the parent controls

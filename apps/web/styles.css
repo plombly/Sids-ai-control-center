@@ -2750,3 +2750,16 @@ table {
   cursor: pointer;
   margin-top: 8px;
 }
+.playtest {
+  margin-top: 8px;
+}
+.playtest.bad {
+  padding: 8px 10px;
+  border: 1px solid var(--amber, #d29922);
+  border-radius: 8px;
+}
+.playtest.bad ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}

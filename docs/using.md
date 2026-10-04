@@ -71,6 +71,12 @@ it crashes. Its data lives in `/var/lib/laika/project-data/<project>`
 (the **App data** tab under Files). Secrets for the app go in the project's
 Settings → Secrets.
 
+The app box on the project page has a **Live log** (the app's own output,
+restarts and how it last exited) and, for apps that serve a web page, the
+latest **play-test**: after every deploy LAIka opens the page in a headless
+browser and reports errors, failed requests or a blank page, with a
+screenshot.
+
 ## Builds
 
 **Builds → Build now** produces a downloadable artifact (an APK, a

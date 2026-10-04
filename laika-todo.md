@@ -23,7 +23,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       unit's recent log (journal of laika-app-<id>, last ~200 lines) to Redis;
       the project page shows it live (like job logs), with why it last
       crashed / restarted.
-- [ ] **Play-test step for web apps.** After a deploy of a project with a web
+- [x] **Play-test step for web apps.** After a deploy of a project with a web
       app, load the page in a headless browser (Docker Playwright image,
       host network, the app's port), record console errors, failed requests
       and a screenshot; show them on the project page and flag a blank page

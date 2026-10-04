@@ -127,6 +127,7 @@ Starting values for new projects, apps, previews and builds.
 | App memory limit (MB) | `1024` | 64–65536 | after **Apply now** |  |
 | App CPU limit (cores) | `1.0` | 0.1–64 | after **Apply now** |  |
 | App process limit | `512` | 16–32768 | after **Apply now** |  |
+| Play-test web apps | on |  | after **Apply now** | After each deploy, open the app's page in a headless browser and report errors, a blank page and a screenshot. |
 | First app port | `8100` | 1024–65000 | after **Apply now** |  |
 | Last app port | `8199` | 1024–65535 | after **Apply now** |  |
 | Previews stop after (hours) | `4` | 1–72 | after **Apply now** |  |

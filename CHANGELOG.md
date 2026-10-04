@@ -2,6 +2,19 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.4.0 (not released yet)
+
+- **Conversation proposes the goal.** When the idea is clear or it found the
+  cause of a problem, the goal-box Conversation ends its reply with a ready
+  goal: **Start this goal** or **Edit first**, no re-explaining.
+- **Live app log.** A project's app box has a **Live log**: the running
+  app's last 200 lines with times, how often it restarted and how it last
+  exited, following new lines as they come.
+- **Play-test.** After each deploy of a web app, LAIka opens its page in a
+  headless browser and reports errors on the page, failed requests, a blank
+  page and a screenshot, on the project page and as an "app looks broken"
+  notification. Settings → Project defaults → Play-test web apps.
+
 ## 1.3.1
 
 - Projects can be renamed: Settings → Name. Only the name shown changes;

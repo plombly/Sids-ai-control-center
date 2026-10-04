@@ -228,7 +228,24 @@ export function appStatusMarkup(project, hostname = globalThis.location?.hostnam
   const commit = app.commit ? `<span class="subtle">main ${esc(String(app.commit).slice(0, 8))}</span>` : '';
   const error = app.error ? `<div class="form-status">${esc(app.error)}</div>` : '';
   const log = app.log ? `<pre class="app-log">${esc(app.log)}</pre>` : '';
-  return `<div class="app-status"><div class="item-head"><span class="item-title">App ${pill(state)} ${esc(APP_STATES[state] || '')}</span>${commit}</div><div class="form-row">${link}<button type="button" data-app-restart="${esc(id)}">Restart</button></div>${error}${log}${appLogMarkup(id)}</div>`;
+  return `<div class="app-status"><div class="item-head"><span class="item-title">App ${pill(state)} ${esc(APP_STATES[state] || '')}</span>${commit}</div><div class="form-row">${link}<button type="button" data-app-restart="${esc(id)}">Restart</button></div>${error}${log}${playtestMarkup(id, app.playtest, app.commit)}${appLogMarkup(id)}</div>`;
+}
+
+// The last play-test of the running app (scripts/laika-playtest.py).
+export function playtestMarkup(id, test, commit = '') {
+  if (!test || test.skipped) return '';
+  const shot = test.screenshot ? ` · <a href="/api/projects/${encodeURIComponent(id)}/app/playtest.png" target="_blank" rel="noopener">screenshot</a>` : '';
+  const stale = commit && test.commit && test.commit !== commit ? ' <span class="subtle">(an older version; testing the new one)</span>' : '';
+  if (test.ok) {
+    const notes = (test.console_errors || []).length ? ` · ${(test.console_errors || []).length} console message(s)` : '';
+    return `<div class="playtest ok">✓ Play-test: the page loads${test.title ? ` (“${esc(test.title)}”)` : ''} without errors${notes ? esc(notes) : ''}${shot}${stale}</div>`;
+  }
+  const items = [test.error, test.blank ? 'The page is blank: no text, canvas or images.' : '', ...(test.page_errors || []), ...(test.console_errors || []).map(line => `console: ${line}`), ...(test.failed_requests || []).map(line => `request: ${line}`)]
+    .filter(Boolean)
+    .slice(0, 8)
+    .map(line => `<li>${esc(line)}</li>`)
+    .join('');
+  return `<div class="playtest bad">⚠ Play-test: the app looks broken${shot}${stale}<ul>${items}</ul></div>`;
 }
 
 // Dependency setup, tests and the run command; empty means automatic/off.

@@ -229,3 +229,14 @@ test('a project page shows its own Needs you: approvals and stuck jobs of it and
   assert.equal(projectNeedsMarkup({ id: 'quiet' }, poll), '');
   assert.match(projectDetailMarkup({ ...project, status: 'active' }, 'files', poll), /project-needs/);
 });
+
+test('play-test results: passed, broken with reasons, skipped for non-pages', async () => {
+  const { playtestMarkup } = await import('./lib/projects.js');
+  assert.match(playtestMarkup('game', { ok: true, title: 'Tank Tumble', screenshot: true, commit: 'c1' }, 'c1'), /✓ Play-test: the page loads \(“Tank Tumble”\) without errors · <a href="\/api\/projects\/game\/app\/playtest\.png"/);
+  const bad = playtestMarkup('game', { ok: false, page_errors: ['ReferenceError: x is not defined'], failed_requests: ['404 /a.png'], commit: 'c0' }, 'c1');
+  assert.match(bad, /looks broken/);
+  assert.match(bad, /ReferenceError: x is not defined/);
+  assert.match(bad, /request: 404 \/a\.png/);
+  assert.match(bad, /testing the new one/);
+  assert.equal(playtestMarkup('api', { skipped: 'not a page', ok: true }), '');
+});
