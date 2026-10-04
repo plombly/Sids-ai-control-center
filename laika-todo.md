@@ -41,11 +41,6 @@ Order and checkpoints. Report to the owner at each checkpoint.
       working skeleton: tests, a run command that listens on $PORT /
       0.0.0.0, README. The first goal can then be about features.
 
-### Checkpoint 3: off-site backups
-- [ ] Guided setup in Settings → Backups: another machine over SSH/rsync, a
-      NAS, or S3-compatible storage; test connection; encrypted at rest for
-      S3; the monthly restore check also tests the off-site copy.
-
 ### Checkpoint 4: remote access (Tailscale)
 - [ ] Settings → Remote access: install / sign in Tailscale from the
       dashboard (auth key), show the tailnet address for the dashboard and
@@ -58,6 +53,12 @@ Order and checkpoints. Report to the owner at each checkpoint.
       release signing. Built from the host by Claude (view-only project).
 
 ## Backlog (not scheduled)
+
+- **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
+  up another VM to back up to). Guided setup in Settings → Backups: another
+  machine over SSH/rsync, a NAS, or S3-compatible storage; test connection;
+  encrypted at rest for S3; the monthly restore check also tests the
+  off-site copy.
 
 - **Share an app with friends:** a public link to ONE app (e.g. Tank Tumble)
   through a tunnel, on/off switch, optional password; LAIka itself stays

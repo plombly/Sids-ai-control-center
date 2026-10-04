@@ -500,3 +500,24 @@ def test_templates_are_listed_and_checked(monkeypatch):
     assert {"web-game", "website", "api-website", "python-service", "cli-tool", "discord-bot"} <= ids
     bad = client.post("/api/projects", json={"id": "g", "name": "G", "source": "empty", "template": "nope", "request_id": "req-12345678"})
     assert bad.status_code == 422
+
+
+def test_remote_access_reads_status_and_queues_host_actions(monkeypatch):
+    import json as _json
+    from fastapi.testclient import TestClient
+    import main
+    import project_routes
+    fake = FakeRedis({}, members=[])
+    fake.delete = lambda *keys: [fake.strings.pop(k, None) for k in keys]
+    fake.strings["laika:remote:status"] = _json.dumps({"installed": True, "state": "connected", "ips": ["100.64.0.5"],
+                                                       "checked_at": __import__("time").time()})
+    monkeypatch.setattr(main, "redis", fake)
+    queued = []
+    monkeypatch.setattr(project_routes, "_operator_request", lambda action, rid, fields: queued.append(action) or {"status": "pending"})
+    client = TestClient(main.app)
+    body = client.get("/api/remote").json()
+    assert body["status"]["state"] == "connected" and body["stale"] is False
+    for action in ("install", "login", "logout", "refresh"):
+        assert client.post(f"/api/remote/{action}", json={"request_id": "req-12345678"}).status_code == 202
+    assert queued == ["remote_install", "remote_login", "remote_logout", "remote_status"]
+    assert client.post("/api/remote/funnel", json={"request_id": "req-12345678"}).status_code == 404

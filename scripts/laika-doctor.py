@@ -361,6 +361,29 @@ def sftp_port():
     return int(os.environ.get("SFTP_PORT", "2222"))
 
 
+def check_remote(runner=run):
+    """Tailscale (Settings -> Remote access) must never publish LAIka: no
+    Funnel, and no Tailscale SSH."""
+    if not shutil.which("tailscale"):
+        return ok("remote", "Tailscale not installed (Settings -> Remote access)")
+    funnel = runner(["tailscale", "funnel", "status", "--json"])
+    try:
+        public = bool(json.loads(funnel.stdout or "{}").get("AllowFunnel"))
+    except ValueError:
+        public = False
+    if public:
+        return fail("remote", "Tailscale Funnel publishes this server to the internet", "sudo tailscale funnel reset")
+    state = runner(["tailscale", "status", "--json"])
+    try:
+        backend = json.loads(state.stdout or "{}").get("BackendState", "")
+    except ValueError:
+        backend = ""
+    if backend != "Running":
+        return warn("remote", f"Tailscale is installed but not connected ({backend or 'stopped'})",
+                    "Settings -> Remote access -> Connect")
+    return ok("remote", "Tailscale connected (no Funnel)")
+
+
 def check_backups(client=None, now=None):
     import datetime
     import time as _time
@@ -400,7 +423,7 @@ def all_checks():
               check_containers, check_services, check_redis_and_workers,
               lambda: check_http("api", "http://127.0.0.1:8000/health"),
               lambda: check_http("dashboard", "http://127.0.0.1:8080/health"),
-              check_sandbox, check_providers, check_firewall, check_exposure, check_backups, check_admin]
+              check_sandbox, check_providers, check_firewall, check_remote, check_exposure, check_backups, check_admin]
     results = []
     for check in checks:
         try:

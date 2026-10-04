@@ -12,6 +12,7 @@ export const EXTRA_SECTIONS = [
   { id: 'phones', label: 'Phones & apps', help: 'Pair the LAIka app and revoke lost phones.' },
   { id: 'users', label: 'Users', help: 'Who uses this LAIka and what each person may do.' },
   { id: 'access', label: 'Access', help: 'Your password, signed-in browsers and the audit log.' },
+  { id: 'remote', label: 'Remote access', help: 'Reach LAIka from anywhere through Tailscale, without opening ports.' },
   { id: 'system', label: 'System', help: 'Version, branding and where things live.' }
 ];
 
