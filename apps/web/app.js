@@ -19,7 +19,7 @@ import {
 import { TERMINAL, asArray, asObject, duration, esc, number, pill, text } from './lib/format.js';
 import { approvalMarkup, jobActionsMarkup, jobDetailMarkup, tokenStateText, workerMarkup } from './lib/markup.js';
 
-import { dispatchClick, renderPanels } from './lib/registry.js';
+import { dispatchClick, onRoute, renderPanels } from './lib/registry.js';
 import { applyRoute, currentRoute } from './lib/router.js';
 // Feature modules register panels/click handlers (see lib/registry.js).
 import './lib/features.js';
@@ -286,11 +286,21 @@ if (typeof document !== 'undefined') {
   loadHistoryPage();
   setInterval(() => poll(), POLL_MS);
   setInterval(() => loadHistoryPage(), HISTORY_REFRESH_MS);
+  // The job detail sits above every page: close it when you go elsewhere or press Esc.
+  const closeDetail = () => {
+    const section = document.getElementById('job-detail');
+    if (section) section.hidden = true;
+  };
+  onRoute(closeDetail);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !document.querySelector('dialog[open]')) closeDetail();
+  });
   document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button) return;
     dispatchClick(button, event);
-    if (button.dataset.detailClose) {
+    // A bare data-detail-close attribute is "" (falsy): test for presence.
+    if (button.dataset.detailClose !== undefined) {
       document.getElementById('job-detail').hidden = true;
       return;
     }
