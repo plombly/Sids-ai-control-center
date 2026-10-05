@@ -78,6 +78,8 @@ Order and checkpoints. Report to the owner at each checkpoint.
       no feedback on project pages, action results vanished from the banner on
       refresh, months now UTC (API container vs host), read-only limit for
       builders, notifications use project names.
+- [x] Owner's follow-ups: SPENDING_LIMITS setting (approvers/admins/off,
+      first-run setup + Settings), paused goal box with the reason.
 - [ ] Ship 1.5.0 when the owner says so.
 
 ## Backlog (not scheduled)
