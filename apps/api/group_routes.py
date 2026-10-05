@@ -35,16 +35,42 @@ def _sub_request_id(request_id, number):
 def approve_all(goal_id: str, payload: ApproveAll, request: Request, response: Response):
     import re
     import main
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", goal_id) or not main._hash(f"laika:goals:{goal_id}"):
+        raise HTTPException(status_code=404, detail="Goal not found")
+    result = _approve_listed(payload, request,
+                             lambda job: main._text(job.get("goal_id"), "") == goal_id, "not a change of this goal")
+    return {"goal_id": goal_id, **result}
+
+
+@router.post("/api/projects/{project_id}/approve-all", status_code=202)
+def approve_all_in_group(project_id: str, payload: ApproveAll, request: Request):
+    """Every ready change the person saw in a parent project and its
+    children (any goal), through the merge queue like a goal's approve-all."""
+    import main
+    import project_routes as projects
+    project_id = projects._id(project_id)
+    if not projects._known(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    members = {project_id} | {pid for pid in main.redis.smembers("laika:projects") or []
+                              if main._text(main.redis.hget(f"laika:projects:{pid}", "parent"), "") == project_id}
+    result = _approve_listed(payload, request,
+                             lambda job: main._text(job.get("project_id"), "laika") in members,
+                             "not a change of this project or its children")
+    return {"project_id": project_id, **result}
+
+
+def _approve_listed(payload, request, belongs, outside):
+    """Queue the exact candidates the person saw; refuse everything if any is not ready."""
+    import re
+    import main
     import access
     import managed
     from schemas import OperatorActionRequest
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", goal_id) or not main._hash(f"laika:goals:{goal_id}"):
-        raise HTTPException(status_code=404, detail="Goal not found")
     problems, ready = [], []
     for job_id, candidate in sorted(payload.candidates.items()):
         job = main._hash(f"laika:jobs:{job_id}") if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id) else {}
-        if not job or main._text(job.get("goal_id"), "") != goal_id:
-            problems.append(f"{job_id}: not a change of this goal")
+        if not job or not belongs(job):
+            problems.append(f"{job_id}: {outside}")
         elif managed.view_only(main.redis, main._text(job.get("project_id"), "laika")):
             problems.append(f"{job_id}: {managed.MESSAGE}")
         elif not access.may(main.redis, getattr(request.state, "ctx", None), main._text(job.get("project_id"), "laika"), "approve"):
@@ -68,4 +94,4 @@ def approve_all(goal_id: str, payload: ApproveAll, request: Request, response: R
             results.append({"job_id": job_id, "request_id": action.request_id, "status": result.get("status")})
         except HTTPException as exc:
             results.append({"job_id": job_id, "request_id": action.request_id, "error": str(exc.detail)})
-    return {"goal_id": goal_id, "queued": results}
+    return {"queued": results}

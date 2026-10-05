@@ -80,3 +80,19 @@ def test_group_timeline_names_each_project():
                                             {"shop": [json.dumps({"at": 15, "kind": "deploy", "title": "App deployed"})]})
     assert [(e["project_name"], e["title"]) for e in events] == [
         ("Shop API", "Goal started: Add orders"), ("Shop", "App deployed"), ("Shop", "Goal started: Add cart")]
+
+
+def test_a_parent_project_approves_every_ready_change_of_its_group(client, fake):
+    fake.hashes["laika:projects:shop"] = {"id": "shop", "name": "Shop", "status": "active"}
+    fake.hashes["laika:projects:shop-api"] = {"id": "shop-api", "name": "Shop API", "status": "active", "parent": "shop"}
+    fake.hashes["laika:projects:blog"] = {"id": "blog", "status": "active"}
+    fake.hashes["laika:jobs:j7"] = ready("j7", project="blog", goal="g7")
+    fake.members = ["shop", "shop-api", "blog", "app"]
+    fake.smembers = lambda key: set(fake.members) if key == "laika:projects" else set()
+    group = lambda candidates: client.post("/api/projects/shop/approve-all",
+                                           json={"request_id": "grp-00000001", "candidates": candidates}, headers=AUTH)
+    response = group({"j1": CANDIDATE, "j2": OTHER, "j9": CANDIDATE})      # two goals, parent and child
+    assert response.status_code == 202, response.text
+    assert [q["job_id"] for q in response.json()["queued"]] == ["j1", "j2", "j9"]
+    refused = group({"j7": CANDIDATE})                                       # another project
+    assert refused.status_code == 409 and "not a change of this project" in json.dumps(refused.json())

@@ -176,6 +176,7 @@ PROJECT_RULES = [
     ("GET", rf"/api/goals/({ID})(?:/handoff|/handoff-bundle|/handoff-data)?", "goal", "view"),
     ("GET", rf"/api/handoff/({ID})", "goal", "view"),
     ("POST", rf"/api/goals/({ID})/approve-all", "goal", "approve"),
+    ("POST", rf"/api/projects/({PID})/approve-all", "project", "approve"),
     ("GET", r"/api/assistant/([a-f0-9]{16})", "assistant", "view"),
     ("POST", r"/api/assistant/([a-f0-9]{16})/(?:reply|cancel|submit|write-goal|retry|adopt)", "assistant", "build"),
 ]

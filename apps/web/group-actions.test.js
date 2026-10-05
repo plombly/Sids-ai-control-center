@@ -33,3 +33,19 @@ test('group toggle, group activity and build all only for projects in a group', 
   assert.match(activityMarkup(events, 100, parent, true), /<span class="chip">Shop API<\/span> Approved/);
   assert.doesNotMatch(activityMarkup(events, 100, parent, false), /class="chip"/);
 });
+
+test('a parent project offers approving every ready change of its group', async () => {
+  const { approveGroupMarkup } = await import('./lib/group-actions.js');
+  const sha = 'a'.repeat(40);
+  const ready = [
+    { id: 'j1', goal_id: 'g1', project_id: 'shop', title: 'Cart', integrated_candidate_commit: sha },
+    { id: 'j2', goal_id: 'g2', project_id: 'shop-api', title: 'Orders', integrated_candidate_commit: sha },
+    { id: 'j3', goal_id: 'g2', project_id: 'shop-api', title: 'Queued', integrated_candidate_commit: sha, merge_queue_state: 'queued' }
+  ];
+  const html = approveGroupMarkup({ id: 'shop', name: 'Shop', children: [{ id: 'shop-api' }] }, ready);
+  assert.match(html, /2 changes across the group/);
+  assert.match(html, /data-approve-group="shop"/);
+  assert.doesNotMatch(html, /Queued/);
+  assert.equal(approveGroupMarkup({ id: 'solo' }, ready), '');                         // not a parent
+  assert.equal(approveGroupMarkup({ id: 'shop', children: [{}] }, ready.slice(1, 2)), ''); // one change
+});

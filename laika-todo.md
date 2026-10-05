@@ -67,7 +67,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       (default; "warn only" switch per limit); running work finishes.
       Spend = job/planner/assistant cost_usd this calendar month (Claude on a
       subscription reports API-equivalent cost; Codex on ChatGPT often $0).
-- [ ] **Approve-all for project groups**: on a parent project's page,
+- [x] **Approve-all for project groups**: on a parent project's page,
       "Approve all N" across the parent and its children (all goals), through
       the merge queue; only projects the person may approve; never LAIka.
 - [ ] Small: doctor recognises the long-lived Claude token.

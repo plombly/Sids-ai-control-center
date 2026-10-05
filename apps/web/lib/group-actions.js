@@ -26,6 +26,16 @@ export function approveAllMarkup(ready = []) {
     .join('');
 }
 
+// A parent project's page: every open change of the group at once, when they
+// come from more than one goal (one goal already has its own card).
+export function approveGroupMarkup(project, ready = []) {
+  const open = ready.filter(job => /^[0-9a-f]{40}$/.test(job.integrated_candidate_commit || '') && !/^(queued|waiting)$/.test(job.merge_queue_state || ''));
+  if (!project?.children?.length || open.length < 2 || new Set(open.map(job => job.goal_id)).size < 2) return '';
+  const candidates = Object.fromEntries(open.map(job => [job.id, job.integrated_candidate_commit]));
+  const titles = open.map(job => `<li>${esc(job.title || job.id)} <span class="subtle">· ${esc(job.project_id)}</span> <code>${esc(job.integrated_candidate_commit.slice(0, 8))}</code></li>`).join('');
+  return `<article class="home-card attention approve-all-card"><div class="card-top"><span class="card-state ok">${esc(open.length)} changes across the group</span></div><ul class="approve-all-list">${titles}</ul><p class="subtle">Approve every ready change in ${esc(project.name || project.id)} and its child projects: each joins the merge queue and is merged one after another, re-checked by the tests and a fresh review whenever main moves.</p><div class="card-actions"><button type="button" class="approve-button" data-approve-group="${escValue(project.id)}" data-candidates="${escValue(JSON.stringify(candidates))}">Approve all ${esc(open.length)}</button></div><span class="form-status" role="status"></span></article>`;
+}
+
 export const inGroup = project => Boolean(project?.parent || project?.children?.length);
 
 export function groupToggleMarkup(project, whole) {
@@ -60,6 +70,27 @@ if (typeof document !== 'undefined') {
     button.disabled = true;
     try {
       const result = await requestJSON(`/api/goals/${encodeURIComponent(button.dataset.approveAll)}/approve-all`, {
+        method: 'POST',
+        body: JSON.stringify({ request_id: newRequestId().slice(0, 40), candidates })
+      });
+      const failed = result.queued.filter(item => item.error);
+      status(button, failed.length ? `Queued ${count - failed.length}; not queued: ${failed.map(f => `${f.job_id} (${f.error})`).join(', ')}` : `All ${count} queued for merging.`);
+    } catch (error) {
+      const problems = error.body?.detail?.problems;
+      status(button, problems ? `Nothing approved: ${problems.join('; ')}` : error.message);
+      button.disabled = false;
+    }
+  });
+  registerClick('approveGroup', async button => {
+    let candidates = {};
+    try {
+      candidates = JSON.parse(button.dataset.candidates || '{}');
+    } catch {}
+    const count = Object.keys(candidates).length;
+    if (!window.confirm(`Approve all ${count} changes in this group? Each goes through the merge queue and is merged only after its tests and a fresh review pass on the latest main.`)) return;
+    button.disabled = true;
+    try {
+      const result = await requestJSON(`/api/projects/${encodeURIComponent(button.dataset.approveGroup)}/approve-all`, {
         method: 'POST',
         body: JSON.stringify({ request_id: newRequestId().slice(0, 40), candidates })
       });

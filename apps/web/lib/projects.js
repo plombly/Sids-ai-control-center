@@ -5,7 +5,7 @@ import { projectsMarkup as homeProjectsMarkup, needsYou, needsYouMarkup } from '
 import { buildsMarkup, kindCardMarkup, kindSettingsMarkup, loadCatalog } from './project-kinds.js';
 import { assistantMarkup } from './goal-assistant.js';
 import { groupOverviewMarkup, groupSettingsMarkup, partOfMarkup } from './project-groups.js';
-import { buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
+import { approveGroupMarkup, buildAllMarkup, groupToggleMarkup, wholeGroupActivity } from './group-actions.js';
 import { can } from './access.js';
 import { setHTML } from './dom.js';
 import { appLogMarkup } from './app-log.js';
@@ -185,7 +185,7 @@ export function projectNeedsMarkup(project, pollState) {
   if (!items.ready.length && !items.stuck.length) return '';
   const names = Object.fromEntries(family.map(item => [item.id, item.name || item.id]));
   const count = items.ready.length + items.stuck.length;
-  return `<div class="project-needs"><h3>${count === 1 ? 'Needs you: one thing is waiting' : `Needs you: ${count} things are waiting`}</h3>${needsYouMarkup(items, names)}</div>`;
+  return `<div class="project-needs"><h3>${count === 1 ? 'Needs you: one thing is waiting' : `Needs you: ${count} things are waiting`}</h3>${approveGroupMarkup(project, items.ready)}${needsYouMarkup(items, names)}</div>`;
 }
 
 export function projectDetailMarkup(project, tab = 'overview', pollState = null) {
