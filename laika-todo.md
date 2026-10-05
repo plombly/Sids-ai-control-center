@@ -59,7 +59,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       Android release signing key (kept like the release key), iOS VPN
       (paid Apple account).
 
-## 1.5: in progress (agreed 2026-10-04)
+## 1.5: released 2026-10-05
 
 - [x] **Spending limits**: monthly $ per project (project Settings, admin or
       Approve) and per person (Settings -> Users, admin); 80% warning
@@ -80,7 +80,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       builders, notifications use project names.
 - [x] Owner's follow-ups: SPENDING_LIMITS setting (approvers/admins/off,
       first-run setup + Settings), paused goal box with the reason.
-- [ ] Ship 1.5.0 (owner said "ship 1.5" 2026-10-05): deploy, sign, publish.
+- [x] Shipped 1.5.0 2026-10-05: production deployed, signed, published, CI green.
 
 ## Backlog (not scheduled)
 
