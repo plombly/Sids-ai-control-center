@@ -10,7 +10,7 @@ Working rules for this list: build on `dev/claude`, deploy to the
 development LAIka (`scripts/laika-dev.sh deploy`, http://10.0.0.59:9080) for
 the owner to try, then release and deploy to production when they say so.
 
-## 1.4: in progress (agreed 2026-10-04: "groups 1 and 2")
+## 1.4: released 2026-10-04 (checkpoints 1, 2, 4 and the server side of 5)
 
 Order and checkpoints. Report to the owner at each checkpoint.
 
@@ -81,6 +81,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
   (laika:main-head only exists for git checkouts): show the version instead.
 
 ## Done (recent)
+- 1.4.0 (2026-10-04): see CHANGELOG.md; production runs it.
 - 1.3.1 (2026-10-04): project rename.
 - 1.3.0 (2026-10-04): SFTP, goal-box Conversation, diagnose-first planner,
   smaller jobs, Needs you on project pages, release-install fixes.
