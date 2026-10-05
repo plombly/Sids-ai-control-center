@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.4.0 (not released yet)
+## 1.4.0
 
 - **Conversation proposes the goal.** When the idea is clear or it found the
   cause of a problem, the goal-box Conversation ends its reply with a ready
@@ -30,6 +30,17 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   the change), and says what it changed for each; a review reports every
   blocking problem in one round and starts a re-review by ticking off the
   earlier findings. The review still checks the whole change.
+
+- **Phones over Tailscale.** Pairing codes and the app's info carry the
+  server's Tailscale addresses; the LAIka App tries them when the first
+  address does not answer.
+- Fixes from the move to the `laika` user: Flutter projects could not
+  install dependencies (the SDK now belongs to the laika user), every
+  project build failed with "no main branch yet" (host programs now always
+  use LAIka's git settings), and Android builds ran out of memory (the
+  build recipes fit Gradle into the build's 4 GB).
+- Planning interrupted by a restart is planned again; a goal-box
+  Conversation sees the app's state, port, log and recent failures.
 
 ## 1.3.1
 
