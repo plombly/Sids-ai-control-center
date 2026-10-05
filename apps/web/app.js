@@ -167,11 +167,12 @@ export function render() {
   if (historyNewer) historyNewer.disabled = state.historyOffset === 0;
   if (historyOlder) historyOlder.disabled = history.length < HISTORY_PAGE_SIZE;
   const errors = ENDPOINTS.filter(k => state[k].error),
-    banner = document.getElementById('banner');
-  banner.hidden = !errors.length;
-  banner.textContent = errors.length
+    banner = document.getElementById('banner'),
+    message = Date.now() < actionNotice.until ? actionNotice.text : '';
+  banner.hidden = !errors.length && !message;
+  banner.textContent = [message, errors.length
     ? `Partial telemetry: ${errors.map(k => `${k} (${state[k].error})`).join(' · ')}. Showing last known data where available.`
-    : '';
+    : ''].filter(Boolean).join(' · ');
   document.getElementById('live-dot').classList.toggle('offline', errors.length === ENDPOINTS.length);
   document.getElementById('last-updated').textContent = state.lastUpdated
     ? `Updated ${state.lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
@@ -243,9 +244,20 @@ async function uiAction(fn, target) {
   }
 }
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+// The outcome of something the person did stays in the banner for a while;
+// without this, the next refresh (every few seconds) wiped it at once.
+const actionNotice = { text: '', until: 0 };
+function showNotice(message, seconds = 15) {
+  actionNotice.text = message;
+  actionNotice.until = Date.now() + seconds * 1000;
+  const banner = document.getElementById('banner');
+  if (banner) {
+    banner.hidden = !message;
+    banner.textContent = message;
+  }
+}
 async function runJobAction(button) {
-  const banner = document.getElementById('banner'),
-    operation = button.dataset.op,
+  const operation = button.dataset.op,
     jobId = button.dataset.job,
     candidate = button.dataset.candidate;
   if (operation === 'approve' && !window.confirm(`Approve candidate ${candidate} for job ${jobId}?`)) return;
@@ -267,13 +279,11 @@ async function runJobAction(button) {
       result = await operatorRequest(request_id);
       attempts += 1;
     }
+    showNotice(`${text(result.status, 'completed')}: ${text(result.message, '')}`.replace(/: $/, ''));
     await poll();
-    banner.hidden = false;
-    banner.textContent = `${text(result.status, 'completed')}: ${text(result.message, '')}`.replace(/: $/, '');
   } catch (error) {
+    showNotice(error.message);
     await poll();
-    banner.hidden = false;
-    banner.textContent = error.message;
   } finally {
     button.disabled = false;
   }
@@ -286,6 +296,7 @@ if (typeof document !== 'undefined') {
   loadHistoryPage();
   setInterval(() => poll(), POLL_MS);
   window.addEventListener('laika:poll-now', () => poll());
+  window.addEventListener('laika:notice', event => showNotice(String(event.detail || '')));
   setInterval(() => loadHistoryPage(), HISTORY_REFRESH_MS);
   // The job detail sits above every page: close it when you go elsewhere or press Esc.
   const closeDetail = () => {

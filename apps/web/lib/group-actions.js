@@ -114,11 +114,7 @@ if (typeof document !== 'undefined') {
       button.disabled = false;
     }
     status(button, message);
-    const banner = document.getElementById('banner');
-    if (banner) {
-      banner.hidden = false;
-      banner.textContent = message;
-    }
+    window.dispatchEvent(new CustomEvent('laika:notice', { detail: message }));
     window.dispatchEvent(new CustomEvent('laika:poll-now'));
     window.dispatchEvent(new CustomEvent('laika:project-refresh'));
   };
