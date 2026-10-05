@@ -297,6 +297,11 @@ def check_providers(runner=run):
             signed.append("Claude")
     except ValueError:
         pass
+    # Settings -> AI signs Claude in with a long-lived token (the CLI's own
+    # status does not know it); the AI page checks it actually works.
+    token = Path(user.pw_dir) / ".config" / "laika" / "claude-token"
+    if "Claude" not in signed and token.is_file() and token.stat().st_size > 0:
+        signed.append("Claude (long-lived token)")
     codex = runner(prefix + ["codex", "login", "status"])
     if codex.returncode == 0 and "logged in" in (codex.stdout + codex.stderr).lower():
         signed.append("Codex")

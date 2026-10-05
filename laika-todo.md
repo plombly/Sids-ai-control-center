@@ -61,7 +61,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
 
 ## 1.5: in progress (agreed 2026-10-04)
 
-- [ ] **Spending limits**: monthly $ per project (project Settings, admin or
+- [x] **Spending limits**: monthly $ per project (project Settings, admin or
       Approve) and per person (Settings -> Users, admin); 80% warning
       notification; at 100% new goals and Conversations are refused
       (default; "warn only" switch per limit); running work finishes.
@@ -70,9 +70,9 @@ Order and checkpoints. Report to the owner at each checkpoint.
 - [x] **Approve-all for project groups**: on a parent project's page,
       "Approve all N" across the parent and its children (all goals), through
       the merge queue; only projects the person may approve; never LAIka.
-- [ ] Small: doctor recognises the long-lived Claude token.
-- [ ] Small: dashboard Repository panel shows the version on release installs.
-- [ ] Small: dev LAIka tidy-up (Play-test demo, Starter Game, Tailscale).
+- [x] Small: doctor recognises the long-lived Claude token.
+- [x] Small: dashboard Repository panel shows the version on release installs.
+- [x] Small: dev LAIka tidy-up (Play-test demo, Starter Game, Tailscale).
 
 ## Backlog (not scheduled)
 

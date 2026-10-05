@@ -2763,3 +2763,15 @@ table {
   padding-left: 18px;
   overflow-wrap: anywhere;
 }
+/* Spending (project Settings, Overview notice, Users) */
+.spend {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.spend.warn .progress i {
+  background: var(--amber, #d29922);
+}
+.spend.over .progress i {
+  background: var(--red, #e5534b);
+}

@@ -224,3 +224,29 @@ def test_a_person_can_ask_for_every_goal_and_new_targets_never_flood(notify):
     r.records["laika:goals:g2"] = {"id": "g2", "project_id": "shop", "status": "completed", "prompt": "B", "submitted_by": "ann"}
     module.run(r, SERVER_OFF, now=3, sender=sender, person_targets=lambda name: targets)
     assert sent == ["Goal finished · shop"]
+
+
+def test_spending_limits_notify_the_projects_approvers_and_the_person(notify):
+    import time
+    module, _, _, _ = notify
+    r = PeopleRedis()
+    now = time.time()
+    r.records["laika:projects:shop"] = {"id": "shop", "budget_usd": "10"}
+    r.values["laika:projects"] = {"shop"}
+    r.records["laika:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "running", "submitted_by": "bob",
+                                   "created_at": str(now)}
+    r.records["laika:jobs:j1"] = {"id": "j1", "project_id": "shop", "goal_id": "g1", "status": "running",
+                                  "cost_usd": "9", "created_at": str(now)}
+    person(r, "ann", grants={"shop": "approve"})
+    person(r, "bob", grants={"shop": "build"})
+    r.records["laika:users:bob"]["budget_usd"] = "5"
+    got = {}
+    sender = lambda config, title, message, link, mode="post": got.setdefault(config["NTFY_URL"].rsplit("/", 1)[1], []).append(title) or 1
+    targets = {"ann": {"NTFY_URL": "https://n/ann"}, "bob": {"NTFY_URL": "https://n/bob"}}
+    module.run(r, SERVER_OFF, now=1, sender=sender, person_targets=lambda name: targets.get(name, {}))
+    r.values.pop("laika:notify:sent:ann", None), r.values.pop("laika:notify:sent:bob", None)
+    for name in ("ann", "bob"):
+        r.zsets.pop(f"laika:notify:sent:{name}", None)
+    module.run(r, SERVER_OFF, now=2, sender=sender, person_targets=lambda name: targets.get(name, {}))
+    assert got["ann"] == ["Spending limit 90% used · shop"]             # approvers of the project
+    assert got["bob"] == ["Spending limit used up · bob"]               # his own limit only

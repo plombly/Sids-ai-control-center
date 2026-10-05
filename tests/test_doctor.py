@@ -132,3 +132,15 @@ def test_firewalld_must_let_the_dashboard_and_apps_through(doc, monkeypatch):
     result = doc.check_firewall(runner("8080/tcp"))
     assert result["level"] == "fail" and "8100-8299/tcp in 'public'" in result["detail"] and "docker" not in result["detail"]
     assert doc.check_firewall(runner("", state=252))["level"] == "ok"           # firewalld not running
+
+
+def test_a_long_lived_claude_token_counts_as_signed_in(doc, tmp_path, monkeypatch):
+    import pwd
+    home = tmp_path / "home"
+    (home / ".config" / "laika").mkdir(parents=True)
+    (home / ".config" / "laika" / "claude-token").write_text("sk-ant-oat01-x")  # release-scan: allow (fake)
+    fake = type("U", (), {"pw_uid": 1, "pw_gid": 1, "pw_dir": str(home)})()
+    monkeypatch.setattr(doc.pwd, "getpwnam", lambda name: fake)
+    monkeypatch.setattr(doc, "CONF", tmp_path)
+    result = doc.check_providers(done('{"loggedIn": false}', code=1))
+    assert result["level"] == "ok" and "Claude (long-lived token)" in result["detail"]

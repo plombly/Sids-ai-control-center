@@ -188,3 +188,25 @@ def test_everyone_manages_their_own_ssh_keys_for_sftp(team):
     assert admin.get("/api/me/ssh-keys").json()["keys"] == []                      # their own only
     assert sam.delete(f"/api/me/ssh-keys/{listed[0]['id']}").status_code == 200
     assert sam.get("/api/me/ssh-keys").json()["keys"] == []
+
+
+def test_monthly_limits_stop_new_goals_for_a_project_or_a_person(team, monkeypatch):
+    import time as _time
+    import project_routes
+    admin, fake = team
+    project_routes._SPEND_CACHE["at"] = 0
+    monkeypatch.setattr(project_routes, "spend_totals", lambda max_age=10: ({"shop": 12.0}, {"sam": 3.0}))
+    sam = join(invite(admin, "sam", grants={"shop": "approve", "blog": "build"}))
+    assert admin.patch("/api/projects/shop", json={"budget_usd": 10}).status_code == 200
+    goal = {"goal": "Add a cart", "request_id": "req-00000099"}
+    refused = sam.post("/api/projects/shop/goals", json=goal)
+    assert refused.status_code == 409 and "monthly spending limit is used up ($12.00 of $10.00" in refused.json()["detail"]
+    assert sam.post("/api/projects/shop/assistant", json={"idea": "x", "mode": "chat"}).status_code == 409
+    assert admin.get("/api/projects/shop").json()["spending"]["state"] == "over"
+    admin.patch("/api/projects/shop", json={"budget_mode": "warn"})
+    assert sam.post("/api/projects/shop/goals", json=goal).status_code != 409          # warn only
+    admin.patch("/api/users/sam", json={"budget_usd": 2})
+    mine = sam.post("/api/projects/blog/goals", json={"goal": "Blog work", "request_id": "req-00000098"})
+    assert mine.status_code == 409 and mine.json()["detail"].startswith("Your monthly spending limit")
+    users = {u["name"]: u for u in admin.get("/api/users").json()["users"]}
+    assert users["sam"]["spending"]["state"] == "over"

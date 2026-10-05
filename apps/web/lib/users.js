@@ -40,16 +40,22 @@ export function inviteMarkup(invite, username) {
   return `<div class="notice invite-box" role="status"><p><b>Invite link for ${esc(username)}</b>: send it to them (it works once, for 24 hours; it is not shown again).</p><div class="form-row"><input class="invite-link" readonly value="${escValue(link)}" aria-label="Invite link"><button type="button" data-copy-invite>Copy</button></div></div>`;
 }
 
+const money = value => `$${Number(value || 0).toFixed(2)}`;
+export function spentText(spending) {
+  if (!spending) return '';
+  return spending.budget ? `${money(spending.spent)} of ${money(spending.budget)} this month${spending.state === 'over' ? ' (limit reached)' : ''}` : `${money(spending.spent)} this month`;
+}
+
 function userRow(user, projects, me) {
   const state = user.disabled ? '<span class="pill bad">disabled</span>' : user.invited ? '<span class="pill warn">invited</span>' : '';
   const you = user.name === me ? ' <span class="subtle">(you)</span>' : '';
-  return `<li class="user-row" data-user="${escValue(user.name)}"><div class="user-main"><b>${esc(user.username)}</b>${you} <span class="chip">${user.role === 'admin' ? 'Administrator' : 'Member'}</span> ${state}<div class="subtle">${esc(accessSummary(user, projects))} · last seen ${esc(when(user.last_seen))}</div></div><div class="user-actions"><button type="button" data-user-edit="${escValue(user.name)}">Change</button><button type="button" data-user-invite="${escValue(user.name)}">${user.invited ? 'New invite link' : 'Reset sign-in'}</button>${
+  return `<li class="user-row" data-user="${escValue(user.name)}"><div class="user-main"><b>${esc(user.username)}</b>${you} <span class="chip">${user.role === 'admin' ? 'Administrator' : 'Member'}</span> ${state}<div class="subtle">${esc(accessSummary(user, projects))} · last seen ${esc(when(user.last_seen))}${user.spending ? ` · ${esc(spentText(user.spending))}` : ''}</div></div><div class="user-actions"><button type="button" data-user-edit="${escValue(user.name)}">Change</button><button type="button" data-user-invite="${escValue(user.name)}">${user.invited ? 'New invite link' : 'Reset sign-in'}</button>${
     user.name === me ? '' : `<button type="button" data-user-disable="${escValue(user.name)}" data-disabled="${user.disabled ? '1' : ''}">${user.disabled ? 'Enable' : 'Disable'}</button><button type="button" class="danger-button" data-user-remove="${escValue(user.name)}">Remove</button>`
   }</div></li>`;
 }
 
 export function editMarkup(user, projects) {
-  return `<form class="settings-card user-edit" data-user-form="${escValue(user.name)}"><h3>${esc(user.username)}</h3><label class="field">Role<select name="role"><option value="member"${user.role !== 'admin' ? ' selected' : ''}>Member: only the projects below</option><option value="admin"${user.role === 'admin' ? ' selected' : ''}>Administrator: everything</option></select></label>${accessFields(projects, user.access, 'access', user.role === 'admin')}<div class="settings-actions"><button type="submit" class="primary">Save</button><button type="button" data-user-cancel>Cancel</button><span class="form-status" role="status"></span></div></form>`;
+  return `<form class="settings-card user-edit" data-user-form="${escValue(user.name)}"><h3>${esc(user.username)}</h3><label class="field">Role<select name="role"><option value="member"${user.role !== 'admin' ? ' selected' : ''}>Member: only the projects below</option><option value="admin"${user.role === 'admin' ? ' selected' : ''}>Administrator: everything</option></select></label>${accessFields(projects, user.access, 'access', user.role === 'admin')}<div class="form-row"><label class="field">Monthly spending limit ($)<input name="budget_usd" type="number" min="0" step="1" value="${escValue(user.spending?.budget || '')}" placeholder="No limit"></label><label class="field">At the limit<select name="budget_mode"><option value="block"${(user.spending?.mode || 'block') === 'block' ? ' selected' : ''}>Stop their new goals</option><option value="warn"${user.spending?.mode === 'warn' ? ' selected' : ''}>Only warn</option></select></label></div><div class="settings-actions"><button type="submit" class="primary">Save</button><button type="button" data-user-cancel>Cancel</button><span class="form-status" role="status"></span></div></form>`;
 }
 
 export function usersMarkup(data, projects = [], me = '', invite = null) {
@@ -102,7 +108,10 @@ if (typeof document !== 'undefined') {
       event.preventDefault();
       const values = Object.fromEntries(new FormData(form).entries());
       try {
-        await requestJSON(`/api/users/${encodeURIComponent(form.dataset.userForm)}`, { method: 'PATCH', body: JSON.stringify({ role: values.role, access: values.role === 'admin' ? {} : grantsFrom(form) }) });
+        await requestJSON(`/api/users/${encodeURIComponent(form.dataset.userForm)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ role: values.role, access: values.role === 'admin' ? {} : grantsFrom(form), budget_usd: Number(values.budget_usd || 0), budget_mode: values.budget_mode || 'block' })
+        });
         redraw();
       } catch (error) {
         say(form, error.message);

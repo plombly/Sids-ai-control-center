@@ -456,3 +456,10 @@ def test_job_detail_lineage_tolerates_missing_and_malformed_fields(client, monke
     fake.hashes["laika:jobs:j1"].pop("integration_result")
     assert client.get("/api/jobs/j1").json()["gate"] is None
     assert client.get("/api/jobs/nojob").status_code == 404
+
+
+def test_the_repository_panel_shows_the_version_on_a_release_install(monkeypatch):
+    import json as _json
+    import main
+    monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"laika:system-info": _json.dumps({"version": "1.5.0"})}))
+    assert main._repository() == {"branch": "release", "head": None, "short": "1.5.0", "version": "1.5.0", "status": "ok"}

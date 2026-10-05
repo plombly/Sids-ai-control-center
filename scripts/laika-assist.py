@@ -160,6 +160,17 @@ def chat(r, session, project, runner=agent_cli.run_claude):
                   wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
 
 
+def charge(r, session, run):
+    """A run's cost, also added to this month's spending ledger (apps/api/spending.py)."""
+    import spending
+    cost = float((run.result or {}).get("total_cost_usd") or 0)
+    try:
+        spending.record_assistant(r, session.get("project_id") or "laika", session.get("started_by") or "", cost)
+    except Exception as exc:  # accounting must never fail a turn
+        print(f"[assist] spending: {exc}", flush=True)
+    return cost
+
+
 def fail(r, session_id, message):
     goal_assist.save(r, session_id, status="failed", error=message[:500])
     return 1
@@ -191,7 +202,7 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
         if chatting and session.get("want") != "brief":
             run = chat(r, session, project, runner=runner)
             if run.result:
-                cost += float(run.result.get("total_cost_usd") or 0)
+                cost += charge(r, session, run)
             if not run.ok:
                 goal_assist.save(r, session_id, cost_usd=cost)
                 if run.unavailable:
@@ -214,7 +225,7 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
         for force_brief in ((True,) if chatting else (False, True)):
             run = ask(r, session, project, force_brief=force_brief, runner=runner)
             if run.result:
-                cost += float(run.result.get("total_cost_usd") or 0)
+                cost += charge(r, session, run)
             if not run.ok:
                 if run.unavailable:
                     agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")

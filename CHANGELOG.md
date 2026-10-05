@@ -2,6 +2,24 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.5.0 (not released yet)
+
+- **Spending limits.** A monthly dollar limit per project (project Settings →
+  Spending limit) and per person (Settings → Users). At 80% the project's
+  approvers (or the person) are notified; at 100% new goals and goal-box
+  conversations are refused until next month or a higher limit, or, with
+  "Only warn", just notified. Work already running always finishes. The
+  Overview shows a notice from 80%, Settings and Users show this month's
+  spending. Claude on a subscription counts what the run would cost on the
+  API; Codex on a ChatGPT plan often reports nothing.
+- **Approve all for a project group.** A parent project's page offers
+  "Approve all N" for every ready change in it and its child projects, from
+  any goal, through the merge queue (each re-tested and re-reviewed on the
+  latest main). Only projects you may approve; LAIka's own changes never.
+- `laika doctor` recognises Claude signed in with a long-lived token.
+- The dashboard's Repository panel shows the version on installs from a
+  release (instead of "unknown").
+
 ## 1.4.0
 
 - **Conversation proposes the goal.** When the idea is clear or it found the

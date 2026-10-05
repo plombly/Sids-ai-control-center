@@ -240,3 +240,13 @@ test('play-test results: passed, broken with reasons, skipped for non-pages', as
   assert.match(bad, /testing the new one/);
   assert.equal(playtestMarkup('api', { skipped: 'not a page', ok: true }), '');
 });
+
+test('spending: a bar, a notice from 80% and the settings form', async () => {
+  const { spendingBar, spendingNotice, spendingSettingsMarkup } = await import('./lib/projects.js');
+  assert.match(spendingBar({ spent: 4, budget: 10, percent: 40, state: 'ok' }), /\$4\.00 of \$10\.00 this month \(40%\)/);
+  assert.match(spendingBar({ spent: 4, budget: 0, percent: 0, state: 'none' }), /no limit/);
+  assert.equal(spendingNotice({ spent: 4, budget: 10, percent: 40, state: 'ok' }), '');
+  assert.match(spendingNotice({ spent: 9, budget: 10, percent: 90, state: 'warn', mode: 'block' }), /90% of this project's monthly spending limit/);
+  assert.match(spendingNotice({ spent: 11, budget: 10, percent: 110, state: 'over', mode: 'block' }), /used up/);
+  assert.match(spendingSettingsMarkup({ spending: { spent: 1, budget: 10, percent: 10, state: 'ok', mode: 'warn' } }), /<option value="warn" selected>Only warn/);
+});

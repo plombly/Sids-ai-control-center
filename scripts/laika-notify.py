@@ -141,6 +141,7 @@ def events(r, dashboard):
                                         "; ".join((test.get("page_errors") or [])[:2]) or "errors on the page")
             found.append(_event(f"playtest:{project}:{test['commit']}", "app_problem", f"App looks broken · {project}",
                                 f"Play-test of the latest version: {why}"[:300], f"{dashboard}/#/projects/{project}", project))
+    found += budget_events(r, dashboard)
     for raw in r.lrange("laika:sftp:conflicts", 0, 49) or []:
         try:
             item = json.loads(raw)
@@ -170,6 +171,37 @@ def events(r, dashboard):
     return found
 
 
+def budget_events(r, dashboard, now=None):
+    """Projects and people at 80% / 100% of their monthly limit (apps/api/spending.py)."""
+    import spending
+    jobs = dict(_hashes(r, "laika:jobs:*"))
+    goals = dict(_hashes(r, "laika:goals:*"))
+    by_project, by_person = spending.totals(jobs, goals, spending.month_start(now))
+    month = spending.month(now)
+    found = []
+
+    def event(scope, name, state, project, owner, link):
+        level = "100" if state["state"] == "over" else "80"
+        what = "used up" if level == "100" else f"{state['percent']}% used"
+        blocked = " New goals wait." if level == "100" and state["mode"] == "block" else ""
+        who = f"Project {project}" if scope == "project" else f"{owner}'s"
+        found.append(_event(f"budget:{scope}:{name}:{month}:{level}", "budget",
+                            f"Spending limit {what} · {project or owner}",
+                            f"{who} monthly limit: ${state['spent']:.2f} of ${state['budget']:.2f}.{blocked}",
+                            link, project, owner))
+
+    for project_id in r.smembers("laika:projects") or []:
+        record = r.hgetall(f"laika:projects:{project_id}") or {}
+        state = spending.project_state(r, project_id, record, by_project, now)
+        if state["state"] in ("warn", "over"):
+            event("project", project_id, state, project_id, "", f"{dashboard}/#/projects/{project_id}/settings")
+    for user in access.all_users(r):
+        state = spending.person_state(r, user["name"], user, by_person, now)
+        if state["state"] in ("warn", "over"):
+            event("person", user["name"], state, "", user["name"], f"{dashboard}/#/")
+    return found
+
+
 def send(config, title, message, link, mode="post", opener=urllib.request.urlopen):
     return notify_core.send(config, title, message, link, mode, opener=opener,
                             log=lambda line: print(line, flush=True))
@@ -192,12 +224,16 @@ def for_person(r, user, settings, current):
     mine = []
     for event in current:
         kind = event[1]
-        if not notify_core.may_receive(kind, getattr(event, "project", ""), ctx.is_admin, levels, access.LEVELS):
+        own_budget = kind == "budget" and not getattr(event, "project", "") and getattr(event, "owner", "") == user["name"]
+        if not own_budget and not notify_core.may_receive(kind, getattr(event, "project", ""), ctx.is_admin, levels,
+                                                          access.LEVELS):
             continue
         if kind in ("goal_done", "goal_failed") and settings["goals"] == "mine" and getattr(event, "owner", "") != user["name"]:
             continue
         if kind == "sftp_conflict" and getattr(event, "owner", "") != user["name"]:
             continue  # only the person whose changes they were
+        if kind == "budget" and not getattr(event, "project", "") and getattr(event, "owner", "") != user["name"]:
+            continue  # a person's own limit: only them (administrators see it on the server channel)
         mine.append(event)
     return mine
 

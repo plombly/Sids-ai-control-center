@@ -425,6 +425,10 @@ def _repository():
         sha = value.strip() if isinstance(value, str) else ""
         if sha:
             return {"branch": "main", "head": sha, "short": sha[:12], "status": "ok"}
+        # An install from a release has no git checkout of LAIka: its version says what runs.
+        version = str(json.loads(redis.get("laika:system-info") or "{}").get("version") or "")
+        if version:
+            return {"branch": "release", "head": None, "short": version, "version": version, "status": "ok"}
     except Exception:
         pass
     return {"branch": "unknown", "head": None, "short": None, "status": "unknown"}

@@ -75,7 +75,7 @@ def _active_count():
 
 
 @router.post("/api/projects/{project_id}/assistant", status_code=202)
-def start(project_id: str, payload: AssistStart):
+def start(project_id: str, payload: AssistStart, request: Request):
     project_id = projects._id(project_id)
     if not projects._known(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
@@ -86,6 +86,7 @@ def start(project_id: str, payload: AssistStart):
         raise HTTPException(status_code=422, detail="Describe what you want first")
     if _active_count() >= MAX_ACTIVE:
         raise HTTPException(status_code=429, detail="The assistant is busy; try again in a minute or use Send as written")
+    projects.check_spending(project_id, request)
     session_id = secrets.token_hex(8)
     import access
     if payload.mode == "chat":
@@ -103,8 +104,9 @@ def get(session_id: str):
 
 
 @router.post("/api/assistant/{session_id}/reply", status_code=202)
-def reply(session_id: str, payload: AssistReply):
+def reply(session_id: str, payload: AssistReply, request: Request):
     session = _session(session_id)
+    projects.check_spending(session.get("project_id") or "laika", request)
     turns = session["turns"]
     if (payload.message or "").strip():
         # Conversation: any time the assistant is not busy, also after a brief.
@@ -136,9 +138,10 @@ def reply(session_id: str, payload: AssistReply):
 
 
 @router.post("/api/assistant/{session_id}/write-goal", status_code=202)
-def write_goal(session_id: str):
+def write_goal(session_id: str, request: Request):
     """Conversation -> the goal brief, from the whole conversation."""
     session = _session(session_id)
+    projects.check_spending(session.get("project_id") or "laika", request)
     if session.get("mode") != "chat" or session.get("status") not in ("reply", "brief", "failed"):
         raise HTTPException(status_code=409, detail="Nothing to write a goal from yet")
     _queue(session_id, want="brief")

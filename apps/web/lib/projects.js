@@ -102,7 +102,7 @@ function overviewMarkup(project) {
     // An at-a-glance review: what the builder changed, nothing to act on.
     return `${viewOnlyNotice()}${id === 'laika' ? systemInfoMarkup(project.system) : ''}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
   }
-  return `${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' || !can(project, 'build') ? '' : assistantMarkup(`project:${id}`, { label: `What should LAIka do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'laika' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
+  return `${spendingNotice(project.spending)}${project.catalog ? kindCardMarkup(project, project.catalog) : ''}${project?.status === 'archived' || !can(project, 'build') ? '' : assistantMarkup(`project:${id}`, { label: `What should LAIka do in ${name}?`, placeholder: 'Describe the change you want, roughly is fine' })}${usageLineMarkup(project.usage)}${id === 'laika' ? systemInfoMarkup(project.system) : appStatusMarkup(project)}${groupOverviewMarkup(project)}<div class="stack"><h3>Goals</h3>${goalItems || '<div class="empty">No goals yet</div>'}</div><h3>Recent jobs</h3><div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>What</th><th>Status</th><th>Agent</th></tr></thead><tbody>${jobRows || '<tr><td colspan="4" class="subtle">No jobs yet</td></tr>'}</tbody></table></div>`;
 }
 
 // Activity: one timeline of what happened in the project.
@@ -171,7 +171,7 @@ function settingsMarkup(project) {
   const id = text(project?.id, '');
   if (id === 'laika') return systemInfoMarkup(project.system);
   const nameForm = `<form id="project-name-form" class="goal-form"><h3>Name</h3><div class="form-row"><input name="name" value="${escValue(text(project?.name, id))}" maxlength="60" required aria-label="Project name"><button type="submit">Rename</button></div><span class="field-hint">Only the name shown in LAIka changes; the project's id (${esc(id)}), folders and app port stay.</span><span id="project-name-status" class="form-status" role="status"></span></form>`;
-  return `${nameForm}${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
+  return `${nameForm}${spendingSettingsMarkup(project)}${project.catalog ? kindSettingsMarkup(project, project.catalog) : ''}${groupSettingsMarkup(project, project.allProjects || [])}${buildSettingsMarkup(project)}${envMarkup(id, project.env)}<form id="project-push-form" class="goal-form push-settings"><h3>GitHub</h3><p class="subtle">Push merged work to a GitHub repository. LAIka creates a deploy key and shows it here to add to the repository.</p><div class="form-row"><input name="url" placeholder="git@github.com:you/repo.git" required><button type="submit">Set up GitHub push</button></div><span id="project-push-status" class="form-status" role="status"></span></form>${deleteProjectMarkup(id)}`;
 }
 
 // What this project (and its children) needs from you: the same cards as the
@@ -246,6 +246,27 @@ export function playtestMarkup(id, test, commit = '') {
     .map(line => `<li>${esc(line)}</li>`)
     .join('');
   return `<div class="playtest bad">⚠ Play-test: the app looks broken${shot}${stale}<ul>${items}</ul></div>`;
+}
+
+// This month's spending and its limit (apps/api/spending.py).
+export function spendingBar(spending) {
+  if (!spending) return '';
+  const text = spending.budget ? `$${Number(spending.spent).toFixed(2)} of $${Number(spending.budget).toFixed(2)} this month (${spending.percent}%)` : `$${Number(spending.spent).toFixed(2)} this month, no limit`;
+  const width = spending.budget ? Math.min(100, spending.percent) : 0;
+  return `<div class="spend ${escValue(spending.state)}"><div class="progress"><i style="width:${width}%"></i></div><span class="subtle">${esc(text)}</span></div>`;
+}
+
+export function spendingNotice(spending) {
+  if (!spending || !['warn', 'over'].includes(spending.state)) return '';
+  const blocked = spending.state === 'over' && spending.mode === 'block';
+  return `<div class="notice${spending.state === 'over' ? ' warn' : ''}">${blocked ? '<b>This project\'s monthly spending limit is used up:</b> new goals wait until next month or until the limit is raised (Settings).' : `<b>${esc(spending.percent)}% of this project's monthly spending limit is used.</b>`} ${spendingBar(spending)}</div>`;
+}
+
+export function spendingSettingsMarkup(project) {
+  const s = project?.spending;
+  if (!s) return '';
+  const mode = s.mode || 'block';
+  return `<form id="project-budget-form" class="goal-form"><h3>Spending limit</h3>${spendingBar(s)}<div class="form-row"><label class="field">Monthly limit ($)<input name="budget_usd" type="number" min="0" step="1" value="${escValue(s.budget || '')}" placeholder="No limit"></label><label class="field">At the limit<select name="budget_mode"><option value="block"${mode === 'block' ? ' selected' : ''}>Stop new goals</option><option value="warn"${mode === 'warn' ? ' selected' : ''}>Only warn</option></select></label></div><span class="field-hint">What LAIka's AI runs for this project cost this calendar month (builds, reviews, planning, the goal box). Approvers are notified at 80%. Work already running always finishes. Claude on a subscription reports what the run would cost on the API; Codex on a ChatGPT plan often reports nothing.</span><div class="form-row"><button type="submit">Save limit</button><span id="project-budget-status" class="form-status" role="status"></span></div></form>`;
 }
 
 // Dependency setup, tests and the run command; empty means automatic/off.
@@ -564,6 +585,13 @@ if (typeof document !== 'undefined') {
         form.reset();
         document.activeElement?.blur?.();
         status('project-env-status', `Saved ${name}; the app restarts with it`);
+        await render(activeRoute, true);
+      } else if (form.id === 'project-budget-form') {
+        const budget = Number(values.budget_usd || 0);
+        if (!(budget >= 0)) return status('project-budget-status', 'Enter a number of dollars (0 or empty: no limit)');
+        await requestJSON(`/api/projects/${encodeURIComponent(activeRoute.projectId)}`, { method: 'PATCH', body: JSON.stringify({ budget_usd: budget, budget_mode: values.budget_mode || 'block' }) });
+        status('project-budget-status', 'Saved');
+        document.activeElement?.blur?.();
         await render(activeRoute, true);
       } else if (form.id === 'project-name-form') {
         const name = text(values.name, '').trim();

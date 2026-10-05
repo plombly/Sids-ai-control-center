@@ -52,9 +52,10 @@ under **Needs you** on the home page and at the top of its project's page:
   first.
 - **Details** shows the diff, the review findings, tests, tokens and time.
 - **Reject** discards it.
-- **Approve all N** (when one goal produced several changes) queues every
-  change you see; they merge one after another, each re-tested and
-  re-reviewed on the latest main.
+- **Approve all N** (when one goal produced several changes, or on a parent
+  project's page for every ready change in its group) queues every change
+  you see; they merge one after another, each re-tested and re-reviewed on
+  the latest main.
 
 Nothing ever merges without you. If main moved since a change was checked,
 LAIka checks it again automatically before it can be approved.
@@ -175,3 +176,11 @@ Tailscale account** and approve the server with the link it shows. Install
 Tailscale on your phone or laptop with the same account, and the
 addresses listed there (dashboard, apps, SFTP) work from anywhere. Nothing
 becomes public, and **Disconnect** removes the server from your tailnet.
+
+## Spending limits
+
+A project's **Settings → Spending limit** and **Settings → Users** (per
+person) take a monthly limit in dollars. At 80% the project's approvers, or
+the person, are notified; at 100% new goals and goal-box conversations are
+refused until next month or until the limit is raised. Choose **Only warn**
+to be notified without stopping anything. Running work always finishes.

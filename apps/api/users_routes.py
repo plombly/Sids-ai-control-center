@@ -49,7 +49,16 @@ def _public(redis, user):
     seen = [float(s.get("last_seen") or 0) for s in sessions if (s.get("user") or "").lower() == user["name"]]
     return {"name": user["name"], "username": user.get("username") or user["name"], "role": user.get("role") or "member",
             "access": user.get("access") or {}, "disabled": user["disabled"], "invited": not user.get("password"),
-            "created_at": float(user.get("created_at") or 0), "last_seen": max(seen) if seen else 0}
+            "created_at": float(user.get("created_at") or 0), "last_seen": max(seen) if seen else 0,
+            "spending": _spending(user)}
+
+
+def _spending(user):
+    try:
+        import project_routes
+        return project_routes.person_spending(user["name"])
+    except Exception:  # a convenience on the Users page
+        return None
 
 
 def _check_access(redis, grants):
@@ -92,6 +101,8 @@ class UserChange(BaseModel):
     role: Optional[str] = Field(default=None, pattern=r"^(admin|member)$")
     access: Optional[Dict[str, str]] = Field(default=None, max_length=200)
     disabled: Optional[bool] = None
+    budget_usd: Optional[float] = Field(default=None, ge=0, le=1000000)  # monthly, 0 = no limit
+    budget_mode: Optional[str] = Field(default=None, pattern=r"^(block|warn)$")
 
 
 @router.get("/api/users")
@@ -130,6 +141,10 @@ def change_user(name: str, payload: UserChange, request: Request):
         fields["access"] = _check_access(redis, payload.access)
     if payload.disabled is not None:
         fields["disabled"] = "1" if payload.disabled else ""
+    if payload.budget_usd is not None:
+        fields["budget_usd"] = f"{payload.budget_usd:g}"
+    if payload.budget_mode is not None:
+        fields["budget_mode"] = payload.budget_mode
     access.save_user(redis, user["name"], **fields)
     if payload.disabled:
         auth.end_sessions(redis, user=user["name"])
