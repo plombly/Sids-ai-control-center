@@ -22,6 +22,17 @@ import time
 
 WARN_AT = 0.8
 MODES = ("block", "warn")
+POLICIES = ("approvers", "admins", "off")
+
+
+def policy(redis):
+    """The SPENDING_LIMITS setting: approvers | admins | off."""
+    try:
+        import settings_schema
+        value = settings_schema.values(redis).get("SPENDING_LIMITS", "approvers")
+    except Exception:  # an unreadable setting must not switch limits off
+        value = "approvers"
+    return value if value in POLICIES else "approvers"
 
 
 def _number(value):
@@ -110,14 +121,19 @@ def ledger(redis, scope, name, now=None):
     return _number(redis.get(ledger_key(scope, name, now)) if name else 0)
 
 
-def project_state(redis, project_id, record, by_project, now=None):
+def project_state(redis, project_id, record, by_project, now=None, rule=None):
     budget, mode = limit_of(record)
-    return state(by_project.get(project_id, 0.0) + ledger(redis, "project", project_id, now), budget, mode)
+    rule = rule or policy(redis)
+    current = state(by_project.get(project_id, 0.0) + ledger(redis, "project", project_id, now),
+                    0 if rule == "off" else budget, mode)
+    return {**current, "policy": rule}
 
 
-def person_state(redis, name, record, by_person, now=None):
+def person_state(redis, name, record, by_person, now=None, rule=None):
     budget, mode = limit_of(record)
-    return state(by_person.get(name, 0.0) + ledger(redis, "person", name, now), budget, mode)
+    rule = rule or policy(redis)
+    current = state(by_person.get(name, 0.0) + ledger(redis, "person", name, now), 0 if rule == "off" else budget, mode)
+    return {**current, "policy": rule}
 
 
 def blocked(project_state_, person_state_):

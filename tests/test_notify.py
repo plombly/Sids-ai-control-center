@@ -250,3 +250,13 @@ def test_spending_limits_notify_the_projects_approvers_and_the_person(notify):
     module.run(r, SERVER_OFF, now=2, sender=sender, person_targets=lambda name: targets.get(name, {}))
     assert got["ann"] == ["Spending limit 90% used · Shop"]             # approvers of the project
     assert got["bob"] == ["Spending limit used up · bob"]               # his own limit only
+
+
+def test_no_spending_notifications_when_limits_are_off(notify):
+    import json as _json
+    module, _, _, _ = notify
+    r = PeopleRedis()
+    r.records["laika:projects:shop"] = {"id": "shop", "budget_usd": "1"}
+    r.values["laika:projects"] = {"shop"}
+    r.values["laika:settings"] = _json.dumps({"SPENDING_LIMITS": "off"})
+    assert module.budget_events(r, "http://x") == []

@@ -184,3 +184,7 @@ person) take a monthly limit in dollars. At 80% the project's approvers, or
 the person, are notified; at 100% new goals and goal-box conversations are
 refused until next month or until the limit is raised. Choose **Only warn**
 to be notified without stopping anything. Running work always finishes.
+While a limit stops new goals, the goal box is paused and says why.
+**Settings → AI & pipeline → Spending limits** chooses who may set project
+limits (project approvers and administrators, or only administrators) or
+turns spending limits off; first-run setup asks the same.

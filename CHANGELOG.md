@@ -10,12 +10,18 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   conversations are refused until next month or a higher limit, or, with
   "Only warn", just notified. Work already running always finishes. The
   Overview shows a notice from 80%, Settings and Users show this month's
-  spending. Claude on a subscription counts what the run would cost on the
-  API; Codex on a ChatGPT plan often reports nothing.
+  spending. When new goals are paused, the goal box says why. The setting
+  Settings → AI & pipeline → Spending limits (also asked during first-run
+  setup) decides who sets project limits (project approvers and
+  administrators, or administrators only) or turns limits off. Claude on a
+  subscription counts what the run would cost on the API; Codex on a
+  ChatGPT plan often reports nothing.
 - **Approve all for a project group.** A parent project's page offers
   "Approve all N" for every ready change in it and its child projects, from
   any goal, through the merge queue (each re-tested and re-reviewed on the
   latest main). Only projects you may approve; LAIka's own changes never.
+- Results of Approve, Reject and Approve all stay in the page banner for
+  15 seconds instead of vanishing at the next refresh.
 - `laika doctor` recognises Claude signed in with a long-lived token.
 - The dashboard's Repository panel shows the version on installs from a
   release (instead of "unknown").

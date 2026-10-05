@@ -399,6 +399,8 @@ def get_project(project_id: str, limit: int = Query(25, ge=1, le=100)):
     main = _redis()
     item = _item(project_id)
     item["spending"] = project_spending(project_id)
+    import access
+    item["my_spending"] = person_spending(access.current_name())
     goals = [(key, data) for key, data in _scan_hashes(main, "laika:goals:*", _GOAL_KEY)
              if _text(data.get("project_id"), "laika") == project_id]
     jobs = [(key, data) for key, data in _scan_hashes(main, "laika:jobs:*", _JOB_KEY)
@@ -475,6 +477,15 @@ def patch_project(project_id: str, payload: ProjectPatch):
     if project_id == "laika" and not main.redis.hgetall(key):
         main.redis.hset(key, mapping={"id": "laika", "name": "LAIka", "status": "active"})
     changes = payload.model_dump(exclude_none=True)
+    if {"budget_usd", "budget_mode"} & set(changes):
+        import access
+        import spending
+        rule = spending.policy(main.redis)
+        ctx = access.CURRENT.get()
+        if rule == "off":
+            raise HTTPException(status_code=409, detail="Spending limits are turned off (Settings -> AI & pipeline)")
+        if rule == "admins" and ctx is not None and not ctx.is_admin:
+            raise HTTPException(status_code=403, detail="Only administrators set spending limits on this server")
     if project_id == "laika":
         # LAIka's commands are its own gate and control plane: never editable.
         changes = {k: v for k, v in changes.items() if k in ("importance", "type", "type_description")}

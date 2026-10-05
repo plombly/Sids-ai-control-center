@@ -174,6 +174,8 @@ def events(r, dashboard):
 def budget_events(r, dashboard, now=None):
     """Projects and people at 80% / 100% of their monthly limit (apps/api/spending.py)."""
     import spending
+    if spending.policy(r) == "off":
+        return []
     jobs = dict(_hashes(r, "laika:jobs:*"))
     goals = dict(_hashes(r, "laika:goals:*"))
     by_project, by_person = spending.totals(jobs, goals, spending.month_start(now))

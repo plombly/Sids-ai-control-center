@@ -2775,3 +2775,7 @@ table {
 .spend.over .progress i {
   background: var(--red, #e5534b);
 }
+.goal-blocked textarea {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

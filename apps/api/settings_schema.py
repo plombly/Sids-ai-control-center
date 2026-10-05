@@ -81,6 +81,12 @@ FIELDS = [
          help={"planner": "Splits goals into jobs.", "builder": "Writes the code.",
                "reviewer": "Reviews every change independently.", "repair": "Fixes what review found."}[role])
       for role in ROLES],
+    _f("SPENDING_LIMITS", "ai", "Spending limits", "choice", "approvers",
+       "Monthly dollar limits per project and per person (apps/api/spending.py). Who may set a project's "
+       "limit; people's own limits are always set by administrators. Off: no limits, no warnings.",
+       apply="live", choices=["approvers", "admins", "off"],
+       choice_labels={"approvers": "On: project approvers and administrators set project limits",
+                      "admins": "On: only administrators set limits", "off": "Off"}),
     _f("DEFAULT_MODEL", "ai", "Codex model", "str", "gpt-5.6-luna", "Model used whenever a role runs on Codex.",
        max_length=60, pattern=r"^[A-Za-z0-9._:-]+$"),
     _f("CLAUDE_PLANNER_MODEL", "ai", "Claude planner model", "str", "opus", max_length=60, pattern=r"^[A-Za-z0-9._:-]+$"),

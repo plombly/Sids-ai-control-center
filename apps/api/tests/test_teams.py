@@ -210,3 +210,20 @@ def test_monthly_limits_stop_new_goals_for_a_project_or_a_person(team, monkeypat
     assert mine.status_code == 409 and mine.json()["detail"].startswith("Your monthly spending limit")
     users = {u["name"]: u for u in admin.get("/api/users").json()["users"]}
     assert users["sam"]["spending"]["state"] == "over"
+
+
+def test_the_spending_limits_setting_decides_who_sets_limits_or_turns_them_off(team, monkeypatch):
+    import json as _json
+    import project_routes
+    admin, fake = team
+    monkeypatch.setattr(project_routes, "spend_totals", lambda max_age=10: ({"shop": 12.0}, {}))
+    sam = join(invite(admin, "sam2", grants={"shop": "approve"}))
+    fake.set("laika:settings", _json.dumps({"SPENDING_LIMITS": "admins"}))
+    assert sam.patch("/api/projects/shop", json={"budget_usd": 5}).status_code == 403
+    assert admin.patch("/api/projects/shop", json={"budget_usd": 10}).status_code == 200
+    assert admin.get("/api/projects/shop").json()["spending"]["policy"] == "admins"
+    fake.set("laika:settings", _json.dumps({"SPENDING_LIMITS": "off"}))
+    assert admin.patch("/api/projects/shop", json={"budget_usd": 10}).status_code == 409
+    assert admin.get("/api/projects/shop").json()["spending"]["state"] == "none"          # limit ignored
+    goal = sam.post("/api/projects/shop/goals", json={"goal": "Anything", "request_id": "req-00000077"})
+    assert goal.status_code != 409

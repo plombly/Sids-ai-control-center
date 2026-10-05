@@ -71,6 +71,7 @@ Which AI does what, how much it may spend and how hard LAIka tries.
 | Builder runs on | `codex` | claude, codex | after **Apply now** | Writes the code. |
 | Reviewer runs on | `claude` | claude, codex | after **Apply now** | Reviews every change independently. |
 | Repair runs on | `claude` | claude, codex | after **Apply now** | Fixes what review found. |
+| Spending limits | `approvers` | On: project approvers and administrators set project limits, On: only administrators set limits, Off | at once | Monthly dollar limits per project and per person (apps/api/spending.py). Who may set a project's limit; people's own limits are always set by administrators. Off: no limits, no warnings. |
 | Codex model | `gpt-5.6-luna` |  | after **Apply now** | Model used whenever a role runs on Codex. |
 | Claude planner model | `opus` |  | after **Apply now** |  |
 | Claude model for one-step goals | `sonnet` |  | after **Apply now** |  |

@@ -13,6 +13,7 @@ test('setup route and every step renders', () => {
   const capacity = stepMarkup('capacity', { values: {}, info: { cpus: 8, memory_gb: 16, suggested_workers: 6 } });
   assert.match(capacity, /name="MAX_WORKERS" value="6"/);
   assert.match(capacity, /<option value="true" selected>Automatic/);
+  assert.match(capacity, /<option value="approvers" selected>On: project approvers/);
 });
 
 test('the safety step warns about public addresses', () => {

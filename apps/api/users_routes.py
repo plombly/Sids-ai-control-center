@@ -53,6 +53,12 @@ def _public(redis, user):
             "spending": _spending(user)}
 
 
+def _limits_off():
+    import main
+    import spending
+    return spending.policy(main.redis) == "off"
+
+
 def _spending(user):
     try:
         import project_routes
@@ -141,6 +147,8 @@ def change_user(name: str, payload: UserChange, request: Request):
         fields["access"] = _check_access(redis, payload.access)
     if payload.disabled is not None:
         fields["disabled"] = "1" if payload.disabled else ""
+    if (payload.budget_usd is not None or payload.budget_mode is not None) and _limits_off():
+        raise HTTPException(status_code=409, detail="Spending limits are turned off (Settings -> AI & pipeline)")
     if payload.budget_usd is not None:
         fields["budget_usd"] = f"{payload.budget_usd:g}"
     if payload.budget_mode is not None:
