@@ -73,6 +73,12 @@ Order and checkpoints. Report to the owner at each checkpoint.
 - [x] Small: doctor recognises the long-lived Claude token.
 - [x] Small: dashboard Repository panel shows the version on release installs.
 - [x] Small: dev LAIka tidy-up (Play-test demo, Starter Game, Tailscale).
+- [x] Tested 2026-10-04 on laika-dev (API, browser desktop+phone, real
+      Conversation turn, two group approve-alls merged). Fixed: approve-all gave
+      no feedback on project pages, action results vanished from the banner on
+      refresh, months now UTC (API container vs host), read-only limit for
+      builders, notifications use project names.
+- [ ] Ship 1.5.0 when the owner says so.
 
 ## Backlog (not scheduled)
 
