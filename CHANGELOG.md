@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.5.0 (not released yet)
+## 1.5.0 (2026-10-05)
 
 - **Spending limits.** A monthly dollar limit per project (project Settings →
   Spending limit) and per person (Settings → Users). At 80% the project's

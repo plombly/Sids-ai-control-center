@@ -80,7 +80,7 @@ Order and checkpoints. Report to the owner at each checkpoint.
       builders, notifications use project names.
 - [x] Owner's follow-ups: SPENDING_LIMITS setting (approvers/admins/off,
       first-run setup + Settings), paused goal box with the reason.
-- [ ] Ship 1.5.0 when the owner says so.
+- [ ] Ship 1.5.0 (owner said "ship 1.5" 2026-10-05): deploy, sign, publish.
 
 ## Backlog (not scheduled)
 
