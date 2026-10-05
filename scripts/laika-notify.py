@@ -180,25 +180,25 @@ def budget_events(r, dashboard, now=None):
     month = spending.month(now)
     found = []
 
-    def event(scope, name, state, project, owner, link):
+    def event(scope, name, state, project, owner, link, label):
         level = "100" if state["state"] == "over" else "80"
         what = "used up" if level == "100" else f"{state['percent']}% used"
         blocked = " New goals wait." if level == "100" and state["mode"] == "block" else ""
-        who = f"Project {project}" if scope == "project" else f"{owner}'s"
         found.append(_event(f"budget:{scope}:{name}:{month}:{level}", "budget",
-                            f"Spending limit {what} · {project or owner}",
-                            f"{who} monthly limit: ${state['spent']:.2f} of ${state['budget']:.2f}.{blocked}",
+                            f"Spending limit {what} · {label}",
+                            f"{label}'s monthly limit: ${state['spent']:.2f} of ${state['budget']:.2f}.{blocked}",
                             link, project, owner))
 
     for project_id in r.smembers("laika:projects") or []:
         record = r.hgetall(f"laika:projects:{project_id}") or {}
         state = spending.project_state(r, project_id, record, by_project, now)
         if state["state"] in ("warn", "over"):
-            event("project", project_id, state, project_id, "", f"{dashboard}/#/projects/{project_id}/settings")
+            event("project", project_id, state, project_id, "", f"{dashboard}/#/projects/{project_id}/settings",
+                  record.get("name") or project_id)
     for user in access.all_users(r):
         state = spending.person_state(r, user["name"], user, by_person, now)
         if state["state"] in ("warn", "over"):
-            event("person", user["name"], state, "", user["name"], f"{dashboard}/#/")
+            event("person", user["name"], state, "", user["name"], f"{dashboard}/#/", user["name"])
     return found
 
 

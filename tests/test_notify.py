@@ -231,7 +231,7 @@ def test_spending_limits_notify_the_projects_approvers_and_the_person(notify):
     module, _, _, _ = notify
     r = PeopleRedis()
     now = time.time()
-    r.records["laika:projects:shop"] = {"id": "shop", "budget_usd": "10"}
+    r.records["laika:projects:shop"] = {"id": "shop", "name": "Shop", "budget_usd": "10"}
     r.values["laika:projects"] = {"shop"}
     r.records["laika:goals:g1"] = {"id": "g1", "project_id": "shop", "status": "running", "submitted_by": "bob",
                                    "created_at": str(now)}
@@ -248,5 +248,5 @@ def test_spending_limits_notify_the_projects_approvers_and_the_person(notify):
     for name in ("ann", "bob"):
         r.zsets.pop(f"laika:notify:sent:{name}", None)
     module.run(r, SERVER_OFF, now=2, sender=sender, person_targets=lambda name: targets.get(name, {}))
-    assert got["ann"] == ["Spending limit 90% used · shop"]             # approvers of the project
+    assert got["ann"] == ["Spending limit 90% used · Shop"]             # approvers of the project
     assert got["bob"] == ["Spending limit used up · bob"]               # his own limit only
