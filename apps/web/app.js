@@ -285,6 +285,7 @@ if (typeof document !== 'undefined') {
   poll();
   loadHistoryPage();
   setInterval(() => poll(), POLL_MS);
+  window.addEventListener('laika:poll-now', () => poll());
   setInterval(() => loadHistoryPage(), HISTORY_REFRESH_MS);
   // The job detail sits above every page: close it when you go elsewhere or press Esc.
   const closeDetail = () => {

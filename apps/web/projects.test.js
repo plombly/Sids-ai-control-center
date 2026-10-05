@@ -250,3 +250,10 @@ test('spending: a bar, a notice from 80% and the settings form', async () => {
   assert.match(spendingNotice({ spent: 11, budget: 10, percent: 110, state: 'over', mode: 'block' }), /used up/);
   assert.match(spendingSettingsMarkup({ spending: { spent: 1, budget: 10, percent: 10, state: 'ok', mode: 'warn' } }), /<option value="warn" selected>Only warn/);
 });
+
+test('spending: people who cannot approve see the limit, not a form', async () => {
+  const { spendingSettingsMarkup } = await import('./lib/projects.js');
+  const html = spendingSettingsMarkup({ my_access: 'build', spending: { spent: 1, budget: 10, percent: 10, state: 'ok', mode: 'block' } });
+  assert.doesNotMatch(html, /<form/);
+  assert.match(html, /People who may approve this project set the limit/);
+});

@@ -1,14 +1,33 @@
 // Project groups, phase 3: approve everything a goal produced (through the
 // merge queue, apps/api/group_routes.py), a whole group's activity, and
 // building every member at once.
-import { requestJSON, newRequestId } from './api.js';
+import { requestJSON, newRequestId, operatorRequest } from './api.js';
 import { esc, escValue } from './format.js';
 import { registerClick } from './registry.js';
+
+// Changes just sent to the merge queue: until the next refresh reports their
+// merge-queue state, the page must not offer them again (or the status line
+// vanishes in a re-render and the button looks like it did nothing).
+const justQueued = new Map();
+const QUEUED_FOR_MS = 120000;
+export function markQueued(jobIds, now = Date.now()) {
+  for (const id of jobIds) justQueued.set(id, now);
+}
+export function recentlyQueued(job, now = Date.now()) {
+  const at = justQueued.get(job?.id);
+  if (at === undefined) return false;
+  if (now - at > QUEUED_FOR_MS || /^(queued|waiting)$/.test(job.merge_queue_state || '') || job.status === 'merged') {
+    justQueued.delete(job.id);
+    return false;
+  }
+  return true;
+}
+const stillOpen = job => !recentlyQueued(job) && !/^(queued|waiting)$/.test(job.merge_queue_state || '');
 
 // Goals with two or more changes ready to approve.
 export function readyByGoal(ready = []) {
   const goals = new Map();
-  for (const job of ready) {
+  for (const job of ready.filter(stillOpen)) {
     if (!job.goal_id || !/^[0-9a-f]{40}$/.test(job.integrated_candidate_commit || '')) continue;
     if (!goals.has(job.goal_id)) goals.set(job.goal_id, []);
     goals.get(job.goal_id).push(job);
@@ -29,7 +48,7 @@ export function approveAllMarkup(ready = []) {
 // A parent project's page: every open change of the group at once, when they
 // come from more than one goal (one goal already has its own card).
 export function approveGroupMarkup(project, ready = []) {
-  const open = ready.filter(job => /^[0-9a-f]{40}$/.test(job.integrated_candidate_commit || '') && !/^(queued|waiting)$/.test(job.merge_queue_state || ''));
+  const open = ready.filter(job => /^[0-9a-f]{40}$/.test(job.integrated_candidate_commit || '') && stillOpen(job));
   if (!project?.children?.length || open.length < 2 || new Set(open.map(job => job.goal_id)).size < 2) return '';
   const candidates = Object.fromEntries(open.map(job => [job.id, job.integrated_candidate_commit]));
   const titles = open.map(job => `<li>${esc(job.title || job.id)} <span class="subtle">· ${esc(job.project_id)}</span> <code>${esc(job.integrated_candidate_commit.slice(0, 8))}</code></li>`).join('');
@@ -60,48 +79,51 @@ if (typeof document !== 'undefined') {
     if (node) node.textContent = message;
     else window.alert(message);
   };
-  registerClick('approveAll', async button => {
+  // Queue them, wait for the operator service to take each one, then refresh
+  // the page and say what happened in the page banner (which survives refreshes).
+  const approveListed = async (button, url) => {
     let candidates = {};
     try {
       candidates = JSON.parse(button.dataset.candidates || '{}');
     } catch {}
-    const count = Object.keys(candidates).length;
-    if (!window.confirm(`Approve all ${count} changes? Each goes through the merge queue and is merged only after its tests and a fresh review pass on the latest main.`)) return;
+    const ids = Object.keys(candidates);
+    if (!window.confirm(`Approve all ${ids.length} changes? Each goes through the merge queue and is merged only after its tests and a fresh review pass on the latest main.`)) return;
     button.disabled = true;
+    status(button, 'Sending…');
+    let message;
     try {
-      const result = await requestJSON(`/api/goals/${encodeURIComponent(button.dataset.approveAll)}/approve-all`, {
-        method: 'POST',
-        body: JSON.stringify({ request_id: newRequestId().slice(0, 40), candidates })
-      });
-      const failed = result.queued.filter(item => item.error);
-      status(button, failed.length ? `Queued ${count - failed.length}; not queued: ${failed.map(f => `${f.job_id} (${f.error})`).join(', ')}` : `All ${count} queued for merging.`);
+      const result = await requestJSON(url, { method: 'POST', body: JSON.stringify({ request_id: newRequestId().slice(0, 40), candidates }) });
+      markQueued(ids);
+      const outcomes = await Promise.all(result.queued.map(async item => {
+        if (item.error || !item.request_id) return { ...item, final: 'error' };
+        for (let tries = 0; tries < 30; tries += 1) {
+          const answer = await operatorRequest(item.request_id).catch(() => ({}));
+          if (answer.status && !/^(pending|running)$/.test(answer.status)) return { ...item, final: answer.status, message: answer.message };
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+        return { ...item, final: 'pending' };
+      }));
+      const bad = outcomes.filter(item => !/^(succeeded|pending)$/.test(item.final));
+      if (bad.length) justQueued.clear();
+      message = bad.length
+        ? `Queued ${ids.length - bad.length} of ${ids.length}; not queued: ${bad.map(item => `${item.job_id} (${item.error || item.message || item.final})`).join('; ')}`
+        : `All ${ids.length} changes are in the merge queue; each merges by itself after its tests and a fresh review pass.`;
     } catch (error) {
       const problems = error.body?.detail?.problems;
-      status(button, problems ? `Nothing approved: ${problems.join('; ')}` : error.message);
+      message = problems ? `Nothing approved: ${problems.join('; ')}` : error.message;
       button.disabled = false;
     }
-  });
-  registerClick('approveGroup', async button => {
-    let candidates = {};
-    try {
-      candidates = JSON.parse(button.dataset.candidates || '{}');
-    } catch {}
-    const count = Object.keys(candidates).length;
-    if (!window.confirm(`Approve all ${count} changes in this group? Each goes through the merge queue and is merged only after its tests and a fresh review pass on the latest main.`)) return;
-    button.disabled = true;
-    try {
-      const result = await requestJSON(`/api/projects/${encodeURIComponent(button.dataset.approveGroup)}/approve-all`, {
-        method: 'POST',
-        body: JSON.stringify({ request_id: newRequestId().slice(0, 40), candidates })
-      });
-      const failed = result.queued.filter(item => item.error);
-      status(button, failed.length ? `Queued ${count - failed.length}; not queued: ${failed.map(f => `${f.job_id} (${f.error})`).join(', ')}` : `All ${count} queued for merging.`);
-    } catch (error) {
-      const problems = error.body?.detail?.problems;
-      status(button, problems ? `Nothing approved: ${problems.join('; ')}` : error.message);
-      button.disabled = false;
+    status(button, message);
+    const banner = document.getElementById('banner');
+    if (banner) {
+      banner.hidden = false;
+      banner.textContent = message;
     }
-  });
+    window.dispatchEvent(new CustomEvent('laika:poll-now'));
+    window.dispatchEvent(new CustomEvent('laika:project-refresh'));
+  };
+  registerClick('approveAll', button => approveListed(button, `/api/goals/${encodeURIComponent(button.dataset.approveAll)}/approve-all`));
+  registerClick('approveGroup', button => approveListed(button, `/api/projects/${encodeURIComponent(button.dataset.approveGroup)}/approve-all`));
   registerClick('activityGroup', button => {
     wholeGroup = button.dataset.activityGroup === '1';
     try {

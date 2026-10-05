@@ -49,3 +49,20 @@ test('a parent project offers approving every ready change of its group', async 
   assert.equal(approveGroupMarkup({ id: 'solo' }, ready), '');                         // not a parent
   assert.equal(approveGroupMarkup({ id: 'shop', children: [{}] }, ready.slice(1, 2)), ''); // one change
 });
+
+test('changes just approved are not offered again until the merge queue reports them', async () => {
+  const { approveGroupMarkup, approveAllMarkup, markQueued, recentlyQueued } = await import('./lib/group-actions.js');
+  const sha = 'b'.repeat(40);
+  const ready = [
+    { id: 'q1', goal_id: 'g1', project_id: 'shop', integrated_candidate_commit: sha },
+    { id: 'q2', goal_id: 'g2', project_id: 'shop-api', integrated_candidate_commit: sha },
+    { id: 'q3', goal_id: 'g1', project_id: 'shop', integrated_candidate_commit: sha }
+  ];
+  const parent = { id: 'shop', children: [{ id: 'shop-api' }] };
+  assert.match(approveGroupMarkup(parent, ready), /3 changes/);
+  markQueued(['q1', 'q2', 'q3'], Date.now());
+  assert.equal(approveGroupMarkup(parent, ready), '');
+  assert.equal(approveAllMarkup(ready), '');
+  assert.equal(recentlyQueued({ id: 'q1', merge_queue_state: 'queued' }), false);   // the server knows now
+  assert.equal(recentlyQueued({ id: 'q2' }, Date.now() + 200000), false);           // gave up waiting
+});

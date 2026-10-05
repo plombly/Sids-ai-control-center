@@ -18,7 +18,7 @@ class Ledger(MemoryRedis):
 
 
 def test_jobs_planning_and_reviews_count_for_the_project_and_whoever_gave_the_goal():
-    now = datetime.datetime(2026, 10, 20, 12).timestamp()
+    now = datetime.datetime(2026, 10, 20, 12, tzinfo=datetime.timezone.utc).timestamp()
     start = spending.month_start(now)
     last_month = start - 3600
     jobs = {"b1": {"project_id": "shop", "goal_id": "g1", "cost_usd": "1.50", "created_at": str(start + 10)},
@@ -47,3 +47,9 @@ def test_assistant_turns_go_to_the_monthly_ledger():
     assert float(r.values["laika:spend:2026-10:person:sam"]) == 0.4
     record = {"budget_usd": "0.5"}
     assert spending.project_state(r, "shop", record, {}, now=datetime.datetime(2026, 10, 5).timestamp())["state"] == "over"
+
+
+def test_the_month_is_the_same_everywhere_utc():
+    late = datetime.datetime(2026, 11, 1, 1, tzinfo=datetime.timezone.utc).timestamp()   # 8 pm Oct 31 in Texas
+    assert spending.month(late) == "2026-11"
+    assert spending.month_start(late) == datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc).timestamp()

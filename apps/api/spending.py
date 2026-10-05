@@ -1,8 +1,9 @@
 """Monthly spending and its limits (standard library only: shared by the API
 and the host's notifier).
 
-What counts: every AI run LAIka records a cost for this calendar month (local
-time): jobs (builds, reviews, repairs), planning, and goal-box assistant
+What counts: every AI run LAIka records a cost for this calendar month (UTC:
+the API container and the host can have different time zones, and both must
+agree on when a month starts): jobs (builds, reviews, repairs), planning, and goal-box assistant
 turns (questionnaires and conversations; their sessions expire after a day,
 so their cost is also added to a monthly ledger when it is recorded:
 laika:spend:<YYYY-MM>:project:<id> / :person:<name>). Claude reports what a
@@ -31,12 +32,16 @@ def _number(value):
     return number if number == number and abs(number) != float("inf") else 0.0
 
 
+def _utc(now):
+    return datetime.datetime.fromtimestamp(now if now is not None else time.time(), datetime.timezone.utc)
+
+
 def month(now=None):
-    return datetime.datetime.fromtimestamp(now if now is not None else time.time()).strftime("%Y-%m")
+    return _utc(now).strftime("%Y-%m")
 
 
 def month_start(now=None):
-    moment = datetime.datetime.fromtimestamp(now if now is not None else time.time())
+    moment = _utc(now)
     return moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
@@ -117,9 +122,9 @@ def person_state(redis, name, record, by_person, now=None):
 
 def blocked(project_state_, person_state_):
     """The refusal message, or "" when new work may start."""
-    for which, current in (("This project", project_state_), ("Your", person_state_)):
+    for which, current, raiser in (("This project's", project_state_, "someone who may approve this project"),
+                                   ("Your", person_state_, "an administrator")):
         if current and current["state"] == "over" and current["mode"] == "block":
-            who = f"{which} monthly spending limit" if which == "Your" else f"{which}'s monthly spending limit"
-            return (f"{who} is used up (${current['spent']:.2f} of ${current['budget']:.2f} this month). "
-                    "New goals wait until next month or until an administrator raises the limit.")
+            return (f"{which} monthly spending limit is used up (${current['spent']:.2f} of ${current['budget']:.2f} "
+                    f"this month). New goals wait until next month or until {raiser} raises the limit.")
     return ""
