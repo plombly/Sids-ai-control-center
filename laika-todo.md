@@ -59,6 +59,21 @@ Order and checkpoints. Report to the owner at each checkpoint.
       Android release signing key (kept like the release key), iOS VPN
       (paid Apple account).
 
+## 1.5: in progress (agreed 2026-10-04)
+
+- [ ] **Spending limits**: monthly $ per project (project Settings, admin or
+      Approve) and per person (Settings -> Users, admin); 80% warning
+      notification; at 100% new goals and Conversations are refused
+      (default; "warn only" switch per limit); running work finishes.
+      Spend = job/planner/assistant cost_usd this calendar month (Claude on a
+      subscription reports API-equivalent cost; Codex on ChatGPT often $0).
+- [ ] **Approve-all for project groups**: on a parent project's page,
+      "Approve all N" across the parent and its children (all goals), through
+      the merge queue; only projects the person may approve; never LAIka.
+- [ ] Small: doctor recognises the long-lived Claude token.
+- [ ] Small: dashboard Repository panel shows the version on release installs.
+- [ ] Small: dev LAIka tidy-up (Play-test demo, Starter Game, Tailscale).
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
@@ -70,15 +85,9 @@ Order and checkpoints. Report to the owner at each checkpoint.
 - **Share an app with friends:** a public link to ONE app (e.g. Tank Tumble)
   through a tunnel, on/off switch, optional password; LAIka itself stays
   private. (Asked 2026-10-04, group 3.)
-- **Spending limits** per project and per person, with a warning when a
-  goal gets expensive. (2026-10-04, group 3.)
 - Planner: splits big jobs (done 1.3.0); watch whether 6 files is right.
-- Approve-all for whole project groups (all goals of a group at once).
 - Fedora/RHEL: test RHEL 10 on an x86-64-v3 machine (needs hardware);
   SELinux enforcing on a real install.
-- Doctor: recognise a long-lived Claude token (shows only Codex today).
-- The dashboard's repository panel says "unknown" on release installs
-  (laika:main-head only exists for git checkouts): show the version instead.
 
 ## Done (recent)
 - 1.4.0 (2026-10-04): see CHANGELOG.md; production runs it.
