@@ -148,3 +148,20 @@ export async function handoffText(goalId, fetchImpl = fetch) {
   const bundle = await response.json();
   return JSON.stringify(bundle, null, 2);
 }
+
+// The body of a dashboard job action. Approve goes through the merge queue
+// (queue_approve, bound to the exact change the person saw): a plain approve
+// is refused as soon as main has moved since the change was integrated, which
+// with several jobs in parallel is most of the time, and then nothing
+// re-checks the change by itself. The queue re-integrates it on the new main,
+// re-runs the tests and a fresh review, and merges only if both pass.
+export function jobActionBody(operation, dataset, request_id) {
+  const approve = operation === 'approve';
+  return {
+    action: approve ? 'queue_approve' : operation,
+    request_id,
+    expected_status: dataset.status,
+    ...(approve ? { expected_candidate: dataset.candidate } : {}),
+    ...(operation === 'extend' ? { extra: 1 } : {})
+  };
+}

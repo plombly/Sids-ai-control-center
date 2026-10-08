@@ -220,3 +220,13 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
   assert.match(html, /data-op="network_deny"/);
   assert.doesNotMatch(html, /data-op="extend"/);
 }
+
+{
+  const { jobActionBody } = await import('./lib/api.js');
+  const sha = 'c'.repeat(40);
+  assert.deepEqual(jobActionBody('approve', { status: 'awaiting_review', candidate: sha }, 'req-1'),
+    { action: 'queue_approve', request_id: 'req-1', expected_status: 'awaiting_review', expected_candidate: sha });
+  assert.deepEqual(jobActionBody('extend', { status: 'needs_human' }, 'req-2'),
+    { action: 'extend', request_id: 'req-2', expected_status: 'needs_human', extra: 1 });
+  assert.equal(jobActionBody('reject', { status: 'awaiting_review' }, 'r').action, 'reject');
+}

@@ -7,6 +7,7 @@ import {
   fetchJobDetail,
   handoffText,
   jobAction,
+  jobActionBody,
   loadDismissals,
   newRequestId,
   operatorRequest,
@@ -260,16 +261,10 @@ async function runJobAction(button) {
   const operation = button.dataset.op,
     jobId = button.dataset.job,
     candidate = button.dataset.candidate;
-  if (operation === 'approve' && !window.confirm(`Approve candidate ${candidate} for job ${jobId}?`)) return;
+  if (operation === 'approve' && !window.confirm(`Approve this change (${String(candidate).slice(0, 12)})? It is merged once its tests and review are current on the latest main; if main has moved, LAIka re-checks it first.`)) return;
   button.disabled = true;
   const request_id = newRequestId(),
-    body = {
-      action: operation,
-      request_id,
-      expected_status: button.dataset.status,
-      ...(operation === 'approve' ? { expected_candidate: candidate } : {}),
-      ...(operation === 'extend' ? { extra: 1 } : {})
-    };
+    body = jobActionBody(operation, button.dataset, request_id);
   try {
     await jobAction(jobId, body);
     let result = await operatorRequest(request_id),
