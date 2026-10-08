@@ -196,15 +196,27 @@ def agent_sandbox(worktree):
     return lambda argv: project_sandbox.command(argv, PROJECT, worktree, kind="agent")
 
 
+class GitError(subprocess.CalledProcessError):
+    """A failed git command whose message includes what git said (the job's
+    error used to read only "returned non-zero exit status 128")."""
+
+    def __str__(self):
+        said = (self.stderr or self.stdout or "").strip().splitlines()
+        detail = " / ".join(line.strip() for line in said[-3:] if line.strip())
+        return f"git {self.cmd[1] if len(self.cmd) > 1 else ''} failed (exit {self.returncode})" + (f": {detail[:400]}" if detail else "")
+
+
 def run_git(*args, cwd=None, check=True):
     check_worktree_pointer(cwd)
-    return subprocess.run(
+    result = subprocess.run(
         ["git", *args],
         cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
         text=True,
         capture_output=True,
-        check=check,
     )
+    if check and result.returncode:
+        raise GitError(result.returncode, result.args, result.stdout, result.stderr)
+    return result
 
 
 # The project the current job belongs to. A worker runs one job at a time,

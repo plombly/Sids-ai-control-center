@@ -198,7 +198,10 @@ fi
 chown root:"$USER_NAME" "$CONF/sftp/ssh_host_ed25519_key" "$CONF/sftp/ssh_host_ed25519_key.pub"
 chmod 0640 "$CONF/sftp/ssh_host_ed25519_key"; chmod 0644 "$CONF/sftp/ssh_host_ed25519_key.pub"
 # Both sides may write the same repositories (services/laika_user.py).
-printf '[safe]\n\tdirectory = *\n[init]\n\tdefaultBranch = main\n' > "$CONF/gitconfig"
+# [user]: the identity LAIka's commits fall back to (a project's own repository
+# config wins); without it, commits in projects imported or moved without one
+# failed with "Author identity unknown".
+printf '[safe]\n\tdirectory = *\n[init]\n\tdefaultBranch = main\n[user]\n\tname = LAIka\n\temail = laika@localhost\n' > "$CONF/gitconfig"
 chmod 0644 "$CONF/gitconfig"
 
 # --- secrets and settings (created once, never replaced) ---------------------------------------
