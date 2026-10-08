@@ -69,13 +69,28 @@ def role_limit(role, kind, defaults):
     return int(os.environ.get(name, str(defaults[role])))
 
 
+def python_note(role):
+    """How to run focused tests. LAIka's own venv has LAIka's dependencies, not
+    a project's: a builder of NGINX-Manager ran pytest with it, got "No module
+    named 'flask'" and handed over untested code (job 6374ef65)."""
+    if PROJECT is None or PROJECT.is_builtin or role not in ("builder", "repair"):
+        return f"- For focused Python tests, use {LAIKA_PYTHON} -m pytest; do not probe python/pytest executables."
+    return ("- This project's dependencies live in the worktree: .venv for Python, node_modules for Node "
+            "(LAIka's setup creates them from requirements.txt / pyproject.toml / package.json). Run focused "
+            "tests with .venv/bin/python -m pytest (or npx/node). If .venv is missing, or your change adds or "
+            "changes dependencies, install them first (you have network), as separate commands: "
+            "python3 -m venv .venv, then .venv/bin/pip install -q pytest -e . (or -r requirements.txt); npm install "
+            "for Node. Never hand "
+            "over code whose focused tests could not run because a dependency was missing.")
+
+
 def efficiency_prefix(role):
     return f"""LAIka execution contract ({role}):
 - Work narrowly on the requested task. Do not inventory or read the whole repository.
 - Start with git status/diff and targeted rg/sed reads of likely files only.
 - Expand scope only when a concrete dependency requires it.
 - Do not run broad test suites; LAIka runs deterministic gates after builders/repairs.
-- For focused Python tests, use {LAIKA_PYTHON} -m pytest; do not probe python/pytest executables.
+{python_note(role)}
 - Avoid repeated reads and verbose narration. Make the smallest correct change/review.
 - Stop as soon as the task and focused validation are complete.
 {network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_builtin else ""}{GROUP_NOTE}
@@ -801,8 +816,12 @@ def repair_allowed_bash():
         "Bash(git log *)", "Bash(git show *)",
     )
     if PROJECT is not None and not PROJECT.is_builtin:
-        # The project's own gate is its focused validation.
-        return allowed + ((f"Bash({PROJECT.gate_command})",) if PROJECT.gate_command else ())
+        # The project's own gate is its focused validation; its dependencies
+        # live in the worktree (python_note). Runs inside the project sandbox.
+        own = ("Bash(.venv/bin/python -m pytest)", "Bash(.venv/bin/python -m pytest *)",
+               "Bash(python3 -m venv .venv)", "Bash(.venv/bin/pip install *)",
+               "Bash(npm install)", "Bash(npm test)", "Bash(npm test *)", "Bash(node --test *)")
+        return allowed + own + ((f"Bash({PROJECT.gate_command})",) if PROJECT.gate_command else ())
     return (f"Bash({LAIKA_PYTHON} -m pytest *)", "Bash(node apps/web/app.test.js)") + allowed
 
 
