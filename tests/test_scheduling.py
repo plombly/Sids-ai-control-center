@@ -157,6 +157,25 @@ def test_a_job_too_big_to_review_is_split_by_asking_the_planner_again(orch, monk
     assert "There is no L" in orch.planner_prompt("goal") and "S|M|L" not in orch.planner_prompt("goal")
 
 
+def test_a_split_plan_over_the_job_limit_falls_back_to_the_first_plan(orch, monkeypatch):
+    # goal 72caf977b7a4: a valid 9-job plan with one big job; the split came back with 11 jobs
+    # and the whole goal failed with "planner produced too many jobs".
+    job = lambda n, size="M", files=1: {"number": n, "title": f"job {n}", "task": "t", "size": size,
+                                        "depends_on": [], "scope": [f"src/f{n}_{i}.py" for i in range(files)]}
+    first = {"jobs": [job(n) for n in range(1, 9)] + [job(9, files=10)]}
+    split = {"jobs": [job(n) for n in range(1, 12)]}
+    orch.r.records["laika:goals:g9"] = {"id": "g9", "goal": "nginx manager", "status": "queued"}
+    asked = []
+    monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None, project=None: asked.append(goal) or (first if len(asked) == 1 else split))
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
+    orch.process_goal(json.dumps({"id": "g9", "goal": "nginx manager"}))
+    assert len(asked) == 2 and "at most 10 jobs" in asked[1]
+    goal = orch.r.records["laika:goals:g9"]
+    assert goal["status"] != "planning_failed" and "split not used" in goal["replanned"]
+    jobs = [j for k, j in orch.r.records.items() if k.startswith("laika:jobs:") and j.get("goal_id") == "g9"]
+    assert len(jobs) == 9
+
+
 def test_problem_goals_are_diagnosed_first_with_recent_failures(orch, monkeypatch):
     monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
     assert orch.reports_problem("The lobby crashes when a second player joins")

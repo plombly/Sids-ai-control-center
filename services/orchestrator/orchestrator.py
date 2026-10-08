@@ -240,6 +240,9 @@ def _is_test_path(path):
             or name.endswith("_test.go"))
 
 
+MAX_PLAN_JOBS = 10
+
+
 def oversized_jobs(plan, atomic=False):
     """[(number, why)] for jobs too big to review in one pass (size L, or
     more than MAX_JOB_FILES non-test files). Atomic plans are never split."""
@@ -262,7 +265,8 @@ def split_feedback(plan, issues):
     listed = "; ".join(f"job {number} \"{titles.get(number, '')}\" ({why})" for number, why in issues)
     return (f"\n\nPLANNER FEEDBACK: your previous plan had jobs too big to review in one pass: {listed}. "
             f"Return the whole plan again with those jobs split into S/M jobs of at most {MAX_JOB_FILES} files "
-            "each (tests not counted), one concern per job, with depends_on between them.")
+            "each (tests not counted), one concern per job, with depends_on between them. The whole plan must "
+            f"still have at most {MAX_PLAN_JOBS} jobs: merge small related jobs where needed to stay within it.")
 
 
 def diagnose_rules(goal):
@@ -487,8 +491,8 @@ def validate_plan(plan, atomic=False, members=None):
     if not isinstance(jobs, list) or not jobs:
         raise ValueError("plan contains no jobs")
 
-    if len(jobs) > 10:
-        raise ValueError("planner produced too many jobs")
+    if len(jobs) > MAX_PLAN_JOBS:
+        raise ValueError(f"planner produced too many jobs ({len(jobs)}, at most {MAX_PLAN_JOBS})")
 
     if atomic and len(jobs) != 1:
         raise ValueError(f"atomic goal requires exactly one job; planner returned {len(jobs)}")
@@ -779,11 +783,16 @@ def _process_goal(raw, data, goal_id):
         print(f"[{ORCHESTRATOR_ID}] goal {goal_id}: re-planning, oversized jobs {issues}", flush=True)
         try:
             again = run_planner(goal + split_feedback(plan, issues), atomic=atomic, info=planner, project=project)
-            if isinstance(again, dict) and again.get("jobs"):
-                plan = again
-                r.hset(key, "replanned", f"split {len(issues)} oversized job(s)")
+            # The split plan is used only when it is itself valid: a split that
+            # went over the job limit used to fail the whole goal although the
+            # first plan was fine (goal 72caf977b7a4: 9 jobs, re-plan 11).
+            validate_plan(again, atomic=atomic, members=[m.id for m in laika_projects.group(r, project)]
+                          if len(laika_projects.group(r, project)) > 1 else None)
+            plan = again
+            r.hset(key, "replanned", f"split {len(issues)} oversized job(s)")
         except Exception as exc:
             print(f"[{ORCHESTRATOR_ID}] goal {goal_id}: re-plan failed, using the first plan: {exc}", flush=True)
+            r.hset(key, "replanned", f"split not used ({exc})"[:200])
     members = {member.id: member for member in laika_projects.group(r, project)}
     jobs = validate_plan(plan, atomic=atomic, members=list(members) if len(members) > 1 else None)
 
