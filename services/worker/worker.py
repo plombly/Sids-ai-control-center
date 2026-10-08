@@ -208,15 +208,16 @@ class GitError(subprocess.CalledProcessError):
 
 def run_git(*args, cwd=None, check=True):
     check_worktree_pointer(cwd)
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
-        text=True,
-        capture_output=True,
-    )
-    if check and result.returncode:
-        raise GitError(result.returncode, result.args, result.stdout, result.stderr)
-    return result
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
+            text=True,
+            capture_output=True,
+            check=check,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise GitError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from None
 
 
 # The project the current job belongs to. A worker runs one job at a time,
