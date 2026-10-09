@@ -82,6 +82,20 @@ Order and checkpoints. Report to the owner at each checkpoint.
       first-run setup + Settings), paused goal box with the reason.
 - [x] Shipped 1.5.0 2026-10-05: production deployed, signed, published, CI green.
 
+## Found in the NGINX-Manager trial (2026-10-07/08)
+
+Fixed during the trial (on main, unreleased): split plan over the 10-job
+limit failed the goal; project builders tested with LAIka's venv; dashboard
+Approve refused on stale main (now queue_approve); commit identity for moved
+or imported projects; dashboard caching.
+
+- [ ] Run detection: Python packages started with `python -m <pkg>` (a
+      `<pkg>/__main__.py` or pyproject [project.scripts]) get no run command,
+      so no "Open app" (NGINX-Manager).
+- [ ] Goal-box Conversation cannot look inside uploaded archives (.tar.gz /
+      .zip): it planned around the owner's old suite without reading it.
+- [ ] Release 1.5.1 with the trial fixes.
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
