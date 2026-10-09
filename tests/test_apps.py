@@ -86,6 +86,8 @@ def test_first_loop_deploys_main_with_a_port(apps):
     [run] = started(calls)
     assert "--setenv=PORT=8100" in run and "--setenv=HOST=0.0.0.0" in run and "--unit=laika-app-shop" in run
     assert run[-3:] == ["/bin/sh", "-c", "node server.js"]
+    assert module.systemd_literal("$(test -x .venv/bin/python && echo x) -m app --port $PORT 50%") == \
+        "$$(test -x .venv/bin/python && echo x) -m app --port $$PORT 50%"   # the shell sees it as written
     module.loop_once()
     assert len(started(calls)) == 1  # nothing changed: no redeploy
 

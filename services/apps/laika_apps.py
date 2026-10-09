@@ -181,6 +181,15 @@ def setup(project, live):
     return result.returncode == 0, (result.stdout + result.stderr)[-3000:]
 
 
+def systemd_literal(text):
+    """systemd expands $VAR and ${VAR} in a unit's command line (systemd-run
+    leaves %-specifiers alone, checked); the shell inside must see the
+    command exactly as written ($PORT, $(...)).
+    A detected "$(test -x .venv/bin/python && ...) -m pkg" was mangled into
+    an empty variable name and the app crashed at once (NGINX-Manager)."""
+    return text.replace("$", "$$")
+
+
 def start_unit(project, live, port, unit=None, data_dir=None, description=None):
     env = app_env(live, port)
     inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app",
@@ -201,7 +210,7 @@ def start_unit(project, live, port, unit=None, data_dir=None, description=None):
             f"--property=EnvironmentFile=-{ENV_DIR / (project.id + '.env')}",
             f"--description={description or f'LAIka app {project.id}'}", *laika_user.systemd_run_args()]
     args += [f"--setenv={k}={v}" for k, v in env.items()]
-    result = run([*args, "--", *inner])
+    result = run([*args, "--", *[systemd_literal(part) for part in inner]])
     if result.returncode:
         raise RuntimeError(f"systemd-run failed: {(result.stderr or result.stdout).strip()}")
 

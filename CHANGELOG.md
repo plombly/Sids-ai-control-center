@@ -20,6 +20,8 @@ Fixes found by building a whole project with LAIka (NGINX-Manager):
   (.tar.gz, .zip, …): they are unpacked safely, read-only.
 - Python apps started with `python -m <package>` get a run command
   automatically.
+- Detected Python run commands work: systemd turned their `$(...)` into an
+  empty variable and the app crashed at once.
 - Browsers always fetch the current dashboard after an update.
 
 ## 1.5.0 (2026-10-05)
