@@ -89,10 +89,10 @@ limit failed the goal; project builders tested with LAIka's venv; dashboard
 Approve refused on stale main (now queue_approve); commit identity for moved
 or imported projects; dashboard caching.
 
-- [ ] Run detection: Python packages started with `python -m <pkg>` (a
+- [x] Run detection: Python packages started with `python -m <pkg>` (a
       `<pkg>/__main__.py` or pyproject [project.scripts]) get no run command,
       so no "Open app" (NGINX-Manager).
-- [ ] Goal-box Conversation cannot look inside uploaded archives (.tar.gz /
+- [x] Goal-box Conversation cannot look inside uploaded archives (.tar.gz /
       .zip): it planned around the owner's old suite without reading it.
 - [ ] Release 1.5.1 with the trial fixes.
 

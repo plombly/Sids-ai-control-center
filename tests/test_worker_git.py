@@ -38,3 +38,12 @@ def test_claude_repairs_in_projects_may_install_and_run_the_projects_tests(monke
     allowed = worker.repair_allowed_bash()
     assert "Bash(.venv/bin/python -m pytest *)" in allowed and "Bash(.venv/bin/pip install *)" in allowed
     assert "Bash(npm install)" in allowed and not any(worker.LAIKA_PYTHON in item for item in allowed)
+
+
+def test_python_packages_started_with_dash_m_are_detected():
+    projects = load_module("services/laika_projects.py", "laika_projects_run_test")
+    files = {"pyproject.toml": '[project]\nname = "nginx-manager"\n\n[project.scripts]\nnginx-manager = "nginx_manager.__main__:main"\n',
+             "nginx_manager/__main__.py": 'port = int(environ.get("PORT", "8000"))\n'}
+    assert projects.detect_run(files.get).endswith(" -m nginx_manager")
+    files["nginx_manager/__main__.py"] = "print('a CLI, not a server')\n"
+    assert projects.detect_run(files.get) == ""

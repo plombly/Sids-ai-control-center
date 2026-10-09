@@ -386,7 +386,35 @@ def detect_run(read):
         text = read(name)
         if text and "PORT" in text:  # a server that listens where LAIka tells it
             return f"{python} {name}"
+    # A package started with `python -m <package>` (its __main__.py), named by
+    # pyproject.toml's project name or its [project.scripts] entries.
+    for package in _python_packages(read("pyproject.toml") or ""):
+        for path in (f"{package}/__main__.py", f"src/{package}/__main__.py"):
+            text = read(path)
+            if text and "PORT" in text:
+                return f"{python} -m {package}"
     return ""
+
+
+def _python_packages(pyproject):
+    """Candidate import names from pyproject.toml (no TOML parser needed on 3.10)."""
+    import re as _re
+    names = []
+    section = ""
+    for raw in pyproject.splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            section = line.strip("[] ").lower()
+            continue
+        if section == "project" and line.startswith("name"):
+            found = _re.match(r"name\s*=\s*[\"']([A-Za-z0-9_.-]+)[\"']", line)
+            if found:
+                names.append(found.group(1).replace("-", "_").replace(".", "_").lower())
+        elif section == "project.scripts":
+            found = _re.match(r"[A-Za-z0-9_.-]+\s*=\s*[\"']([A-Za-z0-9_]+)", line)
+            if found:
+                names.append(found.group(1))
+    return list(dict.fromkeys(name for name in names if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)))
 
 
 PUSH_TIMEOUT = 120

@@ -22,6 +22,7 @@ import laika_env  # noqa: E402,F401  (Settings → environment, before any confi
 sys.path.append(str(ROOT / "apps/api"))
 import agent_cli  # noqa: E402
 import goal_assist  # noqa: E402
+import project_archives  # noqa: E402
 import project_reference  # noqa: E402
 import project_sandbox  # noqa: E402
 import laika_projects  # noqa: E402
@@ -85,12 +86,26 @@ def group_note(r, project):
     return note
 
 
-def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
+def context_note(r, project):
+    """The group's other members and the project's uploaded archives, as
+    read-only folders for Claude (agent_cli.EXTRA_DIRS) and a prompt note.
+    Context only: a problem here never fails the turn."""
     try:
         note = group_note(r, project)
-    except Exception as exc:  # the group is context, never a reason to fail
+    except Exception as exc:
         print(f"[assist] group context: {exc}", flush=True)
-        note = ""
+        agent_cli.EXTRA_DIRS, note = [], ""
+    try:  # uploaded archives, unpacked read-only (services/project_archives.py)
+        archives = project_archives.prepare(project)
+        agent_cli.EXTRA_DIRS = list(agent_cli.EXTRA_DIRS) + [str(folder) for _, folder in archives]
+        note += project_archives.note(archives)
+    except Exception as exc:
+        print(f"[assist] archives: {exc}", flush=True)
+    return note
+
+
+def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
+    note = context_note(r, project)
     prompt = goal_assist.build_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
                                       recent_goals(r, project.id), force_brief=force_brief, group_note=note)
     log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}{'-retry' if force_brief else ''}.json"
@@ -142,11 +157,7 @@ def situation(r, project, limit=5, days=7):
 
 def chat(r, session, project, runner=agent_cli.run_claude):
     """One reply in a goal-box Conversation."""
-    try:
-        note = group_note(r, project)
-    except Exception as exc:
-        print(f"[assist] group context: {exc}", flush=True)
-        note = ""
+    note = context_note(r, project)
     try:
         now = situation(r, project)
     except Exception as exc:  # context, never a reason to fail

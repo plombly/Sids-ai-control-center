@@ -2,6 +2,26 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.5.1 (2026-10-08)
+
+Fixes found by building a whole project with LAIka (NGINX-Manager):
+
+- The dashboard's **Approve** goes through the merge queue: a change whose
+  main moved on after it was checked is re-integrated, re-tested and
+  freshly reviewed, then merged, instead of being refused as "stale main".
+- Planning no longer fails when splitting a big job pushed the plan over
+  the 10-job limit; the first plan is used.
+- Builders and repairs of projects run tests with the project's own
+  dependencies (its .venv / node_modules) and install them when missing,
+  instead of LAIka's own Python (which made them hand over untested code).
+- Commits work in projects moved or imported without a git identity
+  (LAIka's shared git settings now have one); git errors say what git said.
+- The goal box (Questionnaire and Conversation) can read uploaded archives
+  (.tar.gz, .zip, …): they are unpacked safely, read-only.
+- Python apps started with `python -m <package>` get a run command
+  automatically.
+- Browsers always fetch the current dashboard after an update.
+
 ## 1.5.0 (2026-10-05)
 
 - **Spending limits.** A monthly dollar limit per project (project Settings →
