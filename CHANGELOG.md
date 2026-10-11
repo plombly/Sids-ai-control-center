@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.5.1 (2026-10-08)
+## 1.5.1 (2026-10-11)
 
 Fixes found by building a whole project with LAIka (NGINX-Manager):
 
