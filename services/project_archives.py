@@ -7,10 +7,10 @@ MAX_ARCHIVES, each at most MAX_ARCHIVE_BYTES) is unpacked once into
 <project root>/unpacked/<blob sha>/, which the project sandbox shows, and
 handed to Claude with --add-dir.
 
-Unpacking treats the archive as hostile: tar uses the "data" filter (no
-absolute paths, no "..", no links leaving the folder, no devices, no
-setuid bits), links are skipped altogether, zip entries are checked the
-same way, and the total size and number of files are capped. Nothing in an
+Unpacking treats the archive as hostile: only plain files and folders are
+written (no absolute paths, no "..", no .git, no links, devices or
+permission bits from the archive), for tar and zip alike, and the total
+size and number of files are capped. Nothing in an
 archive is ever run. Folders of archives no longer on main are removed.
 """
 
@@ -65,9 +65,11 @@ def _safe_member(name):
 
 
 def _unpack_tar(archive, dest):
+    """Plain files and folders only, written by us (no tarfile.extractall:
+    its safe "data" filter is missing on Debian 12's Python 3.11.2), so no
+    links, devices, owners or permission bits come from the archive."""
     total = files = 0
     with tarfile.open(archive) as tar:
-        members = []
         for member in tar:
             if not (member.isfile() or member.isdir()) or not _safe_member(member.name):
                 continue  # links, devices, fifos and odd paths are skipped
@@ -75,8 +77,14 @@ def _unpack_tar(archive, dest):
             total += member.size
             if files > MAX_FILES or total > MAX_UNPACKED_BYTES:
                 raise ArchiveError("archive too large to unpack")
-            members.append(member)
-        tar.extractall(dest, members=members, filter="data")
+            target = dest / PurePosixPath(member.name)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source = tar.extractfile(member)
+            with source, open(target, "wb") as out:
+                shutil.copyfileobj(source, out)
 
 
 def _unpack_zip(archive, dest):
