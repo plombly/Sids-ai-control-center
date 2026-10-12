@@ -2,6 +2,14 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.5.2 (2026-10-11)
+
+- Uploaded archives are unpacked for the goal box on Debian 12 too (its
+  Python 3.11.2 lacks the extraction filter 1.5.1 relied on, so archives
+  were silently skipped there).
+- Tests no longer assume where LAIka's own Python lives (1.5.1's checks
+  failed on GitHub).
+
 ## 1.5.1 (2026-10-11)
 
 Fixes found by building a whole project with LAIka (NGINX-Manager):
