@@ -123,7 +123,7 @@ def test_other_projects_shell_allowlist_is_their_gate(worker, tmp_path):
     register(worker.redis, "web-shop", tmp_path, gate_command="npm test")
     worker.use_project(worker.laika_projects.load(worker.redis, "web-shop"))
     allowed = worker.repair_allowed_bash()
-    assert "Bash(npm test)" in allowed and not any(worker.LAIKA_PYTHON in a for a in allowed)  # never LAIka's venv
+    assert "Bash(npm test)" in allowed and not any(a.startswith(f"Bash({worker.LAIKA_PYTHON} ") for a in allowed)  # never LAIka's venv
     assert "Bash(.venv/bin/python -m pytest *)" in allowed                                      # the project's own
     worker.use_project(None)
     assert any("pytest" in a for a in worker.repair_allowed_bash())

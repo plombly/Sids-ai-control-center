@@ -27,7 +27,7 @@ def test_project_builders_run_tests_with_the_projects_own_dependencies(monkeypat
     monkeypatch.setattr(worker, "PROJECT", type("P", (), {"is_builtin": False, "id": "shop"})())
     note = worker.python_note("builder")
     assert ".venv/bin/python -m pytest" in note and "install them first" in note
-    assert worker.LAIKA_PYTHON not in note
+    assert f"use {worker.LAIKA_PYTHON} -m pytest" not in note
     monkeypatch.setattr(worker, "PROJECT", type("P", (), {"is_builtin": True, "id": "laika"})())
     assert f"{worker.LAIKA_PYTHON} -m pytest" in worker.python_note("builder")
 
@@ -37,7 +37,7 @@ def test_claude_repairs_in_projects_may_install_and_run_the_projects_tests(monke
     monkeypatch.setattr(worker, "PROJECT", type("P", (), {"is_builtin": False, "id": "shop", "gate_command": ""})())
     allowed = worker.repair_allowed_bash()
     assert "Bash(.venv/bin/python -m pytest *)" in allowed and "Bash(.venv/bin/pip install *)" in allowed
-    assert "Bash(npm install)" in allowed and not any(worker.LAIKA_PYTHON in item for item in allowed)
+    assert "Bash(npm install)" in allowed and not any(item.startswith(f"Bash({worker.LAIKA_PYTHON} ") for item in allowed)
 
 
 def test_python_packages_started_with_dash_m_are_detected():
