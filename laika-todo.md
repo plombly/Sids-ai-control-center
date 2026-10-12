@@ -94,7 +94,7 @@ or imported projects; dashboard caching.
       so no "Open app" (NGINX-Manager).
 - [x] Goal-box Conversation cannot look inside uploaded archives (.tar.gz /
       .zip): it planned around the owner's old suite without reading it.
-- [x] Release 1.5.1 with the trial fixes (2026-10-11).
+- [x] Released 1.5.1 (CI failed) and 1.5.2 (2026-10-11, CI green).
 
 ## Backlog (not scheduled)
 
