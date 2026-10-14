@@ -66,6 +66,12 @@ def test_scan_range_sees_added_lines_and_messages(rel, tmp_path, monkeypatch):
     monkeypatch.setattr(rel, "ROOT", repo)
     assert rel.scan_range("HEAD~1..HEAD", rel.SECRETS) == ["a.txt:1: GitHub token"]
     assert rel.scan_range("HEAD~1", rel.SECRETS) == []
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    reviewed = tmp_path / "reviewed.txt"
+    reviewed.write_text(f"# checked\n{sha[:7]} a.txt GitHub token   # a fake\n")
+    assert rel.scan_range("HEAD~1..HEAD", rel.SECRETS, reviewed=rel.reviewed_findings(reviewed)) == []
+    assert rel.scan_range("HEAD~1..HEAD", rel.SECRETS, reviewed={("0000000", "a.txt", "GitHub token")}) == \
+        ["a.txt:1: GitHub token"]                                     # only the reviewed commit is excused
 
 
 def test_publish_adds_one_commit_on_the_public_history(rel, tmp_path):

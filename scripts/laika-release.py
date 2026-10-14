@@ -48,7 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_FILE = Path(os.environ.get("LAIKA_RELEASE_FORBIDDEN", "/etc/laika/release-forbidden.txt"))
 NAMESPACE = "laika-release"
 # Development-only files: internal notes, assistant context, one-off tools.
-EXCLUDE = ("CLAUDE.md", "*-todo.md", "docs/stress-*.md", "docs/smoke-test.md", "scripts/laika-migrate-user.sh")
+EXCLUDE = ("CLAUDE.md", "*-todo.md", "scripts/release-scan-reviewed.txt", "docs/stress-*.md", "docs/smoke-test.md", "scripts/laika-migrate-user.sh")
 # Things that look like credentials. (A test may need a fake one: put
 # "release-scan: allow" on that line.)
 SECRETS = [
@@ -113,18 +113,44 @@ def scan_files(ref, files, patterns):
     return findings
 
 
-def scan_range(spec, patterns):
+REVIEWED = ROOT / "scripts" / "release-scan-reviewed.txt"
+
+
+def reviewed_findings(path=None):
+    """{(commit prefix, file, label)} a person checked and found harmless.
+    History cannot be rewritten: a fake key committed without the allow
+    marker (later added) would otherwise block every push of that range,
+    including the nightly backup push. One entry per line:
+    <commit> <file> <label...>   # why it is harmless"""
+    path = path or REVIEWED
+    entries = set()
+    if not Path(path).is_file():
+        return entries
+    for raw in Path(path).read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            commit, name, label = line.split(None, 2)
+            entries.add((commit.lower(), name, label.strip()))
+    return entries
+
+
+def scan_range(spec, patterns, reviewed=None):
     """Lines added by the commits in spec (e.g. origin/main..HEAD), plus their messages."""
+    reviewed = reviewed_findings() if reviewed is None else reviewed
     findings = []
     diff = git("log", "-p", "--format=commit %H%n%B", "--no-color", spec).decode(errors="replace")
-    current = "?"
+    current, commit = "?", ""
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             current = line[6:]
         elif line.startswith("commit "):
-            current = f"commit {line[7:19]}"
+            commit = line[7:].strip()
+            current = f"commit {commit[:12]}"
         elif line.startswith("+") and not line.startswith("+++"):
-            findings += scan_text(current, line[1:], patterns)
+            for finding in scan_text(current, line[1:], patterns):
+                label = finding.split(": ", 1)[1]
+                if not any(commit.startswith(c) and name == current and want == label for c, name, want in reviewed):
+                    findings.append(finding)
         elif current.startswith("commit "):
             findings += scan_text(current, line, patterns)
     return findings

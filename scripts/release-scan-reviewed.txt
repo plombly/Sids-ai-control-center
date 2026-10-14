@@ -1,0 +1,4 @@
+# Findings of `laika-release.py scan --range` that a person checked and
+# found harmless, in commits that cannot be changed any more (history).
+# One per line: <commit> <file> <label>   # why
+72d0e93 apps/api/tests/test_teams.py private key   # fake "BEGIN OPENSSH PRIVATE KEY" in the SSH-key validation test; allow marker added in db96781
