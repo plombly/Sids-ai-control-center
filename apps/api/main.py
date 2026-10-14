@@ -200,6 +200,57 @@ _SNAPSHOT_TTL = float(os.environ.get("API_SNAPSHOT_TTL", "1.0"))
 _snapshots = {}
 
 
+# Fields too large for list views, cut down inside Redis before they cross
+# the wire: job prompts alone were 5 of the 6 MB every snapshot read (363
+# jobs), which kept both API workers busy and made pages take seconds.
+# Detail views read the full hash with _hash. Length 0 = leave the field out.
+LIGHT_FIELDS = {"prompt": 600, "base_prompt": 600, "goal": 4000, "review_findings": 0,
+                "review_findings_history": 0, "integration_result": 0}
+_LIGHT_HGETALL = """
+if redis.call('TYPE', KEYS[1]).ok ~= 'hash' then return {} end
+local limits = cjson.decode(ARGV[1])
+local out = {}
+local flat = redis.call('HGETALL', KEYS[1])
+for i = 1, #flat, 2 do
+  local limit = tonumber(limits[flat[i]] or -1)
+  if limit < 0 then
+    out[#out + 1] = flat[i]; out[#out + 1] = flat[i + 1]
+  elseif limit > 0 then
+    out[#out + 1] = flat[i]; out[#out + 1] = string.sub(flat[i + 1], 1, limit)
+  end
+end
+return out
+"""
+
+
+_LIGHT_ARG = json.dumps(LIGHT_FIELDS)
+
+
+_light_scripts = {}
+
+
+def _queue_light_hgetall(pipe, key):
+    """Queue HGETALL of key with LIGHT_FIELDS cut down (non-hashes: empty).
+    EVALSHA of a registered script (sending and hashing the script with
+    every one of hundreds of keys was most of the pipeline's time)."""
+    script = _light_scripts.get(id(redis))
+    if script is None and hasattr(redis, "register_script"):
+        script = _light_scripts[id(redis)] = redis.register_script(_LIGHT_HGETALL)
+    if script is not None:
+        script(keys=[key], args=[_LIGHT_ARG], client=pipe)
+    else:
+        pipe.eval(_LIGHT_HGETALL, 1, key, _LIGHT_ARG)
+
+
+def _pairs(value):
+    """A Lua reply is a flat list; HGETALL a dict."""
+    if isinstance(value, list):
+        it = iter(value)
+        return {(k.decode() if isinstance(k, bytes) else k): (v.decode(errors="replace") if isinstance(v, bytes) else v)
+                for k, v in zip(it, it)}
+    return value
+
+
 def _hashes(pattern):
     """[(key, data)] for every non-empty hash matching pattern (non-hash keys,
     like planner locks, are skipped). One round trip; cached _SNAPSHOT_TTL s."""
@@ -212,8 +263,8 @@ def _hashes(pattern):
     try:
         pipe = redis.pipeline(transaction=False)
         for key in keys:
-            pipe.hgetall(key)
-        values = pipe.execute(raise_on_error=False)
+            _queue_light_hgetall(pipe, key)
+        values = [_pairs(value) for value in pipe.execute(raise_on_error=False)]
     except Exception:
         values = [_hash(key) for key in keys]
     result = [(key, value) for key, value in zip(keys, values) if isinstance(value, dict) and value]
@@ -222,13 +273,25 @@ def _hashes(pattern):
     return result
 
 
+_statuses_cache = {"rows": None, "value": {}}
+
+
 def _job_statuses():
-    return {_key_suffix(key): data.get("status") for key, data in _hashes("laika:jobs:*")}
+    """{job id: status}, built once per snapshot (every goal asked for it,
+    so a page with 70 goals rebuilt it 70 times)."""
+    rows = _hashes("laika:jobs:*")
+    if _statuses_cache["rows"] is not rows:
+        _statuses_cache.update(rows=rows, value={_key_suffix(key): data.get("status") for key, data in rows})
+    return _statuses_cache["value"]
 
 
 def _keys(pattern):
     try:
-        return sorted(redis.scan_iter(pattern), key=str)
+        try:
+            found = redis.scan_iter(pattern, count=1000)  # fewer round trips
+        except TypeError:  # test doubles without count
+            found = redis.scan_iter(pattern)
+        return sorted(found, key=str)
     except Exception:
         return []
 

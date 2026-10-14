@@ -8,14 +8,28 @@ class Pipe:
         self.store, self.calls, self.ops = store, calls, []
 
     def hgetall(self, key):
-        self.ops.append(key)
+        self.ops.append((key, None))
+
+    def eval(self, script, numkeys, key, limits):
+        """What main._LIGHT_HGETALL does in Redis: a flat list, big fields cut."""
+        self.ops.append((key, __import__("json").loads(limits)))
 
     def execute(self, raise_on_error=True):
-        self.calls.append(list(self.ops))
+        self.calls.append([key for key, _ in self.ops])
         out = []
-        for key in self.ops:
+        for key, limits in self.ops:
             value = self.store.get(key)
-            out.append(Exception("WRONGTYPE") if isinstance(value, str) else (value or {}))
+            if limits is None:
+                out.append(Exception("WRONGTYPE") if isinstance(value, str) else (value or {}))
+                continue
+            flat = []
+            for field, text in ({} if isinstance(value, str) else (value or {})).items():
+                limit = limits.get(field, -1)
+                if limit < 0:
+                    flat += [field, text]
+                elif limit > 0:
+                    flat += [field, text[:limit]]
+            out.append(flat)
         return out
 
 
@@ -50,3 +64,13 @@ def test_snapshot_cache_reuses_a_recent_read(monkeypatch):
     monkeypatch.setattr(main, "_SNAPSHOT_TTL", 0)
     assert main._hashes("laika:jobs:*")[0][1]["status"] == "running"
     assert len(fake.calls) == 2
+
+
+def test_list_reads_leave_big_fields_in_redis(monkeypatch):
+    fake = PipeRedis({"laika:jobs:j1": {"id": "j1", "prompt": "Task:\n" + "x" * 5000, "review_findings": "y" * 9000,
+                                        "integration_result": "{}", "status": "queued"}})
+    monkeypatch.setattr(main, "redis", fake)
+    monkeypatch.setattr(main, "_SNAPSHOT_TTL", 0)
+    [(_, job)] = main._hashes("laika:jobs:*")
+    assert job["status"] == "queued" and len(job["prompt"]) == 600 and job["prompt"].startswith("Task:")
+    assert "review_findings" not in job and "integration_result" not in job
