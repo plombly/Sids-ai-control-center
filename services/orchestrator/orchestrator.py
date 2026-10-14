@@ -52,6 +52,12 @@ MAX_REPAIR_ATTEMPTS = int(
     os.getenv("MAX_REPAIR_ATTEMPTS", "2")
 )
 MAX_CONCURRENT_GOALS = max(1, int(os.getenv("MAX_CONCURRENT_GOALS", "4")))
+# Pause between maintenance passes when no goal is being planned. Each pass
+# reads every job hash several times (about 7 MB per scan with 360 jobs),
+# so at one pass a second the orchestrator, Redis and Docker's port proxy
+# kept a 4-CPU server half busy and the dashboard slow. Nothing here needs
+# sub-second reaction: workers claim jobs from the queue themselves.
+IDLE_SECONDS = float(os.environ.get("ORCHESTRATOR_IDLE_SECONDS", "3"))
 # Self-healing bounds. A failed build is rebuilt from current main until
 # MAX_BUILD_ATTEMPTS, and a review that could not complete is re-integrated
 # and re-reviewed up to MAX_REVIEW_RECOVERIES times. Past either bound the
@@ -1821,7 +1827,7 @@ def main():
 
                 ids = active_goal_ids()
                 heartbeat("active", ids[0] if ids else "", ids) if ids else heartbeat()
-                time.sleep(0.25 if futures else 1)
+                time.sleep(0.25 if futures else IDLE_SECONDS)
             except Exception as exc:
                 print(f"[{ORCHESTRATOR_ID}] loop error: {exc}", flush=True)
                 time.sleep(5)
