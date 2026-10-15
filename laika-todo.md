@@ -96,6 +96,15 @@ or imported projects; dashboard caching.
       .zip): it planned around the owner's old suite without reading it.
 - [x] Released 1.5.1 (CI failed) and 1.5.2 (2026-10-11, CI green).
 
+## Unreleased on main (next release)
+
+- Dashboard API reads trimmed job hashes (Lua, one round trip); goal
+  status map once per snapshot.
+- Orchestrator: idle passes every 3 s; one light read of all jobs per pass,
+  candidates re-read in full before acting.
+- Release scan: scripts/release-scan-reviewed.txt for findings in history
+  (nightly backup push works again).
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
