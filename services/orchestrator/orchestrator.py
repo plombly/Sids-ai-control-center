@@ -6,6 +6,7 @@ import os
 import pwd
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +70,88 @@ MAX_REVIEW_RECOVERIES = int(os.getenv("MAX_REVIEW_RECOVERIES", "2"))
 LOST_CONFIRM_SECONDS = int(os.getenv("LOST_JOB_CONFIRM_SECONDS", "60"))
 
 r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
+
+
+# --- one light read of all jobs per pass -------------------------------------------
+# Every maintenance function used to scan every job hash in full (prompts,
+# review findings, gate output: ~7 MB per scan with 360 jobs), seven times
+# per pass. They only need a few small fields to find the jobs that concern
+# them; those candidates are then read again in full and re-checked before
+# anything is changed, so decisions never rest on stale or trimmed data.
+LIGHT_JOB_FIELDS = {"prompt": 0, "base_prompt": 0, "review_findings": 0, "review_findings_history": 0,
+                    "integration_result": 0, "goal": 0, "review_error": 400, "error": 400}
+_LIGHT_HGETALL = """
+if redis.call('TYPE', KEYS[1]).ok ~= 'hash' then return {} end
+local limits = cjson.decode(ARGV[1])
+local out = {}
+local flat = redis.call('HGETALL', KEYS[1])
+for i = 1, #flat, 2 do
+  local limit = tonumber(limits[flat[i]] or -1)
+  if limit < 0 then
+    out[#out + 1] = flat[i]; out[#out + 1] = flat[i + 1]
+  elseif limit > 0 then
+    out[#out + 1] = flat[i]; out[#out + 1] = string.sub(flat[i + 1], 1, limit)
+  end
+end
+return out
+"""
+_LIGHT_ARG = json.dumps(LIGHT_JOB_FIELDS)
+_pass_rows = {"rows": None, "thread": None}
+_light_script = {}
+
+
+def _job_keys():
+    try:
+        return list(r.scan_iter("laika:jobs:*", count=1000))
+    except TypeError:  # test doubles without count
+        return list(r.scan_iter("laika:jobs:*"))
+
+
+def _light_rows(keys):
+    """[(key, trimmed hash)] in one pipelined round trip (plain reads on
+    clients without scripting, such as the tests' in-memory Redis)."""
+    try:
+        script = _light_script.get(id(r))
+        if script is None:
+            script = _light_script[id(r)] = r.register_script(_LIGHT_HGETALL)
+        pipe = r.pipeline(transaction=False)
+        for key in keys:
+            script(keys=[key], args=[_LIGHT_ARG], client=pipe)
+        replies = pipe.execute(raise_on_error=False)
+    except AttributeError:
+        return [(key, r.hgetall(key)) for key in keys]
+    rows = []
+    for key, reply in zip(keys, replies):
+        if isinstance(reply, list):
+            it = iter(reply)
+            rows.append((key, dict(zip(it, it))))
+        elif isinstance(reply, dict):
+            rows.append((key, reply))
+        else:
+            rows.append((key, {}))
+    return rows
+
+
+def job_rows(fresh=False):
+    """Every job as [(key, small fields)]. Inside a main-loop pass (and only
+    on its thread) one read is shared by the pass's steps unless fresh;
+    anywhere else every call reads anew. Read a candidate in full with
+    r.hgetall before acting on it."""
+    in_pass = _pass_rows["thread"] == threading.get_ident()
+    if in_pass and not fresh and _pass_rows["rows"] is not None:
+        return _pass_rows["rows"]
+    rows = _light_rows(_job_keys())
+    if in_pass and not fresh:
+        _pass_rows["rows"] = rows
+    return rows
+
+
+def begin_pass():
+    _pass_rows.update(rows=None, thread=threading.get_ident())
+
+
+def end_pass():
+    _pass_rows.update(rows=None, thread=None)
 
 
 def now():
@@ -307,14 +390,14 @@ def recent_problems(project, limit=6, days=7):
         lines.append("- App log (last lines):\n" + "\n".join("    " + line for line in tail.splitlines()))
     cutoff = time.time() - days * 86400
     failed = []
-    for key in r.scan_iter("laika:jobs:*"):
+    for key, light in job_rows(fresh=True):
         if key.count(":") != 2:
             continue
+        if (light.get("project_id") or laika_projects.BUILTIN_PROJECT) != project.id:
+            continue
+        if light.get("status") not in ("failed", "test_failed", "integration_failed", "needs_human"):
+            continue
         job = r.hgetall(key)
-        if (job.get("project_id") or laika_projects.BUILTIN_PROJECT) != project.id:
-            continue
-        if job.get("status") not in ("failed", "test_failed", "integration_failed", "needs_human"):
-            continue
         try:
             when = float(job.get("updated_at") or job.get("created_at") or 0)
         except ValueError:
@@ -366,8 +449,7 @@ def planner_model(atomic):
 def busy_files_summary(project_id=laika_projects.BUILTIN_PROJECT, limit=40):
     held = sorted({
         path
-        for key in r.scan_iter("laika:jobs:*")
-        for job in [r.hgetall(key)]
+        for _, job in job_rows(fresh=True)
         if holds_scope(job) and (job.get("project_id") or laika_projects.BUILTIN_PROJECT) == project_id
         for path in job_scope(job)
     })
@@ -908,8 +990,11 @@ def review_findings(review):
 
 
 def queue_repairs():
-    for key in r.scan_iter("laika:jobs:*"):
-        builder = r.hgetall(key)
+    for key, light in job_rows():
+        if (light.get("status"), light.get("review_status"), light.get("review_verdict")) != (
+                "awaiting_review", "complete", "changes_required"):
+            continue
+        builder = r.hgetall(key)  # in full, and re-checked below
 
         if builder.get("status") != "awaiting_review":
             continue
@@ -1105,10 +1190,11 @@ needed no change).
 def release_dependencies():
     # Oldest first, so a job waiting for files is not overtaken forever.
     blocked = sorted(
-        ((key, r.hgetall(key)) for key in r.scan_iter("laika:jobs:*")),
+        ((key, light) for key, light in job_rows() if light.get("status") == "blocked"),
         key=lambda item: _int(float(item[1].get("created_at") or 0) * 1000),
     )
-    for key, job in blocked:
+    for key, _ in blocked:
+        job = r.hgetall(key)  # in full: an earlier step of this pass may have changed it
         if job.get("status") != "blocked":
             continue
 
@@ -1365,7 +1451,9 @@ def recover_lost_jobs(now_ts=None):
     held, queued = work
     now_ts = time.time() if now_ts is None else now_ts
     seen = set()
-    for key in r.scan_iter("laika:jobs:*"):
+    for key, light in job_rows():
+        if light.get("status") not in IN_FLIGHT_STATES:
+            continue
         job = r.hgetall(key)
         job_id = job.get("id") or key.rsplit(":", 1)[-1]
         if job.get("status") not in IN_FLIGHT_STATES:
@@ -1390,7 +1478,9 @@ def recover_lost_jobs(now_ts=None):
 
 
 def retry_failed_builds():
-    for key in r.scan_iter("laika:jobs:*"):
+    for key, light in job_rows():
+        if not (is_builder(light) and light.get("status") in BUILD_FAILED_STATES):
+            continue
         job = r.hgetall(key)
         if not (is_builder(job) and job.get("status") in BUILD_FAILED_STATES):
             continue
@@ -1541,7 +1631,9 @@ def recover_stalled_reviews(now_ts=None):
     busy = work[0] | work[1]
     now_ts = time.time() if now_ts is None else now_ts
     seen = set()
-    for key in r.scan_iter("laika:jobs:*"):
+    for key, light in job_rows():
+        if not is_builder(light) or light.get("status") != "awaiting_review" or light.get("review_status") == "complete":
+            continue
         builder = r.hgetall(key)
         if not is_builder(builder) or builder.get("status") != "awaiting_review":
             continue
@@ -1621,8 +1713,7 @@ def scope_conflict(job):
     mine = job_scope(job)
     if not mine:
         return None
-    for key in r.scan_iter("laika:jobs:*"):
-        other = r.hgetall(key)
+    for key, other in job_rows(fresh=True):  # never the pass snapshot: a job released a moment ago holds files
         other_id = other.get("id") or key.rsplit(":", 1)[-1]
         if other_id == job.get("id") or not holds_scope(other):
             continue
@@ -1654,8 +1745,7 @@ def publish_project_stats(now_ts=None):
         return stats.setdefault(project_id or laika_projects.BUILTIN_PROJECT,
                                 {"remaining_effort": 0, "waiting_jobs": 0, "running_jobs": 0})
 
-    for key in r.scan_iter("laika:jobs:*"):
-        job = r.hgetall(key)
+    for _, job in job_rows():
         if not is_builder(job):
             continue
         status = job.get("status")
@@ -1812,6 +1902,7 @@ def main():
                         futures.remove(future)
                         finish_goal_future(future)
 
+                begin_pass()
                 recover_lost_jobs()
                 retry_failed_builds()
                 recover_stalled_reviews()
@@ -1825,10 +1916,12 @@ def main():
                     recover_interrupted_planning()
                 submit_queued_goals(executor, futures)
 
+                end_pass()
                 ids = active_goal_ids()
                 heartbeat("active", ids[0] if ids else "", ids) if ids else heartbeat()
                 time.sleep(0.25 if futures else IDLE_SECONDS)
             except Exception as exc:
+                end_pass()
                 print(f"[{ORCHESTRATOR_ID}] loop error: {exc}", flush=True)
                 time.sleep(5)
 

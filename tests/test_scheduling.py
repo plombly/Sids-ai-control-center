@@ -219,3 +219,68 @@ def test_a_repair_gets_every_blocking_finding_as_a_checklist(orch):
     assert checklist.splitlines() == ["1. [ ] BLOCKING: path traversal in server/index.js:8 (fileFor)",
                                       "2. [ ] NOT MET (BLOCKING): the joined message lacks the slot"]
     assert "every BLOCKING item" in orch.blocking_checklist("all fine")
+
+
+class ScriptingRedis(MemoryRedis):
+    """MemoryRedis plus the scripted, pipelined light read job_rows() uses."""
+
+    def __init__(self):
+        super().__init__()
+        self.light_reads = 0
+
+    def register_script(self, source):
+        store = self
+
+        class Script:
+            def __call__(self, keys, args, client):
+                client.ops.append((keys[0], json.loads(args[0])))
+        return Script()
+
+    def pipeline(self, transaction=False):
+        store = self
+
+        class Pipe:
+            ops = []
+
+            def execute(self, raise_on_error=True):
+                store.light_reads += 1
+                out = []
+                for key, limits in self.ops:
+                    flat = []
+                    for field, value in (store.records.get(key) or {}).items():
+                        limit = limits.get(field, -1)
+                        if limit < 0:
+                            flat += [field, value]
+                        elif limit > 0:
+                            flat += [field, value[:limit]]
+                    out.append(flat)
+                return out
+        pipe = Pipe()
+        pipe.ops = []
+        return pipe
+
+
+def test_one_light_read_per_pass_and_candidates_read_in_full(orch):
+    orch.r = ScriptingRedis()
+    put(orch, "a", "awaiting_review", ["x.py"], review_status="complete", review_verdict="changes_required",
+        review_findings="BLOCKING: " + "y" * 5000)
+    [(key, light)] = orch.job_rows()
+    assert "prompt" not in light and "review_findings" not in light and light["status"] == "awaiting_review"
+    orch.begin_pass()
+    orch.job_rows(), orch.job_rows(), orch.job_rows()
+    assert orch.r.light_reads == 2, "one shared read inside a pass (plus the one before it)"
+    orch.job_rows(fresh=True)
+    assert orch.r.light_reads == 3, "fresh always reads"
+    orch.end_pass()
+    orch.job_rows()
+    assert orch.r.light_reads == 4, "outside a pass nothing is reused"
+
+
+def test_release_inside_a_pass_still_holds_files_one_at_a_time(orch):
+    orch.r = ScriptingRedis()
+    put(orch, "late", "blocked", ["apps/api/main.py"], created="3")
+    put(orch, "early", "blocked", ["apps/api/main.py"], created="2")
+    orch.begin_pass()
+    orch.release_dependencies()   # the pass read still says "blocked" for early when late is checked
+    orch.end_pass()
+    assert queued(orch) == ["early"] and job(orch, "late")["status"] == "blocked"
