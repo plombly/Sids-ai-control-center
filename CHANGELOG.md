@@ -2,6 +2,21 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.5.3 (2026-10-15)
+
+Faster everywhere, found by watching a server with a few hundred jobs:
+
+- **Dashboard pages load quickly again.** List views read each job without
+  its large fields (prompts, review findings, test output), which stay in
+  Redis; one dashboard refresh went from 2-4 seconds to under one.
+- **The orchestrator reads all jobs once per pass** instead of once per
+  check, and only the jobs a check acts on are read in full (and checked
+  again) before anything changes; idle passes run every 3 seconds. Its CPU
+  use dropped from about half a core to about 15%.
+- The nightly backup's push to your own git remote works again: a
+  deliberately fake key in an old commit no longer blocks it
+  (scripts/release-scan-reviewed.txt lists such checked findings).
+
 ## 1.5.2 (2026-10-11)
 
 - Uploaded archives are unpacked for the goal box on Debian 12 too (its

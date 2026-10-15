@@ -96,7 +96,7 @@ or imported projects; dashboard caching.
       .zip): it planned around the owner's old suite without reading it.
 - [x] Released 1.5.1 (CI failed) and 1.5.2 (2026-10-11, CI green).
 
-## Unreleased on main (next release)
+## Released in 1.5.3 (2026-10-15)
 
 - Dashboard API reads trimmed job hashes (Lua, one round trip); goal
   status map once per snapshot.
