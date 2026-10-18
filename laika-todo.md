@@ -105,6 +105,28 @@ or imported projects; dashboard caching.
 - Release scan: scripts/release-scan-reviewed.txt for findings in history
   (nightly backup push works again).
 
+## 1.6: improvements from Phoenix (agreed 2026-10-18; dev LAIka only for testing)
+
+Reimplemented ideas only (memory phoenix-integration). Order:
+- [ ] CP1 providers: classify Claude/Codex failures (quota/rate/auth/other)
+      with reset-time parsing; per-provider holds until reset (+2 min, caps);
+      provider waits and worker-lost interruptions requeue without using a
+      build attempt (capped); Claude rate_limit_event -> usage meter + early
+      switch; dashboard holds with reset time; run_codex timeout SIGKILL +
+      group cleanup after exit.
+- [ ] CP2 attacker model: gate from the base (fail closed; LAIka's gate
+      script from base); candidate safety (refuse escaping symlinks,
+      gitlinks, unsafe/.git paths; flag sensitive files to reviewer and
+      approval card), host re-check at approve; hardened git; merge exact
+      SHA + assert; env allowlist + redaction; Codex/Claude isolation flags.
+- [ ] CP3 state: execution_id fencing of worker writes; atomic plan
+      materialization; transition helper + job event stream (warn-only
+      first); job timeline in detail.
+- [ ] CP4 visibility: acceptance criteria per job (plan schema, unknown
+      keys rejected, builder + per-criterion review, approval checklist);
+      gate evidence view; "why is this waiting"; routing page; pause all new
+      work; while-you-were-away; diagnostics hints; backup catalogue.
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
