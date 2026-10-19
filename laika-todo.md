@@ -144,6 +144,12 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       that no provider can serve right now waits for the provider instead
       of failing and using up a review recovery / repair attempt.
 
+- [x] Before 2.0 (owner, 2026-10-19): account notifications (ai_account),
+      "Stop at" per account, upgrading notes, doctor ai-accounts check,
+      Codex plan usage from its session file, backups/sign-ins documented.
+- [ ] Release 2.0.0: signed update test 1.5.3 -> 2.0 (needs the key); then
+      the owner tests a second real paid account on production.
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
