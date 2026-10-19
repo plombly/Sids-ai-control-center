@@ -536,7 +536,13 @@ def run_codex_planner(goal, atomic=False, project=None):
 
     # Codex accounts (provider_accounts): the one with the most room left.
     holder = f"planner:{uuid.uuid4().hex[:8]}"
-    account = provider_accounts.acquire(r, "codex", holder, plan_timeout(goal) + 60) or provider_accounts.DEFAULT
+    account = provider_accounts.acquire(r, "codex", holder, plan_timeout(goal) + 60)
+    if not account:
+        # Every account paused or busy: the default one tries, unless it is turned off.
+        default = next(a for a in provider_accounts.accounts(r, "codex") if a["id"] == provider_accounts.DEFAULT)
+        if not default["enabled"]:
+            raise RuntimeError("planner failed: no Codex account can plan now (all paused, busy or turned off)")
+        account = provider_accounts.DEFAULT
     env = agent_cli.agent_env()
     env = provider_accounts.apply_env(env, provider_accounts.env_for("codex", account, base=env["HOME"]))
     state = () if account == provider_accounts.DEFAULT else (provider_accounts.codex_home(account, env["HOME"]),)

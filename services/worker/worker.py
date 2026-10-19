@@ -1136,7 +1136,9 @@ def run_alternate_builder(job, provider, worktree, log_path, timeout, account=No
         "\n\nThis is an independent second attempt built in parallel with another. "
         "Prefer the simplest correct approach and keep the change small.")}
     holder = f"job:{job['id']}:alt"
-    account = provider_accounts.acquire(redis, "codex", holder, timeout + 120) or provider_accounts.DEFAULT
+    account = provider_accounts.acquire(redis, "codex", holder, timeout + 120)
+    if not account:  # every Codex account paused, off or busy: no second build this time
+        raise RuntimeError("no Codex account is free for the second build")
     try:
         returncode, duration = run_codex(independent, worktree, log_path, account=account)
     finally:

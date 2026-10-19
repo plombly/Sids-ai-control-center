@@ -168,3 +168,10 @@ def test_the_other_build_still_wins_when_the_main_one_waits(worker):
         worker.ProviderWait("codex", provider_health.Failure("quota", "limit")))
     (rc, _), worktree, report = build(worker)
     assert rc == 0 and report["chosen"] == "alt"
+
+
+def test_no_second_build_on_an_account_that_is_off_or_paused(worker, tmp_path):
+    import provider_health
+    worker.redis.records["laika:provider-account:codex:default"] = {"enabled": ""}
+    with pytest.raises(RuntimeError, match="no Codex account is free"):
+        worker.run_alternate_builder({"id": "b1", "prompt": "p"}, "codex", tmp_path, tmp_path / "l", 60)
