@@ -34,6 +34,22 @@ const firstLine = value => {
 };
 const projectChip = (id, names = {}) => `<span class="chip">${esc(names[id] || id || 'laika')}</span>`;
 
+// The planner's "done when" list with the reviewer's verdict on each.
+export const criteriaMarkup = job => {
+  const criteria = Array.isArray(job?.acceptance) ? job.acceptance : [];
+  if (!criteria.length) return '';
+  const reviewed = Array.isArray(job.acceptance_review) ? job.acceptance_review : [];
+  const items = criteria
+    .map((criterion, index) => {
+      const verdict = reviewed[index] || {};
+      const mark = verdict.met === true ? '<span class="crit ok">✓</span>' : verdict.met === false ? '<span class="crit bad">✗</span>' : '<span class="crit unknown">?</span>';
+      const note = verdict.note ? `<div class="subtle">${esc(verdict.note)}</div>` : '';
+      return `<li>${mark} ${esc(criterion)}${note}</li>`;
+    })
+    .join('');
+  return `<details class="criteria" open><summary>Done when (checked by the reviewer)</summary><ul class="plain-list">${items}</ul></details>`;
+};
+
 // Files that steer tests, git or agents (services/candidate_safety.py):
 // allowed, but worth a look before approving.
 export const sensitiveMarkup = job => {
@@ -80,7 +96,7 @@ export function needsYouMarkup(items, names = {}) {
   if (!ready.length && !stuck.length) return '<div class="home-empty">Nothing needs you right now.</div>';
   // Approved into the merge queue: say so instead of offering Approve again.
   const queuedCard = job => `<article class="home-card"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state ok">Approved · in the merge queue</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">${esc(job.merge_queue_state === 'waiting' && job.merge_queue_reason ? `Waiting: ${firstLine(job.merge_queue_reason)}` : 'Merges by itself after its tests and a fresh review pass on the latest main.')}</p><div class="card-actions"><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button></div></article>`;
-  const approval = job => `<article class="home-card attention"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state ok">Ready to approve</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Tests and review passed. Approving puts it into main.</p>${sensitiveMarkup(job)}<div class="card-actions"><button type="button" class="approve-button" data-op="approve" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}" data-candidate="${escValue(job.integrated_candidate_commit)}">Approve</button>${previewMarkup(job)}<button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}">Reject</button></div></article>`;
+  const approval = job => `<article class="home-card attention"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state ok">Ready to approve</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Tests and review passed. Approving puts it into main.</p>${criteriaMarkup(job)}${sensitiveMarkup(job)}<div class="card-actions"><button type="button" class="approve-button" data-op="approve" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}" data-candidate="${escValue(job.integrated_candidate_commit)}">Approve</button>${previewMarkup(job)}<button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="${escValue(job.status)}">Reject</button></div></article>`;
   const stuckCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Stuck</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">LAIka gave up after several tries${job.error ? `: ${esc(firstLine(job.error))}` : ''}.</p><div class="card-actions"><button type="button" data-op="extend" data-job="${escValue(job.id)}" data-status="needs_human">Try again</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button><button type="button" class="danger-button" data-op="reject" data-job="${escValue(job.id)}" data-status="needs_human">Give up</button></div></article>`;
   // Tests that need the internet ask first (services/network_access.py).
   const networkCard = job => `<article class="home-card attention warn"><div class="card-top">${projectChip(job.project_id, names)}<span class="card-state warn">Wants internet</span></div><h3>${esc(job.title || job.id)}</h3><p class="subtle">Its ${esc(job.network_request_step || 'tests')} seem to need internet access, which tests don't have by default.</p>${job.network_request_reason ? `<pre class="network-reason">${esc(job.network_request_reason)}</pre>` : ''}<div class="card-actions"><button type="button" data-op="network_once" data-job="${escValue(job.id)}" data-status="needs_human">Allow for this change</button><button type="button" data-op="network_always" data-job="${escValue(job.id)}" data-status="needs_human">Always allow in this project</button><button type="button" data-op="network_deny" data-job="${escValue(job.id)}" data-status="needs_human">Keep tests offline</button><button type="button" class="detail-button" data-detail="${escValue(job.id)}">Details</button></div></article>`;

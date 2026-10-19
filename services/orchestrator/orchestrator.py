@@ -314,7 +314,8 @@ Return ONLY valid JSON using this exact shape:
       "task": "complete implementation instructions",
       "scope": ["exact/file/it/will/change.py"],
       "size": "S|M",
-      "depends_on": []
+      "depends_on": [],
+      "acceptance": ["1-5 short, checkable statements of what is true when this job is done"]
     }}
   ]
 }}
@@ -583,10 +584,38 @@ def compress_scope(scope):
     return compressed
 
 
+JOB_KEYS = {"number", "title", "task", "scope", "size", "depends_on", "project", "acceptance"}
+# Spellings planners use for known fields: a misspelled depends_on used to
+# drop the dependency silently.
+JOB_KEY_ALIASES = {"dependencies": "depends_on", "depends": "depends_on", "depends-on": "depends_on",
+                   "dependsOn": "depends_on", "acceptance_criteria": "acceptance", "criteria": "acceptance",
+                   "acceptanceCriteria": "acceptance", "files": "scope"}
+MAX_CRITERIA = 8
+
+
+def normalize_job_keys(job, number, warnings):
+    """Map known misspellings onto LAIka's fields; drop anything else with a
+    warning recorded on the goal (plan_warnings), never silently."""
+    for alias, name in JOB_KEY_ALIASES.items():
+        if alias in job and name not in job:
+            job[name] = job.pop(alias)
+            warnings.append(f"job {number}: read {alias!r} as {name!r}")
+    for unknown in sorted(set(job) - JOB_KEYS):
+        job.pop(unknown)
+        warnings.append(f"job {number}: ignored unknown field {unknown!r}")
+    criteria = job.get("acceptance", [])
+    if isinstance(criteria, str):
+        criteria = [criteria]
+    if not isinstance(criteria, list):
+        raise ValueError(f"job {number} acceptance must be a list of statements")
+    job["acceptance"] = [str(c).strip()[:300] for c in criteria if str(c).strip()][:MAX_CRITERIA]
+
+
 def validate_plan(plan, atomic=False, members=None):
     """members: the project ids a group goal may plan in (first = default)."""
     if not isinstance(plan, dict):
         raise ValueError("plan must be an object")
+    warnings = plan.setdefault("warnings", [])
 
     jobs = plan.get("jobs")
 
@@ -611,6 +640,8 @@ def validate_plan(plan, atomic=False, members=None):
             raise ValueError("duplicate job number")
 
         numbers.add(number)
+
+        normalize_job_keys(job, number, warnings)
 
         if not str(job.get("title", "")).strip():
             raise ValueError(f"job {number} has no title")
@@ -797,7 +828,16 @@ Efficiency requirements:
 - Make the smallest correct change.
 - Run only focused validation; LAIka runs the deterministic integration gate.
 - Stop when the requested implementation and focused validation are complete.
-""".strip() + goal_section(goal, jobs_in_plan)
+""".strip() + acceptance_section(item.get("acceptance")) + goal_section(goal, jobs_in_plan)
+
+
+def acceptance_section(criteria):
+    """The job's acceptance criteria for the builder (the reviewer checks each)."""
+    criteria = [c for c in (criteria or []) if str(c).strip()]
+    if not criteria:
+        return ""
+    lines = "\n".join(f"{n}. {c}" for n, c in enumerate(criteria, 1))
+    return f"\n\nDone when (the independent reviewer checks each one):\n{lines}"
 
 PLANNING_NOW = set()  # goal ids this process is planning right now
 MAX_PLAN_RESTARTS = 2
@@ -933,6 +973,7 @@ def _process_goal(raw, data, goal_id):
             "project_id": target.id,
             "scope": json.dumps(item.get("scope", [])),
             "size": item.get("size", "M"),
+            "acceptance": json.dumps(item.get("acceptance", [])),
         }
 
         # Files another in-flight job is changing (including an earlier job
@@ -968,6 +1009,7 @@ def _process_goal(raw, data, goal_id):
         "planner_provider": planner.get("provider", ""),
         "planner_model": planner.get("model", ""),
         "planner_cost_usd": planner.get("cost_usd", ""),
+        "plan_warnings": json.dumps(plan.get("warnings", [])[:20]),
         "updated_at": now(),
     }
     write_plan(key, records, goal_fields)

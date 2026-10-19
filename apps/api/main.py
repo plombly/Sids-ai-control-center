@@ -372,6 +372,10 @@ def _job(key, data):
         # Files the safety check flagged (services/candidate_safety.py): shown on the approval card.
         "sensitive_paths": [_text(p) for p in (_json_list(data.get("sensitive_paths")) or [])][:20],
         "defer_reason": _text(data.get("defer_reason")),
+        # The planner's acceptance criteria and the reviewer's verdict on each.
+        "acceptance": [_text(c) for c in (_json_list(data.get("acceptance")) or [])][:8],
+        "acceptance_review": [item for item in (_json_list(data.get("acceptance_review")) or [])
+                              if isinstance(item, dict)][:8],
         "needs_human_kind": _text(data.get("needs_human_kind")),
         # An internet-access request (services/network_access.py); credentials already masked.
         "network_request_reason": _text(data.get("network_request_reason"), "")[:1200],

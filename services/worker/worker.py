@@ -1440,6 +1440,42 @@ def prior_findings_packet(builder):
     )
 
 
+def acceptance_criteria(builder):
+    """The planner's acceptance criteria for a builder job ([] for older jobs)."""
+    try:
+        criteria = json.loads(builder.get("acceptance") or "[]")
+    except ValueError:
+        return []
+    return [str(c) for c in criteria if str(c).strip()] if isinstance(criteria, list) else []
+
+
+def criteria_review_note(criteria):
+    if not criteria:
+        return ""
+    lines = "\n".join(f"{n}. {c}" for n, c in enumerate(criteria, 1))
+    return (f"Acceptance criteria for this job (from the plan):\n{lines}\n\n"
+            "Before the verdict, add one line per criterion, exactly:\n"
+            "CRITERION <number>: MET - <the evidence in the change>\n"
+            "or CRITERION <number>: NOT MET - <what is missing>\n"
+            "A criterion that is NOT MET is a BLOCKING finding.\n\n")
+
+
+_CRITERION = re.compile(r"^\s*\**\s*CRITERION\s+(\d+)\s*\**\s*:\s*(MET|NOT MET)\b\s*[-:–—]?\s*(.*)$", re.IGNORECASE)
+
+
+def parse_criteria_review(messages, criteria):
+    """[{criterion, met (True/False/None), note}] from the reviewer's lines;
+    None when the reviewer said nothing about a criterion."""
+    found = {}
+    for text in messages or []:
+        for line in str(text).splitlines():
+            match = _CRITERION.match(line)
+            if match and 1 <= int(match.group(1)) <= len(criteria):
+                found[int(match.group(1))] = (match.group(2).upper() == "MET", match.group(3).strip()[:300])
+    return [{"criterion": c, "met": found.get(n, (None, ""))[0], "note": found.get(n, (None, ""))[1]}
+            for n, c in enumerate(criteria, 1)]
+
+
 def parse_review_verdict(messages):
     """Return (verdict, findings) from reviewer agent messages.
 
@@ -1556,6 +1592,7 @@ def queue_review_job(builder_job_id):
         main_changes = main_changes_packet(builder["reviewed_base_commit"], review_base, Path(worktree))
     gate_summary = integration_gate_summary(builder)
     prior_findings = prior_findings_packet(builder)
+    criteria = acceptance_criteria(builder)
 
     prompt = f"""You are the review agent for LAIka.
 
@@ -1609,7 +1646,7 @@ findings back for a later round.
 Read surrounding code only to validate a concrete concern. Do not modify any
 files. Do not commit anything.
 
-End your response with exactly one verdict line:
+{criteria_review_note(criteria)}End your response with exactly one verdict line:
 VERDICT: PASS
 or
 VERDICT: PASS_WITH_NOTES
@@ -1756,6 +1793,7 @@ def process_review_job(job, key, log_path):
     messages = agent_cli.agent_messages(log_path)
 
     verdict, findings = parse_review_verdict(messages)
+    criteria_review = parse_criteria_review(messages, acceptance_criteria(builder))
 
     common = {
         "review_verdict": verdict,
@@ -1798,6 +1836,7 @@ def process_review_job(job, key, log_path):
         "reviewed_base_commit": str(builder.get("integration_base_commit") or "") if verdict == "pass" else "",
         "review_aspects": review_aspects_json,
         "review_job_id": job_id,
+        "acceptance_review": json.dumps(criteria_review),
         "review_status": "complete",
         "review_verdict": verdict,
         "review_findings": findings,
