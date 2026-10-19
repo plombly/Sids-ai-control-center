@@ -85,9 +85,11 @@ def test_first_loop_deploys_main_with_a_port(apps):
     assert (root / "live" / "server.js").read_text() == "// v1\n"
     [run] = started(calls)
     assert "--setenv=PORT=8100" in run and "--setenv=HOST=0.0.0.0" in run and "--unit=laika-app-shop" in run
-    assert run[-3:] == ["/bin/sh", "-c", "node server.js"]
-    assert module.systemd_literal("$(test -x .venv/bin/python && echo x) -m app --port $PORT 50%") == \
-        "$$(test -x .venv/bin/python && echo x) -m app --port $$PORT 50%"   # the shell sees it as written
+    # systemd never sees the command (a daemon-reload doubled its "$" escaping):
+    # the unit runs a script holding it, readable but not writable by the app.
+    assert run[-2:] == ["/bin/sh", str(root / "run" / "laika-app-shop.sh")]
+    assert (root / "run" / "laika-app-shop.sh").read_text().splitlines()[-1] == "node server.js"
+    assert not any("$" in part for part in run if "node server" in part)
     module.loop_once()
     assert len(started(calls)) == 1  # nothing changed: no redeploy
 

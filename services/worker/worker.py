@@ -18,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
+import provider_health  # noqa: E402  (services/provider_health.py)
+import redaction  # noqa: E402  (services/redaction.py)
 import project_reference  # noqa: E402  (services/project_reference.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
@@ -773,7 +775,8 @@ def run_codex(job, worktree, log_path):
 
             if time.time() - started >= runtime_limit:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
+                stop_process_group(process)
+                break
 
             _, live_usage = parse_codex_log(log_path)
             live_effective = int(live_usage.get("effective_tokens") or 0)
@@ -786,11 +789,11 @@ def run_codex(job, worktree, log_path):
                 and live_usage.get("turn_completed") != "1"
                 and process.poll() is None
             ):
-                os.killpg(process.pid, signal.SIGTERM)
+                agent_cli.kill_group(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    agent_cli.kill_group(process.pid, signal.SIGKILL)
                     process.wait()
                 raise RuntimeError(
                     f"Codex effective-token budget exceeded: {live_effective} >= {enforcement_budget} "
@@ -799,12 +802,32 @@ def run_codex(job, worktree, log_path):
 
             time.sleep(POLL_SECONDS)
 
+        # Nothing the agent started may outlive it (a dev server, a watcher):
+        # LAIka's own jobs have no sandbox to take them down.
+        kill_leftovers(process)
+
         if timed_out:
             raise RuntimeError(
                 f"Codex exceeded {runtime_limit} second {role} timeout"
             )
 
     return process.returncode, time.time() - started
+
+
+def stop_process_group(process, grace=10):
+    """SIGTERM the agent's process group, SIGKILL it if it is still there
+    after grace seconds (a Codex that ignored SIGTERM hung the worker)."""
+    agent_cli.kill_group(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        agent_cli.kill_group(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def kill_leftovers(process):
+    """SIGKILL whatever is left in the agent's process group after it exited."""
+    agent_cli.kill_group(process.pid, signal.SIGKILL)
 
 
 def repair_allowed_bash():
@@ -1002,6 +1025,38 @@ def run_best_of(job, worktree, log_path):
     return 0, max(results.get("primary", (0, 0))[1], (alt or (0, 0))[1])
 
 
+class ProviderWait(Exception):
+    """No provider can serve this job right now (quota, rate limit, sign-in,
+    outage). Builders wait for it without using up an attempt
+    (orchestrator resume_deferred_jobs)."""
+
+    def __init__(self, provider, failure):
+        self.provider, self.failure = provider, failure
+        until = provider_health.info(redis, provider).get("until") or failure.until
+        self.until = until
+        super().__init__(f"{provider} {failure.kind}: {failure.reason}")
+
+
+def codex_or_wait(job, worktree, log_path):
+    """run_codex, turning a Codex quota/rate/sign-in failure into a hold on
+    Codex plus ProviderWait instead of an ordinary failed build."""
+    if provider_health.held(redis, "codex"):
+        detail = provider_health.info(redis, "codex")
+        raise ProviderWait("codex", provider_health.Failure(detail.get("kind", "unavailable"),
+                                                            detail.get("reason", "on hold"), detail.get("until")))
+    returncode, duration = run_codex(job, worktree, log_path)
+    if returncode != 0:
+        try:
+            failure = provider_health.codex_failure(Path(log_path).read_text(errors="replace"))
+        except OSError:
+            failure = None
+        if failure is not None and failure.holds:
+            provider_health.hold(redis, "codex", failure)
+            print(f"[{WORKER_ID}] job={job['id']} codex {failure.kind}: {failure.reason}", flush=True)
+            raise ProviderWait("codex", failure)
+    return returncode, duration
+
+
 def run_agent(job, worktree, log_path):
     """Run the provider configured for this job's role (ROLE_PROVIDERS).
 
@@ -1053,9 +1108,13 @@ def run_agent(job, worktree, log_path):
                     tick=lambda: heartbeat("working"),
                     wrap=agent_sandbox(worktree),
                 )
+            try:
+                agent_cli.record_rate_limits(redis, log_path)
+            except Exception as exc:  # a usage reading is a bonus, never a failure
+                print(f"[{WORKER_ID}] claude usage reading: {exc}", flush=True)
             if run.unavailable:
                 fallback = f"claude unavailable: {run.describe_error()}"
-                agent_cli.start_cooldown(redis, fallback)
+                agent_cli.start_cooldown(redis, fallback, failure=run.failure)
                 print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
             elif run.timed_out:
                 raise RuntimeError(f"Claude exceeded {timeout} second {role} timeout")
@@ -1076,7 +1135,7 @@ def run_agent(job, worktree, log_path):
                              "updated_at": str(time.time())})
     CURRENT_AGENT.update(provider="codex", model=model)
     heartbeat("working")
-    return run_codex(job, worktree, log_path)
+    return codex_or_wait(job, worktree, log_path)
 
 
 def run_tests(worktree, network=False):
@@ -2257,11 +2316,25 @@ def _process_job(raw_job):
         )
 
     except Exception as exc:
+        if isinstance(exc, ProviderWait) and job.get("role", "builder") in ("", "builder"):
+            # Nobody could build it right now: wait for the provider without
+            # using up a build attempt (orchestrator resume_deferred_jobs).
+            redis.hset(key, mapping={
+                "status": "deferred",
+                "defer_kind": "provider",
+                "defer_provider": exc.provider,
+                "defer_until": str(exc.until or (time.time() + 300)),
+                "defer_reason": redaction.redact(str(exc))[:500],
+                "deferrals": str(int(redis.hget(key, "deferrals") or 0) + 1),
+                "updated_at": str(time.time()),
+            })
+            print(f"[{WORKER_ID}] job={job_id} deferred: {exc}", flush=True)
+            return
         redis.hset(
             key,
             mapping={
                 "status": "failed",
-                "error": str(exc),
+                "error": redaction.redact(str(exc)),
                 "updated_at": str(time.time()),
             },
         )
@@ -2275,7 +2348,7 @@ def _process_job(raw_job):
                     f"laika:jobs:{target_builder_id}",
                     mapping={
                         "repair_status": "failed",
-                        "repair_error": str(exc),
+                        "repair_error": redaction.redact(str(exc)),
                         "updated_at": str(time.time()),
                     },
                 )
@@ -2291,7 +2364,7 @@ def _process_job(raw_job):
                     f"laika:jobs:{builder_job_id}",
                     mapping={
                         "review_status": "failed",
-                        "review_error": str(exc),
+                        "review_error": redaction.redact(str(exc)),
                         "updated_at": str(time.time()),
                     },
                 )

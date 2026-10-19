@@ -17,7 +17,12 @@ import pwd
 import re
 import signal
 import subprocess
+import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling modules, also when loaded by path
+import provider_health  # noqa: E402
 from pathlib import Path
 
 
@@ -41,16 +46,21 @@ DEFAULT_CLAUDE_BUDGET_USD = {
 READ_ONLY_TOOLS = "Read,Grep,Glob"
 EDIT_TOOLS = "Read,Edit,Write,Grep,Glob,Bash"
 
-COOLDOWN_KEY = "laika:provider-cooldown:claude"
+COOLDOWN_KEY = provider_health.cooldown_key("claude")
+# Holds now last until the reset time the provider reported (or a default
+# per kind of failure, services/provider_health.py); this is the default for
+# callers that give no reason LAIka can classify.
 COOLDOWN_SECONDS = int(os.getenv("CLAUDE_COOLDOWN_SECONDS", "1800"))
 # The claude CLI is a global install that updates itself (it is shared with
 # interactive sessions); during an update the executable is briefly missing
 # or half-installed. That is a short outage, not a failure.
-INSTALL_COOLDOWN_SECONDS = int(os.getenv("CLAUDE_INSTALL_COOLDOWN_SECONDS", "120"))
-_INSTALL_BROKEN = re.compile(
-    r"postinstall|optional dependency|No such file or directory|command not found|ENOENT|cannot execute",
-    re.IGNORECASE,
-)
+INSTALL_COOLDOWN_SECONDS = provider_health.INSTALL_SECONDS
+_INSTALL_BROKEN = provider_health.INSTALL_BROKEN
+# Claude reports its plan usage (5-hour and 7-day windows) in every
+# stream-json run; at this share LAIka stops sending it work until the
+# window resets, instead of waiting for a hard "limit reached" failure.
+EARLY_HOLD_PERCENT = float(os.getenv("CLAUDE_EARLY_HOLD_PERCENT", "95"))
+USAGE_KEY = "laika:provider-usage:claude"
 POLL_SECONDS = 2
 
 # Worktrees contain the operator's CLAUDE.md, which Claude Code loads. It is
@@ -63,11 +73,6 @@ AGENT_CONTRACT = (
     "Nobody can answer questions: decide, act, and report."
 )
 
-_UNAVAILABLE = re.compile(
-    r"hit your .*limit|usage limit|session limit|rate limit|not logged in|log ?in|"
-    r"authenticat|credit balance|overloaded",
-    re.IGNORECASE,
-)
 
 
 def _env_map(name):
@@ -164,16 +169,24 @@ class ClaudeRun:
         )
 
     @property
-    def unavailable(self):
-        """Claude could not serve this call (plan limit, auth, overload):
-        another provider should take it. Budget exhaustion or a bad answer
-        is not unavailability."""
+    def failure(self):
+        """provider_health.Failure when Claude could not serve the call, else
+        None. Only an error result is classified: budget exhaustion, max
+        turns or a bad answer are the task's failure, not Claude's."""
         if self.install_broken:
-            return True
+            return provider_health.Failure("unavailable", provider_health.excerpt(self.raw_tail))
         if self.result is None or not self.result.get("is_error"):
-            return False
-        status = self.result.get("api_error_status")
-        return status in (401, 403, 429, 529) or bool(_UNAVAILABLE.search(self.text))
+            return None
+        if self.result.get("subtype") in ("error_max_turns", "error_max_budget_usd"):
+            return None
+        found = provider_health.classify(self.text, self.result.get("api_error_status"))
+        return found if found.holds else None
+
+    @property
+    def unavailable(self):
+        """Claude could not serve this call (plan limit, rate limit, sign-in,
+        overload): another provider should take it."""
+        return self.failure is not None
 
     def describe_error(self):
         if self.timed_out:
@@ -185,6 +198,27 @@ class ClaudeRun:
             f"{self.result.get('subtype') or 'error'}: "
             f"{self.text[:500] or 'no message'}"
         )
+
+
+def kill_group(pid, sig):
+    """Signal the process group of a child LAIka started with
+    start_new_session (so its group id is its pid). Never anything else:
+    group 1, LAIka's own group, or a non-pid. A test's fake process with
+    pid 1 once made this SIGKILL every service on the host (2026-10-18)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or pid == os.getpgrp():
+        return False
+    try:
+        if os.getpgid(pid) != pid:
+            return False   # alive, but not the leader of its own group: not ours to kill
+    except ProcessLookupError:
+        pass               # the leader exited; its group (our child's) may remain
+    except PermissionError:
+        return False
+    try:
+        os.killpg(pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
 
 
 def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None,
@@ -229,14 +263,15 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
                     pass
             if time.time() - started >= timeout:
                 timed_out = True
-                os.killpg(process.pid, signal.SIGTERM)
+                kill_group(process.pid, signal.SIGTERM)
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    kill_group(process.pid, signal.SIGKILL)
                     process.wait()
                 break
             time.sleep(POLL_SECONDS)
+        kill_group(process.pid, signal.SIGKILL)  # nothing the agent started may outlive it
     result = read_claude_result(log_path)
     raw_tail = ""
     if result is None:
@@ -466,19 +501,73 @@ def combined_review_result(aspect_runs, aspect_verdicts):
 
 
 def claude_cooling_down(redis_client):
-    try:
-        return bool(redis_client.get(COOLDOWN_KEY))
-    except Exception:
-        return False
+    return provider_health.held(redis_client, "claude")
 
 
-def start_cooldown(redis_client, reason, seconds=None):
-    """Stop sending work to Claude for a while after it reported a limit, so
-    every job does not first burn a failed call before falling back. A CLI
-    being updated only needs a short pause (INSTALL_COOLDOWN_SECONDS)."""
-    if seconds is None:
-        seconds = INSTALL_COOLDOWN_SECONDS if _INSTALL_BROKEN.search(reason or "") else COOLDOWN_SECONDS
+def start_cooldown(redis_client, reason, seconds=None, failure=None):
+    """Stop sending work to Claude after it could not serve a call, so every
+    job does not first burn a failed call before falling back. The hold lasts
+    until the reset time Claude gave (+2 min), else a default for the kind of
+    failure; a CLI being updated only needs a short pause."""
+    failure = failure or provider_health.classify(reason)
+    if not failure.holds:  # a reason LAIka cannot classify: the old default
+        failure = provider_health.Failure("unavailable", provider_health.excerpt(reason))
+        if seconds is None and not _INSTALL_BROKEN.search(reason or ""):
+            seconds = COOLDOWN_SECONDS
+    if seconds is not None:
+        failure.until = time.time() + seconds - provider_health.MARGIN
+    provider_health.hold(redis_client, "claude", failure)
+
+
+def rate_limit_reading(log_path):
+    """Claude's last plan-usage report in a stream-json log:
+    {"status", "windows": {"five_hour": {"percent", "resets_at"}, ...}} or None."""
+    reading = None
     try:
-        redis_client.set(COOLDOWN_KEY, reason[:300] or "unavailable", ex=seconds)
+        lines = Path(log_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if '"rate_limit_event"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        info = event.get("rate_limit_info") if isinstance(event, dict) else None
+        if not isinstance(info, dict):
+            continue
+        windows = {}
+        for name, window in (info.get("unifiedWindows") or {}).items():
+            if isinstance(window, dict) and isinstance(window.get("utilization"), (int, float)):
+                windows[name] = {"percent": round(float(window["utilization"]) * 100, 1),
+                                 "resets_at": window.get("resetsAt")}
+        reading = {"status": info.get("status") or "", "resets_at": info.get("resetsAt"), "windows": windows}
+    return reading
+
+
+def record_rate_limits(redis_client, log_path, now=None):
+    """Store Claude's latest plan-usage reading (dashboard) and hold Claude
+    until the window resets once a window passes EARLY_HOLD_PERCENT or
+    Claude says it rejected the call. Fails open: an unknown format does
+    nothing."""
+    reading = rate_limit_reading(log_path)
+    if not reading:
+        return None
+    now = time.time() if now is None else now
+    try:
+        redis_client.set(USAGE_KEY, json.dumps({**reading, "at": now}), ex=8 * 86400)
     except Exception:
         pass
+    full = [(name, window) for name, window in reading["windows"].items()
+            if window["percent"] >= EARLY_HOLD_PERCENT and isinstance(window.get("resets_at"), (int, float))]
+    if reading["status"] == "rejected" and isinstance(reading.get("resets_at"), (int, float)):
+        full.append(("current", {"percent": 100, "resets_at": reading["resets_at"]}))
+    if full:
+        name, window = max(full, key=lambda item: item[1]["resets_at"])
+        label = {"five_hour": "5-hour", "seven_day": "7-day"}.get(name, name.replace("_", " "))
+        failure = provider_health.Failure(
+            "quota", f"{label} window at {window['percent']:g}% of the plan (resets then)",
+            until=float(window["resets_at"]), hint="parsed")
+        provider_health.hold(redis_client, "claude", failure, now=now)
+    return reading

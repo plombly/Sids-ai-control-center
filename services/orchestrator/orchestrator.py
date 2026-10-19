@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import laika_env  # noqa: E402,F401  (Settings → environment, before any configuration is read)
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
+import provider_health  # noqa: E402  (services/provider_health.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
@@ -482,13 +483,17 @@ def run_planner(goal, atomic=False, info=None, project=None):
                 wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
         finally:
             agent_cli.release_claude_slot(r, slot)
+        try:
+            agent_cli.record_rate_limits(r, log_path)
+        except Exception as exc:
+            print(f"[{ORCHESTRATOR_ID}] claude usage reading: {exc}", flush=True)
         if run.ok:
             info.update(provider="claude", model=planner_model(atomic),
                         cost_usd=agent_cli.claude_usage(run.result)["cost_usd"])
             return extract_json(run.text)
         if not run.unavailable:
             raise RuntimeError(f"claude planner failed: {run.describe_error()}")
-        agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
+        agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=run.failure)
         print(f"[{ORCHESTRATOR_ID}] claude planner unavailable; falling back to codex", flush=True)
         info["fallback"] = run.describe_error()
     info.update(provider="codex", model=DEFAULT_MODEL)
@@ -1462,6 +1467,21 @@ def recover_lost_jobs(now_ts=None):
             continue
         if not confirmed_lost(f"job:{job_id}", seen, now_ts):
             continue
+        interruptions = _int(job.get("interruptions"))
+        if (is_builder(job) and job.get("build_attempt") and job.get("status") in INTERRUPTIBLE_STATES
+                and interruptions < MAX_INTERRUPTIONS):
+            # A restart, crash or reboot is not the build's fault: run the
+            # same attempt again instead of using one up (resume_deferred_jobs).
+            r.hset(key, mapping={
+                "status": "deferred",
+                "defer_kind": "interrupted",
+                "defer_reason": f"worker lost while {job.get('status')} (last worker {job.get('worker_id') or 'none'})",
+                "interruptions": str(interruptions + 1),
+                "lost_at": now(),
+                "updated_at": now(),
+            })
+            print(f"[{ORCHESTRATOR_ID}] lost job={job_id} deferred (interruption {interruptions + 1})", flush=True)
+            continue
         r.hset(key, mapping={
             "status": "failed",
             "error": (
@@ -1475,6 +1495,60 @@ def recover_lost_jobs(now_ts=None):
         print(f"[{ORCHESTRATOR_ID}] lost job={job_id} marked failed", flush=True)
     for suspect in [s for s in _lost_suspects if s.startswith("job:") and s not in seen]:
         del _lost_suspects[suspect]
+
+
+# A worker lost mid-build (restart, crash, reboot) and a provider that could
+# not serve the build (quota, rate limit, sign-in, outage) re-run the same
+# attempt instead of using one up, a bounded number of times; then the
+# normal failure path (retry, then needs_human) takes over.
+INTERRUPTIBLE_STATES = {"queued", "claimed", "running", "testing"}
+MAX_INTERRUPTIONS = int(os.getenv("MAX_INTERRUPTIONS", "3"))
+MAX_PROVIDER_DEFERRALS = int(os.getenv("MAX_PROVIDER_DEFERRALS", "6"))
+
+
+def resume_deferred_jobs(now_ts=None):
+    """Re-queue deferred builders (same attempt, same prompt) once what they
+    wait for is back: at once for an interruption, when the provider's hold
+    has ended for a provider wait."""
+    now_ts = time.time() if now_ts is None else now_ts
+    for key, light in job_rows():
+        if light.get("status") != "deferred" or not is_builder(light):
+            continue
+        job = r.hgetall(key)
+        if job.get("status") != "deferred":
+            continue
+        job_id = job.get("id") or key.rsplit(":", 1)[-1]
+        deferrals = _int(job.get("deferrals"))
+        if job.get("defer_kind") == "provider":
+            if deferrals > MAX_PROVIDER_DEFERRALS:
+                r.hset(key, mapping={
+                    "status": "failed",
+                    "error": f"waited for {job.get('defer_provider') or 'a provider'} {deferrals} times: "
+                             f"{job.get('defer_reason', '')}"[:1000],
+                    "updated_at": now(),
+                })
+                print(f"[{ORCHESTRATOR_ID}] job={job_id} stopped waiting after {deferrals} provider waits", flush=True)
+                continue
+            provider = job.get("defer_provider") or "codex"
+            if provider_health.held(r, provider):
+                continue
+        round_id = f"{job.get('defer_kind') or 'deferred'}_{job.get('interruptions') or 0}_{deferrals}"
+        if not r.hsetnx(key, f"resume_{round_id}_at", now()):
+            continue
+        release_stale_integration_lock(job_id)
+        r.hdel(key, *BUILD_DERIVED_FIELDS, "defer_until")
+        r.hset(key, mapping={"status": "queued", "updated_at": now()})
+        dispatch_job_once({"id": job_id}, {
+            "id": job_id,
+            "goal_id": job.get("goal_id", ""),
+            "prompt": job.get("prompt", ""),
+            "provider": job.get("provider", DEFAULT_PROVIDER),
+            "model": job.get("model", DEFAULT_MODEL),
+            "role": "builder",
+            "priority": _int(job.get("priority")),
+            "created_at": job.get("created_at", now()),
+        })
+        print(f"[{ORCHESTRATOR_ID}] job={job_id} resumed after {job.get('defer_kind')}", flush=True)
 
 
 def retry_failed_builds():
@@ -1678,7 +1752,7 @@ def recover_stalled_reviews(now_ts=None):
 # A builder holds its scope from dispatch until its change is final: an
 # awaiting_review / needs_human candidate still has to integrate onto main.
 SCOPE_HOLDING_STATES = {
-    "queued", "claimed", "running", "testing", "awaiting_review", "needs_human",
+    "queued", "claimed", "running", "testing", "awaiting_review", "needs_human", "deferred",
 }
 
 
@@ -1732,7 +1806,7 @@ def scope_conflict(job):
 
 SIZE_POINTS = {"S": 1, "M": 3, "L": 8}
 UNPLANNED_GOAL_POINTS = SIZE_POINTS["M"]
-REMAINING_STATES = {"queued", "blocked", "claimed", "running", "testing", "awaiting_review"}
+REMAINING_STATES = {"queued", "blocked", "claimed", "running", "testing", "awaiting_review", "deferred"}
 FINAL_GOAL_STATES = {"completed", "failed", "planning_failed", "queue_failed"}
 
 
@@ -1904,6 +1978,7 @@ def main():
 
                 begin_pass()
                 recover_lost_jobs()
+                resume_deferred_jobs()
                 retry_failed_builds()
                 recover_stalled_reviews()
                 refresh_queued_candidates()

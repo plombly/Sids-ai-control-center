@@ -109,9 +109,10 @@ def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
     prompt = goal_assist.build_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
                                       recent_goals(r, project.id), force_brief=force_brief, group_note=note)
     log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}{'-retry' if force_brief else ''}.json"
-    return runner("assistant", prompt, project.repo, log_path, TIMEOUT, model=MODEL, budget_usd=BUDGET_USD,
-                  tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.SYSTEM_PROMPT,
-                  wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
+    return with_usage(r, log_path, runner(
+        "assistant", prompt, project.repo, log_path, TIMEOUT, model=MODEL, budget_usd=BUDGET_USD,
+        tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.SYSTEM_PROMPT,
+        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False)))
 
 
 def situation(r, project, limit=5, days=7):
@@ -166,9 +167,19 @@ def chat(r, session, project, runner=agent_cli.run_claude):
     prompt = goal_assist.build_chat_prompt(project.name, project.id, kind_of(r, project.id), session["turns"],
                                            recent_goals(r, project.id), group_note=note, situation=now)
     log_path = LOG_ROOT / f"{session['id']}-{len(session['turns'])}-chat.json"
-    return runner("assistant", prompt, project.repo, log_path, CHAT_TIMEOUT, model=CHAT_MODEL, budget_usd=CHAT_BUDGET_USD,
-                  tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.CHAT_SYSTEM_PROMPT,
-                  wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
+    return with_usage(r, log_path, runner(
+        "assistant", prompt, project.repo, log_path, CHAT_TIMEOUT, model=CHAT_MODEL, budget_usd=CHAT_BUDGET_USD,
+        tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.CHAT_SYSTEM_PROMPT,
+        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False)))
+
+
+def with_usage(r, log_path, run):
+    """Claude's plan-usage reading from this turn (dashboard, early hold)."""
+    try:
+        agent_cli.record_rate_limits(r, log_path)
+    except Exception as exc:
+        print(f"[assist] claude usage reading: {exc}", flush=True)
+    return run
 
 
 def charge(r, session, run):
@@ -217,7 +228,7 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
             if not run.ok:
                 goal_assist.save(r, session_id, cost_usd=cost)
                 if run.unavailable:
-                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
+                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None))
                     return fail(r, session_id, "Claude is not available right now (usage limit or login). Try again later.")
                 return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")
             try:
@@ -239,7 +250,7 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
                 cost += charge(r, session, run)
             if not run.ok:
                 if run.unavailable:
-                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}")
+                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None))
                     return fail(r, session_id, "Claude is not available right now (usage limit or login). Use Send as written.")
                 goal_assist.save(r, session_id, cost_usd=cost)
                 return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")

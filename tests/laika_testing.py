@@ -84,7 +84,16 @@ class MemoryRedis:
         if nx and key in self.values:
             return False
         self.values[key] = value
+        if ex is not None:
+            self.ttls[key] = int(ex)
+        else:
+            self.ttls.pop(key, None)
         return True
+
+    def ttl(self, key):
+        if key not in self.values and key not in self.records:
+            return -2
+        return self.ttls.get(key, -1)
 
     def get(self, key):
         return self.values.get(key)
