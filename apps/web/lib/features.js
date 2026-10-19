@@ -23,3 +23,4 @@ import './devices.js';
 import './elapsed.js';
 import './why.js';
 import './pause.js';
+import './away.js';
