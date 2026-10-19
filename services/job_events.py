@@ -24,8 +24,12 @@ _ANY_FAILURE = {"failed", "test_failed", "integration_failed", "needs_human", "r
                 "blocked_failed_dependency"}
 TRANSITIONS = {
     None: None,  # a new record: anything
-    "queued": {"claimed", "running", "deferred", "failed", "blocked", "queued", "rejected",
-               "blocked_failed_dependency"},
+    # Reviews, repairs and integrations go straight to their working state.
+    "queued": {"claimed", "running", "reviewing", "repairing", "integrating", "deferred", "failed", "blocked",
+               "queued", "rejected", "blocked_failed_dependency"},
+    "reviewing": {"review_complete", "failed"},
+    "repairing": {"repair_complete", "testing", "failed"},
+    "integrating": {"integrate_complete", "integration_failed", "failed"},
     "blocked": {"queued", "blocked", "blocked_failed_dependency", "rejected", "failed"},
     "claimed": {"running", "reviewing", "repairing", "integrating", "testing", "deferred", "failed",
                 "completed_no_changes", "awaiting_review", "review_complete", "repair_complete",

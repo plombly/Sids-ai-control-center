@@ -36,3 +36,9 @@ def test_the_workers_fenced_writes_are_recorded_too():
     fenced = worker.FencedRedis(store, fences={"laika:jobs:b3": "run"})
     fenced.hset("laika:jobs:b3", mapping={"status": "testing"})
     assert [(e["from"], e["to"]) for e in events.timeline(store, "b3")] == [("running", "testing")]
+
+
+def test_reviews_repairs_and_integrations_start_straight_from_queued():
+    for working in ("reviewing", "repairing", "integrating"):
+        assert events.allowed("queued", working)
+    assert events.allowed("reviewing", "review_complete") and not events.allowed("merged", "queued")
