@@ -59,6 +59,8 @@ _AUTH = [re.compile(p, re.IGNORECASE) for p in (
     r"\bplease (?:log ?in|sign in|re-?authenticate) again\b",
     r"\b(?:authentication|login) (?:is )?required\b",
     r"\bauthentication failed\b",
+    # Codex with a sign-in it cannot use (seen with a broken auth.json, 0.159).
+    r"\bplan type is required for chatgpt authentication\b",
     r"\bunauthori[sz]ed\b",
     r"\b(?:status|http|code|error)\W{0,3}401\b",
     r"\binvalid (?:api[ _-]?key|x-api-key|access token|bearer token|credentials)\b",

@@ -95,3 +95,8 @@ def test_secrets_are_masked(monkeypatch):
         assert secret not in clean
     assert "redis://default:[redacted]@127.0.0.1" in clean
     assert redaction.redact("\x1b[31mplain\x1b[0m text") == "plain text"
+
+
+def test_a_codex_sign_in_it_cannot_use_is_a_sign_in_problem():
+    log = '{"type":"turn.failed","error":{"message":"plan type is required for chatgpt authentication"}}\n'
+    assert health.codex_failure(log).kind == "auth"
