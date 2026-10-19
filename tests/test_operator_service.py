@@ -98,7 +98,7 @@ def test_approve_end_to_end_merges_the_confirmed_candidate(op, fake_git, approva
     submit(op, action="approve", expected_candidate=INTEGRATED)
     deliver(op)
     assert result(op)["status"] == "succeeded"
-    assert fake_git.ran("merge") == [("merge", "--ff-only", f"laika/integration-{JOB}")]
+    assert fake_git.ran("merge") == [("merge", "--ff-only", "c" * 40)]   # the exact approved commit
     assert op.redis.hget(f"laika:jobs:{JOB}", "status") == "merged"
 
 

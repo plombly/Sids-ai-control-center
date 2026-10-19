@@ -224,7 +224,8 @@ class GitError(subprocess.CalledProcessError):
     def __str__(self):
         said = (self.stderr or self.stdout or "").strip().splitlines()
         detail = " / ".join(line.strip() for line in said[-3:] if line.strip())
-        return f"git {self.cmd[1] if len(self.cmd) > 1 else ''} failed (exit {self.returncode})" + (f": {detail[:400]}" if detail else "")
+        words = [part for part in self.cmd[1:] if not str(part).startswith("-") and "=" not in str(part)]
+        return f"git {words[0] if words else ''} failed (exit {self.returncode})" + (f": {detail[:400]}" if detail else "")
 
 
 def run_git(*args, cwd=None, check=True):
