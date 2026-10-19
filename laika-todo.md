@@ -129,10 +129,15 @@ Reimplemented ideas only (memory phoenix-integration). Order:
 
 ## Next after the Phoenix work (owner, 2026-10-19; discuss first)
 
-- [ ] Multiple Claude / Codex logins (several paid accounts) so LAIka can
-      use more tokens. Discuss design before building: account pool per
-      provider, choosing an account per run, holds per account, and each
-      provider's terms for multiple accounts.
+- [ ] 2.0 CP5 accounts (decided 2026-10-19): several Claude and Codex
+      accounts per provider, each a subscription login or an API key;
+      LAIka spreads runs over them (most room left: fewest running, lowest
+      plan usage); concurrency per account (default 2); pauses per account
+      (a provider is paused only when all its accounts are); admins only
+      (Settings -> AI). Existing login = account "default". Per-account
+      homes: CLAUDE_CONFIG_DIR / CODEX_HOME under the laika home; keys
+      root:laika 0640 in /etc/laika/providers/accounts/. Record the
+      account per job; routing and usage per account.
 
 ## Backlog (not scheduled)
 
