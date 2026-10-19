@@ -144,3 +144,29 @@ def test_a_long_lived_claude_token_counts_as_signed_in(doc, tmp_path, monkeypatc
     monkeypatch.setattr(doc, "CONF", tmp_path)
     result = doc.check_providers(done('{"loggedIn": false}', code=1))
     assert result["level"] == "ok" and "Claude (long-lived token)" in result["detail"]
+
+
+def test_ai_accounts_credentials(doc, tmp_path):
+    r = MemoryRedis()
+    home, conf = tmp_path / "home", tmp_path / "etc"
+    (conf / "providers").mkdir(parents=True)
+    assert doc.check_ai_accounts(r, conf, home)["detail"] == "no extra accounts"
+    r.sadd("laika:provider-accounts:claude", "work")
+    tokens = home / ".config/laika/claude-tokens"
+    tokens.mkdir(parents=True)
+    (tokens / "work").write_text("t")
+    os.chmod(tokens / "work", 0o600)
+    assert doc.check_ai_accounts(r, conf, home)["level"] == "ok"
+    (tokens / "gone").write_text("t")
+    os.chmod(tokens / "gone", 0o600)
+    r.sadd("laika:provider-accounts:codex", "spare")
+    result = doc.check_ai_accounts(r, conf, home)
+    assert result["level"] == "warn" and "removed account: gone" in result["detail"]
+    assert "codex account spare is not signed in" in result["detail"]
+    os.chmod(tokens / "work", 0o644)
+    assert doc.check_ai_accounts(r, conf, home)["level"] == "fail"
+    os.chmod(tokens / "work", 0o600)
+    (conf / "providers/accounts.env").write_text("X=1\n")
+    os.chmod(conf / "providers/accounts.env", 0o644)
+    result = doc.check_ai_accounts(r, conf, home)
+    assert result["level"] == "fail" and "accounts.env" in result["detail"] and "t\n" not in result["detail"]

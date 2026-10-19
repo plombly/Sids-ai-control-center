@@ -312,6 +312,52 @@ def check_providers(runner=run):
     return ok("ai", ("signed in: " + ", ".join(signed)) if signed else "API keys saved")
 
 
+def check_ai_accounts(client=None, conf=CONF, home=None):
+    """Extra AI accounts (services/provider_accounts.py): their key file is
+    root-only, credentials only the laika user can read, none left behind
+    by a removed account, and every account signed in."""
+    try:
+        client = client or redis_client()
+        registered = {p: set(client.smembers(f"laika:provider-accounts:{p}") or []) for p in ("claude", "codex")}
+    except Exception:
+        return warn("ai-accounts", "cannot check (Redis unreachable)")
+    if home is None:
+        try:
+            home = Path(pwd.getpwnam(USER).pw_dir)
+        except KeyError:
+            home = Path.home()
+    problems, notes = [], []
+    keys = conf / "providers" / "accounts.env"
+    if keys.exists():
+        info = keys.stat()
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077:
+            problems.append("accounts.env is readable by others than root (sudo chmod 600 /etc/laika/providers/accounts.env)")
+    places = {"claude": [home / ".config/laika/claude-tokens", home / ".config/laika/claude-keys"],
+              "codex": [home / ".codex-accounts"]}
+    for provider, folders in places.items():
+        found = set()
+        for folder in folders:
+            if not folder.is_dir():
+                continue
+            for entry in folder.iterdir():
+                found.add(entry.name)
+                mode = stat.S_IMODE(entry.lstat().st_mode)
+                if mode & 0o077:
+                    problems.append(f"{provider} account {entry.name}: credentials readable by others "
+                                    f"(chmod {'700' if entry.is_dir() else '600'} {entry})")
+                if entry.name not in registered[provider]:
+                    notes.append(f"{provider} credentials left by a removed account: {entry.name} "
+                                 "(Settings → AI removes them; or delete that file)")
+        for account in sorted(registered[provider] - found):
+            notes.append(f"{provider} account {account} is not signed in yet (Settings → AI → More accounts)")
+    if problems:
+        return fail("ai-accounts", "; ".join(problems), "See the commands above.")
+    if notes:
+        return warn("ai-accounts", "; ".join(notes))
+    extra = sum(len(ids) for ids in registered.values())
+    return ok("ai-accounts", f"{extra} extra account(s), credentials in order" if extra else "no extra accounts")
+
+
 def check_exposure(runner=run):
     import ipaddress
     result = runner(["ip", "-j", "-4", "addr"])
@@ -428,7 +474,7 @@ def all_checks():
               check_containers, check_services, check_redis_and_workers,
               lambda: check_http("api", "http://127.0.0.1:8000/health"),
               lambda: check_http("dashboard", "http://127.0.0.1:8080/health"),
-              check_sandbox, check_providers, check_firewall, check_remote, check_exposure, check_backups, check_admin]
+              check_sandbox, check_providers, check_ai_accounts, check_firewall, check_remote, check_exposure, check_backups, check_admin]
     results = []
     for check in checks:
         try:
