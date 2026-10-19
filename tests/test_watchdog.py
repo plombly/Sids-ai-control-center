@@ -115,7 +115,7 @@ def test_publish_logs_only_changes(wd):
     assert wd.publish(r, run(wd, r)) == [], "no change, no log lines"
     r.values["laika:provider-cooldown:claude"] = "limit"
     changed = wd.publish(r, run(wd, r))
-    assert changed == ["pipeline: ok -> warn (claude cooling down (limit))"]
+    assert changed == ["pipeline: ok -> warn (claude paused until soon (limit))"]
     assert json.loads(r.values[wd.HEALTH_KEY])["status"] == "warn"
 
 
