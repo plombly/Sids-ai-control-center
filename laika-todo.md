@@ -114,7 +114,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       build attempt (capped); Claude rate_limit_event -> usage meter + early
       switch; dashboard holds with reset time; run_codex timeout SIGKILL +
       group cleanup after exit.
-- [ ] CP2 attacker model: gate from the base (fail closed; LAIka's gate
+- [x] CP2 attacker model: gate from the base (fail closed; LAIka's gate
       script from base); candidate safety (refuse escaping symlinks,
       gitlinks, unsafe/.git paths; flag sensitive files to reviewer and
       approval card), host re-check at approve; hardened git; merge exact

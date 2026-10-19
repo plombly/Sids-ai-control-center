@@ -352,6 +352,8 @@ class WorkerGit:
 
     def __call__(self, *args, cwd=None, check=True):
         self.calls.append(args)
+        if args in (("rev-parse", "--git-common-dir"), ("rev-parse", "--git-dir")):
+            return GitResult(".git\n")   # guard_git_control: nothing there to compare
         if args == ("rev-parse", "HEAD"):
             return GitResult(self.head + "\n")
         if args == ("status", "--porcelain"):

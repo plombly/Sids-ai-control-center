@@ -25,6 +25,31 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
   seconds, and anything an AI tool leaves running is cleaned up.
 - Error text shown on the dashboard is cleaned of secrets.
 
+**The AI worker is treated as an attacker** (before your approval, never
+instead of it):
+
+- A project's tests are chosen from main as it was before the change: the
+  operator's test command, else what main implies. A change that removes
+  the tests main had fails instead of passing with "nothing to run"; for
+  LAIka itself the gate script runs from main's copy.
+- Every change is checked at integration and again on the host at
+  approval: links out of the repository, submodules and odd paths
+  (".git", "..", control characters) are refused; changes to files that
+  steer tests, git or agents (git attributes, hooks, CI, CLAUDE.md,
+  conftest.py, package.json, …) are named to the reviewer and on the
+  Approve card.
+- Git runs hardened everywhere LAIka touches AI-written branches: no hooks
+  (a post-merge hook would have run at approval), no fsmonitor, no ext/file
+  transports, no submodule recursion, no repository diff drivers, no git
+  redirection variables. Approval merges the exact approved commit, checks
+  main is that commit afterwards, and refuses files hidden from git status.
+- An agent that changes git's config, hooks or attributes fails, and the
+  files are put back.
+- AI tools no longer see LAIka's secrets (Redis, database, operator token)
+  on LAIka's own jobs; Codex runs with plugins, apps, hooks and
+  browser/computer control off, and Claude loads only the laika user's own
+  settings (not settings files an AI could write into a project).
+
 ## 1.5.3 (2026-10-15)
 
 Faster everywhere, found by watching a server with a few hundred jobs:

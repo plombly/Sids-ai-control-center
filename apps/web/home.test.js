@@ -109,3 +109,10 @@ test('approved changes in the merge queue say so instead of offering Approve aga
   assert.doesNotMatch(html, /data-op="approve"/);
   assert.doesNotMatch(html, /data-approve-all/);
 });
+
+test('an approval card names sensitive files the change touches', async () => {
+  const { sensitiveMarkup } = await import('./lib/home.js');
+  assert.equal(sensitiveMarkup({ sensitive_paths: [] }), '');
+  assert.match(sensitiveMarkup({ sensitive_paths: ['conftest.py'] }), /Also changes a file that steers tests.*<code>conftest\.py<\/code>/);
+  assert.match(sensitiveMarkup({ sensitive_paths: ['a', 'b', 'c', 'd', 'e'] }), /5 files that steer tests.*…/);
+});

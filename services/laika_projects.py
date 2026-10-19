@@ -274,32 +274,59 @@ def _read(path):
 def detect_gate(path):
     """The test command a checkout implies, or ""."""
     path = Path(path)
-    package = path / "package.json"
-    if package.is_file():
+
+    def read(name):
         try:
-            data = json.loads(package.read_text())
+            return (path / name).read_text()
+        except (OSError, UnicodeDecodeError):
+            return None
+    return _detect_gate(lambda name: (path / name).exists(), lambda name: (path / name).is_dir(), read)
+
+
+def detect_gate_at(repo, rev, runner=None):
+    """detect_gate for a commit instead of a checkout: the test command the
+    trusted base implies (the gate for an AI-written change is chosen from
+    main as it was, never from the change itself)."""
+    import subprocess as _subprocess
+    run = runner or (lambda args: _subprocess.run(["git", "-c", "core.hooksPath=/dev/null/laika-no-hooks", *args],
+                                                  cwd=str(repo), capture_output=True, text=True))
+    listing = run(["ls-tree", rev])
+    if listing.returncode != 0:
+        return ""
+    entries = {}
+    for line in listing.stdout.splitlines():
+        meta, _, name = line.partition("\t")
+        entries[name] = meta.split()[1] if len(meta.split()) > 1 else "blob"
+
+    def read(name):
+        shown = run(["show", f"{rev}:{name}"])
+        return shown.stdout if shown.returncode == 0 else None
+    return _detect_gate(lambda name: name in entries, lambda name: entries.get(name) == "tree", read)
+
+
+def _detect_gate(exists, is_dir, read):
+    package = read("package.json") if exists("package.json") else None
+    if package:
+        try:
+            data = json.loads(package)
             if isinstance(data, dict) and isinstance(data.get("scripts"), dict) and "test" in data["scripts"]:
                 return "npm test"
-        except (OSError, ValueError, TypeError):
+        except (ValueError, TypeError):
             pass
-    if any((path / name).exists() for name in ("pyproject.toml", "pytest.ini", "setup.cfg")) or (path / "tests").is_dir():
+    if any(exists(name) for name in ("pyproject.toml", "pytest.ini", "setup.cfg")) or is_dir("tests"):
         return "python3 -m pytest -q"
-    if (path / "Cargo.toml").is_file():
+    if exists("Cargo.toml"):
         return "cargo test"
-    if (path / "go.mod").is_file():
+    if exists("go.mod"):
         return "go test ./..."
-    if (path / "pubspec.yaml").is_file():
+    if exists("pubspec.yaml"):
         # Packages come from the setup step; tests run offline.
-        flutter = "flutter:" in _read(path / "pubspec.yaml")
+        flutter = "flutter:" in (read("pubspec.yaml") or "")
         tool = "flutter" if flutter else "dart"
-        return f"{tool} analyze --no-pub && {tool} test --no-pub" if (path / "test").is_dir() else f"{tool} analyze --no-pub"
-    makefile = path / "Makefile"
-    if makefile.is_file():
-        try:
-            if any(re.match(r"^test:", line) for line in makefile.read_text().splitlines()):
-                return "make test"
-        except OSError:
-            pass
+        return f"{tool} analyze --no-pub && {tool} test --no-pub" if is_dir("test") else f"{tool} analyze --no-pub"
+    makefile = read("Makefile") if exists("Makefile") else None
+    if makefile and any(re.match(r"^test:", line) for line in makefile.splitlines()):
+        return "make test"
     return ""
 
 

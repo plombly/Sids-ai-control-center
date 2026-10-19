@@ -226,6 +226,9 @@ class FakeGit:
         self.integrated_dirty = False
         self.branch_heads = {"laika/job-b1": "a" * 40}  # the builder branch
         self.failing = set()
+        self.index_flags = [("H", "file.py")]
+        self.raw_diff = ""        # git diff --raw -z of the candidate (candidate_safety)
+        self.blobs = {}
 
     def __call__(self, *args, cwd=None, check=True):
         cwd = Path(cwd if cwd is not None else self.module.REPO_ROOT)
@@ -243,9 +246,20 @@ class FakeGit:
         elif args[0] == "show-ref":
             ref = args[-1].removeprefix("refs/heads/")
             result = GitResult(returncode=0 if ref in self.branch_heads else 1)
-        elif args[:2] in {("merge", "--ff-only"), ("worktree", "remove"),
-                          ("branch", "-d"), ("branch", "-D")}:
+        elif args[:2] == ("merge", "--ff-only"):
+            target = args[2]
+            self.main_head = self.branch_heads.get(target, target)
             result = GitResult()
+        elif args[:2] in {("worktree", "remove"), ("branch", "-d"), ("branch", "-D")}:
+            result = GitResult()
+        elif args[:2] == ("ls-files", "-v"):
+            result = GitResult("".join(f"{flag} {name}\n" for flag, name in self.index_flags))
+        elif args[:2] == ("merge-base", "--is-ancestor"):
+            result = GitResult()
+        elif args[:2] == ("diff", "--raw"):
+            result = GitResult(self.raw_diff)
+        elif args[0] == "cat-file":
+            result = GitResult(self.blobs.get(args[-1], ""))
         else:
             raise AssertionError(f"unexpected git call: {args} cwd={cwd}")
         if check and result.returncode != 0:

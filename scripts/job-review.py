@@ -25,6 +25,8 @@ JOB_QUEUE = os.getenv("WORKER_QUEUE", "laika:jobs")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import laika_redis  # noqa: E402  (services/laika_redis.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
+import candidate_safety  # noqa: E402  (services/candidate_safety.py)
+import safe_git  # noqa: E402  (services/safe_git.py)
 
 # Run by hand as root, merges must leave files the laika group can use
 # (the operator service already runs with umask 0007).
@@ -98,10 +100,11 @@ def fail(message):
 def git(*args, cwd=None, check=True):
     cwd = cwd or REPO_ROOT  # resolved per call: the current action's project
     result = subprocess.run(
-        ["git", *args],
+        safe_git.command(*args),  # no hooks (a post-merge hook would run at approval), no ext transports
         cwd=cwd,
         text=True,
         capture_output=True,
+        env=safe_git.env(),
     )
 
     if check and result.returncode != 0:
@@ -156,6 +159,21 @@ def safe_integration_branch(job_id, data):
     if actual != expected:
         fail(f"unexpected integration branch: {actual}")
     return actual
+
+
+def host_safety_check(base_commit, integrated_commit, worktree):
+    """The host's own check before main moves (contract #12): no index flags
+    that hide changes from `status`, and the candidate passes the same
+    safety check the worker ran (services/candidate_safety.py)."""
+    for where in (worktree, REPO_ROOT):
+        hidden = [line[2:] for line in git("ls-files", "-v", cwd=where).stdout.splitlines()
+                  if line[:1] != "H"]
+        if hidden:
+            fail(f"files hidden from git status (assume-unchanged / skip-worktree) in {where}: "
+                 + ", ".join(hidden[:5]))
+    found = candidate_safety.inspect(lambda *a: git(*a).stdout, base_commit, integrated_commit)
+    if found["refused"]:
+        fail("refused by the safety check: " + "; ".join(found["refused"][:5]))
 
 
 def ensure_main_clean():
@@ -278,16 +296,23 @@ def _approve_unlocked(job_id, expected_candidate=None):
     if branch_head != integrated_commit:
         fail("integrated branch changed after review")
 
+    host_safety_check(base_commit, integrated_commit, worktree)
+
     print(f"Approved integrated candidate: {integrated_commit}")
 
+    # The exact commit, not the branch name: nothing can move between the
+    # checks above and the merge.
     git(
         "merge",
         "--ff-only",
-        branch,
+        integrated_commit,
         cwd=REPO_ROOT,
     )
 
     commit_sha = git("rev-parse", "HEAD").stdout.strip()
+    if commit_sha != integrated_commit:
+        fail(f"main is at {commit_sha} after the merge, not the approved {integrated_commit}; "
+             "nothing was recorded, check the repository")
 
     now = str(time.time())
 

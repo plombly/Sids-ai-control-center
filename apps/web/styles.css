@@ -2779,3 +2779,9 @@ table {
   opacity: 0.6;
   cursor: not-allowed;
 }
+.sensitive-note {
+  margin: 4px 0 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--amber, #d29922);
+  font-size: 0.92em;
+}

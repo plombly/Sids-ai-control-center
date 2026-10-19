@@ -500,6 +500,12 @@ def run_planner(goal, atomic=False, info=None, project=None):
     return run_codex_planner(goal, atomic, project)
 
 
+# Same as the worker's: no plugins/apps/hooks, no browser or computer control.
+CODEX_ISOLATION = tuple(arg for feature in (
+    "plugins", "apps", "hooks", "browser_use", "computer_use", "image_generation", "remote_plugin",
+    "skill_mcp_dependency_install") for arg in ("--disable", feature))
+
+
 def run_codex_planner(goal, atomic=False, project=None):
     project = project or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
     cmd = [
@@ -513,6 +519,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         "--color",
         "never",
         "--json",
+        *CODEX_ISOLATION,
         "--cd",
         str(project.repo),
         "-",
@@ -525,7 +532,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         text=True,
         capture_output=True,
         timeout=plan_timeout(goal),
-        env={**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir},
+        env=agent_cli.agent_env(),
     )
 
     if proc.returncode != 0:

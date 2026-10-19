@@ -268,6 +268,10 @@ def test_integration_success_behavior():
                 return Result(returncode=1)
             if args[:2] == ("cherry-pick", "--no-edit"):
                 return Result()
+            if args[:2] in (("merge-base", "--is-ancestor"), ("diff", "--raw")):
+                return Result("")   # candidate safety: nothing unsafe changed
+            if args[0] == "show" and args[1].endswith(":scripts/integration-check.py"):
+                return Result("print('the base gate')\n")   # the gate runs from the base
             if args == ("rev-parse", "HEAD") and Path(cwd) == integration:
                 return Result("integrated1\n")
             raise AssertionError(f"unexpected git call: {args} cwd={cwd}")
@@ -370,6 +374,10 @@ def test_integration_gate_failure_preserves_main_behavior():
                 return Result(returncode=1)
             if args[:2] == ("cherry-pick", "--no-edit"):
                 return Result()
+            if args[:2] in (("merge-base", "--is-ancestor"), ("diff", "--raw")):
+                return Result("")   # candidate safety: nothing unsafe changed
+            if args[0] == "show" and args[1].endswith(":scripts/integration-check.py"):
+                return Result("print('the base gate')\n")   # the gate runs from the base
             if args == ("rev-parse", "HEAD") and Path(cwd) == integration:
                 return Result("integrated-gate\n")
             if args[:2] == ("worktree", "remove"):
@@ -453,13 +461,14 @@ def approval_fixture(name, main_commit="base1"):
     module.job_record = lambda job_id: records[job_id]
 
     calls = []
+    state = {}
 
     def fake_git(*args, cwd=module.REPO_ROOT, check=True):
         calls.append((args, Path(cwd)))
         if args == ("status", "--porcelain"):
             return Result("")
         if args == ("rev-parse", "HEAD") and Path(cwd) == main:
-            return Result(main_commit + "\n")
+            return Result(state.get("main", main_commit) + "\n")
         if args == ("rev-parse", "HEAD") and Path(cwd) == integrated:
             return Result("integrated1\n")
         if args == ("status", "--porcelain") and Path(cwd) == integrated:
@@ -467,7 +476,10 @@ def approval_fixture(name, main_commit="base1"):
         if args == ("rev-parse", "laika/integration-builder123"):
             return Result("integrated1\n")
         if args[:2] == ("merge", "--ff-only"):
+            state["main"] = args[2]
             return Result()
+        if args[:2] == ("ls-files", "-v") or args[:2] == ("merge-base", "--is-ancestor") or args[:2] == ("diff", "--raw"):
+            return Result("")
         if args[:2] == ("worktree", "remove"):
             return Result()
         if args[:2] in (("branch", "-d"), ("branch", "-D")):
@@ -520,7 +532,7 @@ def test_exact_approval_behavior():
             if args[:2] == ("merge", "--ff-only")
         ]
         assert merges == [
-            ("merge", "--ff-only", "laika/integration-builder123")
+            ("merge", "--ff-only", "integrated1")   # the exact approved commit, not a branch name
         ]
 
         assert module.r.records["laika:jobs:builder123"]["status"] == "merged"
@@ -582,6 +594,9 @@ def test_review_packet_covers_full_integrated_change():
 
     def fake_git(*args, cwd=None, check=True):
         calls.append(args)
+        # Every review diff runs without repository-defined diff drivers.
+        assert args[:3] == ("diff", "--no-ext-diff", "--no-textconv"), args
+        args = ("diff",) + args[3:]
         if args[:2] == ("diff", "--stat=200"):
             return Result(" a.py | 2 +-\n big.py | 900 +++\n")
         if args[:2] == ("diff", "--name-only"):

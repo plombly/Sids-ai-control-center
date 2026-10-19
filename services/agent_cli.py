@@ -126,6 +126,9 @@ def claude_command(role, model, budget_usd, allowed_bash=(), tools=None, system_
         "--output-format", "stream-json", "--verbose",
         "--no-session-persistence",
         "--strict-mcp-config",  # never load the operator's MCP connectors
+        # Only the laika user's own settings: a worktree's .claude/settings*.json
+        # was written by an AI and could add hooks or permissions.
+        "--setting-sources", "user",
         "--model", model,
         "--max-budget-usd", f"{budget_usd:.2f}",
         "--append-system-prompt", system_prompt,
@@ -200,6 +203,23 @@ class ClaudeRun:
         )
 
 
+# What an AI tool may see of LAIka's environment. LAIka's own jobs run
+# without the project sandbox, so its secrets (Redis, the database, the
+# operator token) would otherwise reach the agent and every test it runs.
+_SECRET_NAME = re.compile(r"(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|WEBHOOK|DATABASE_URL|REDIS_URL)",
+                          re.IGNORECASE)
+PROVIDER_CREDENTIALS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+
+def agent_env(base=None, home=None):
+    """base (default os.environ) without LAIka's secrets: every secret-named
+    variable except the providers' own credentials, which the CLIs need."""
+    source = dict(os.environ if base is None else base)
+    env = {k: v for k, v in source.items() if k in PROVIDER_CREDENTIALS or not _SECRET_NAME.search(k)}
+    env["HOME"] = home or source.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    return env
+
+
 def kill_group(pid, sig):
     """Signal the process group of a child LAIka started with
     start_new_session (so its group id is its pid). Never anything else:
@@ -234,7 +254,7 @@ def run_claude(role, prompt, cwd, log_path, timeout, model=None, budget_usd=None
     )
     if wrap is not None:
         command = wrap(command)
-    env = {**os.environ, "HOME": os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir}
+    env = agent_env()
     token = claude_token(env["HOME"])
     if token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token

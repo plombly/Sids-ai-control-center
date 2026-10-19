@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import pwd
@@ -7,6 +8,7 @@ import socket
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import uuid
 from contextlib import contextmanager
@@ -20,6 +22,8 @@ import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import provider_health  # noqa: E402  (services/provider_health.py)
 import redaction  # noqa: E402  (services/redaction.py)
+import candidate_safety  # noqa: E402  (services/candidate_safety.py)
+import safe_git  # noqa: E402  (services/safe_git.py)
 import project_reference  # noqa: E402  (services/project_reference.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
@@ -227,11 +231,12 @@ def run_git(*args, cwd=None, check=True):
     check_worktree_pointer(cwd)
     try:
         return subprocess.run(
-            ["git", *args],
+            safe_git.command(*args),  # no hooks, no fsmonitor, no ext/file transports
             cwd=cwd or REPO_ROOT,  # resolved per call: the current job's project
             text=True,
             capture_output=True,
             check=check,
+            env=safe_git.env(),
         )
     except subprocess.CalledProcessError as exc:
         raise GitError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from None
@@ -433,14 +438,40 @@ def note_network_need(builder_id, gate_output, step, agent_text=""):
         redis.hset(key, mapping={**fields, "network_request_at": str(time.time())})
 
 
-def project_gate(worktree, timeout=900, network=False):
+def trusted_gate(worktree, base=None):
+    """(command, note) for a project's tests, chosen from trusted code: the
+    operator's gate_command, else what the base (main before this change)
+    implies. The change itself only decides when main had no tests yet; a
+    change that removes the tests main had fails (it could otherwise turn
+    its own checks off)."""
+    if PROJECT is None:
+        return "", ""
+    if PROJECT.gate_command:
+        return PROJECT.gate_command, ""
+    if base is None:
+        found = run_git("merge-base", "HEAD", PROJECT.default_branch, cwd=worktree, check=False)
+        base = found.stdout.strip() if found.returncode == 0 else ""
+    trusted = laika_projects.detect_gate_at(PROJECT.repo, base) if base else ""
+    current = laika_projects.detect_gate(worktree)
+    if trusted and not current:
+        return None, (f"main ({base[:12]}) had tests ({trusted}) but this change has none: "
+                      "the change removed the project's tests or their setup")
+    if trusted and current != trusted:
+        return trusted, f"tests chosen from main ({trusted}); the change would have run {current or 'nothing'}\n"
+    return trusted or current, ""
+
+
+def project_gate(worktree, timeout=900, network=False, base=None):
     """(ok, output) of a non-LAIka project's own gate command, run in worktree.
-    An empty gate command is detected from the worktree (detect_gate).
+    An empty gate command is chosen from trusted code (trusted_gate).
     network=True: the operator allowed internet access for these tests."""
     setup_ok, setup_output = project_setup(worktree)
     if not setup_ok:
         return False, setup_output + "\ndependency setup failed; tests were not run\n"
-    command = (PROJECT.gate_command or laika_projects.detect_gate(worktree)) if PROJECT else ""
+    command, note = trusted_gate(worktree, base)
+    if command is None:
+        return False, setup_output + note + "\n"
+    setup_output += note
     if not command:
         return True, setup_output + f"no gate command configured or detected for project {PROJECT.id if PROJECT else '?'}; nothing to run\n"
     # A gate must leave the worktree as it found it: files it creates (caches,
@@ -554,18 +585,21 @@ def _prepare_integration_locked(job_id, key):
                 run_git("cherry-pick", "--abort", cwd=path, check=False)
                 raise RuntimeError(f"cannot apply source candidate {source}: {result.stderr.strip()}")
 
+        # The worker is the attacker: links out of the repository, submodules
+        # and odd paths are refused; sensitive files are named for review.
+        integrated_head = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
+        safety = candidate_safety.inspect(lambda *a: run_git(*a, cwd=path).stdout, base, integrated_head)
+        redis.hset(key, mapping={"sensitive_paths": json.dumps(safety["sensitive"])})
+        if safety["refused"]:
+            raise RuntimeError("change refused by the safety check: " + "; ".join(safety["refused"][:10]))
+
         if PROJECT is not None and not PROJECT.is_builtin:
-            gate_ok, gate_output = project_gate(path, network=gate_network(job_id))
+            gate_ok, gate_output = project_gate(path, network=gate_network(job_id), base=base)
             if not gate_ok:
                 note_network_need(job_id, gate_output, "integration tests")
             gate = subprocess.CompletedProcess([], 0 if gate_ok else 1, gate_output, "")
         else:
-            env = os.environ.copy()
-            env["REPO_ROOT"] = str(path)
-            gate = subprocess.run(
-                [str(path / "scripts/integration-check.py")],
-                cwd=path, env=env, text=True, capture_output=True,
-            )
+            gate = run_builtin_gate(path, base)
         integrated = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
         integration_metadata = {
             "returncode": gate.returncode,
@@ -601,6 +635,66 @@ def _prepare_integration_locked(job_id, key):
             "updated_at": str(time.time()),
         })
         return False
+
+
+def git_control_files(worktree):
+    """{path: bytes} of what makes git run code or change meaning: the shared
+    config, hooks and info/attributes of the repository, and this
+    worktree's own config. An agent never has a reason to touch them."""
+    common = run_git("rev-parse", "--git-common-dir", cwd=worktree).stdout.strip()
+    private = run_git("rev-parse", "--git-dir", cwd=worktree).stdout.strip()
+    common, private = (Path(worktree) / common).resolve(), (Path(worktree) / private).resolve()
+    files = {}
+    candidates = [common / "config", common / "info" / "attributes", private / "config.worktree"]
+    hooks = common / "hooks"
+    if hooks.is_dir():
+        candidates += sorted(p for p in hooks.iterdir() if p.is_file())
+    for path in candidates:
+        try:
+            files[str(path)] = path.read_bytes() if path.is_file() and not path.is_symlink() else None
+        except OSError:
+            files[str(path)] = None
+    return files
+
+
+@contextlib.contextmanager
+def guard_git_control(worktree):
+    """Run an agent; if it changed git's config, hooks or attributes, put
+    them back and fail the job (sandboxed projects cannot; LAIka's own jobs
+    and sandbox-off installs could)."""
+    before = git_control_files(worktree)
+    yield
+    after = git_control_files(worktree)
+    changed = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+    if not changed:
+        return
+    for path in changed:
+        original = before.get(path)
+        try:
+            if original is None:
+                Path(path).unlink(missing_ok=True)
+            else:
+                Path(path).write_bytes(original)
+        except OSError as exc:
+            print(f"[{WORKER_ID}] could not restore {path}: {exc}", flush=True)
+    raise RuntimeError("the agent changed git configuration or hooks (restored): " + ", ".join(changed[:5]))
+
+
+def run_builtin_gate(path, base):
+    """LAIka's own gate for an integrated candidate, run from the BASE's copy
+    of scripts/integration-check.py: a change cannot edit the list of checks
+    that judge it (its new gate applies once it is on main)."""
+    script = run_git("show", f"{base}:scripts/integration-check.py", cwd=path, check=False)
+    if script.returncode != 0:
+        return subprocess.CompletedProcess([], 1, "", "the base has no scripts/integration-check.py")
+    with tempfile.NamedTemporaryFile("w", suffix="-integration-check.py", delete=False) as handle:
+        handle.write(script.stdout)
+    try:
+        env = os.environ.copy()
+        env["REPO_ROOT"] = str(path)
+        return subprocess.run([LAIKA_PYTHON, handle.name], cwd=path, env=env, text=True, capture_output=True)
+    finally:
+        os.unlink(handle.name)
 
 
 def create_worktree(job_id, suffix=""):
@@ -708,6 +802,11 @@ def parse_codex_log(log_path):
     return session_id, usage
 
 
+CODEX_ISOLATION = tuple(arg for feature in (
+    "plugins", "apps", "hooks", "browser_use", "computer_use", "image_generation", "remote_plugin",
+    "skill_mcp_dependency_install") for arg in ("--disable", feature))
+
+
 def run_codex(job, worktree, log_path):
     model = job.get("model", DEFAULT_MODEL)
     prompt = job["prompt"]
@@ -737,12 +836,14 @@ def run_codex(job, worktree, log_path):
         "--ephemeral",
         "--color", "never",
         "--json",
+        # Nothing beyond reading, editing and running commands in the
+        # worktree: no plugins/apps/hooks, no browser or computer control.
+        *CODEX_ISOLATION,
         "--cd", str(worktree),
         "-",
     ]
 
-    env = os.environ.copy()
-    env["HOME"] = os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    env = agent_cli.agent_env()
     # Projects: inside the project sandbox (reviewers read-only).
     command = project_sandbox.codex_command(command, PROJECT, worktree, writable=(role != "reviewer"))
 
@@ -1191,19 +1292,19 @@ def review_diff_packet(builder, candidate_commit, worktree):
     """
     base = builder.get("integration_base_commit") or f"{candidate_commit}^"
     stat = run_git(
-        "diff", "--stat=200", base, candidate_commit,
+        "diff", *safe_git.DIFF_SAFETY, "--stat=200", base, candidate_commit,
         cwd=worktree, check=False,
     ).stdout.strip() or "(no file changes reported)"
     names = [
         name for name in run_git(
-            "diff", "--name-only", base, candidate_commit,
+            "diff", *safe_git.DIFF_SAFETY, "--name-only", base, candidate_commit,
             cwd=worktree, check=False,
         ).stdout.splitlines() if name.strip()
     ]
     chunks, used, omitted = [], 0, []
     for name in names:
         piece = run_git(
-            "diff", "--no-ext-diff", "--unified=20", base, candidate_commit,
+            "diff", *safe_git.DIFF_SAFETY, "--unified=20", base, candidate_commit,
             "--", name, cwd=worktree, check=False,
         ).stdout or ""
         if used + len(piece) > REVIEW_DIFF_CHARS:
@@ -1212,6 +1313,13 @@ def review_diff_packet(builder, candidate_commit, worktree):
         chunks.append(piece)
         used += len(piece)
     diff = "".join(chunks) or "(empty diff)"
+    try:
+        sensitive = json.loads(builder.get("sensitive_paths") or "[]")
+    except ValueError:
+        sensitive = []
+    if sensitive:
+        diff = ("[LAIka: this change touches files that steer tests, git or agents; check them "
+                "especially carefully: " + ", ".join(sensitive[:20]) + "]\n" + diff)
     if omitted:
         diff += (
             "\n[LAIka: diff budget reached; these changed files were not "
@@ -1735,7 +1843,8 @@ def process_repair_job(job, key, log_path, test_log):
     )
 
     try:
-        returncode, duration = run_agent(job, worktree, log_path)
+        with guard_git_control(worktree):
+            returncode, duration = run_agent(job, worktree, log_path)
         session_id, usage = parse_codex_log(log_path)
 
         common = {
@@ -2191,10 +2300,11 @@ def _process_job(raw_job):
             },
         )
 
-        if best_of_enabled(job):
-            returncode, duration = run_best_of(job, worktree, log_path)
-        else:
-            returncode, duration = run_agent(job, worktree, log_path)
+        with guard_git_control(worktree):
+            if best_of_enabled(job):
+                returncode, duration = run_best_of(job, worktree, log_path)
+            else:
+                returncode, duration = run_agent(job, worktree, log_path)
         session_id, usage = parse_codex_log(log_path)
 
         redis.hset(

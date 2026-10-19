@@ -140,7 +140,7 @@ LOCK = "laika:approval-lock:main"
 def test_approve_advances_main_to_exact_candidate(
         job_review, fake_git, approvable, expected_candidate):
     job_review.approve(JOB, expected_candidate=expected_candidate)
-    assert fake_git.ran("merge") == [("merge", "--ff-only", f"laika/integration-{JOB}")]
+    assert fake_git.ran("merge") == [("merge", "--ff-only", INTEGRATED)]   # the exact commit, not a branch name
     record = job_review.r.records[f"laika:jobs:{JOB}"]
     assert record["status"] == "merged"
     assert record["integrated_candidate_commit"] == INTEGRATED
@@ -294,3 +294,17 @@ def test_reintegrate_resets_review_recovery_budget(job_review, fake_git):
     assert record["review_recoveries"] == "0"
     assert record["needs_human_kind"] == ""
     assert record["status"] == "awaiting_review"
+
+
+def test_approve_refuses_a_link_out_of_the_repository(job_review, fake_git, approvable):
+    # The host runs the same safety check as the worker before main moves.
+    fake_git.raw_diff = ":000000 120000 0000000 abc1234 A\0docs/secrets\0"
+    fake_git.blobs["abc1234"] = "/etc/laika/operator.env"
+    refused(lambda: job_review.approve(JOB, expected_candidate=INTEGRATED), "symlink to an absolute path")
+    assert fake_git.ran("merge") == []
+
+
+def test_approve_refuses_files_hidden_from_status(job_review, fake_git, approvable):
+    fake_git.index_flags = [("H", "a.py"), ("h", "b.py")]   # assume-unchanged hides a change
+    refused(lambda: job_review.approve(JOB, expected_candidate=INTEGRATED), "hidden from git status")
+    assert fake_git.ran("merge") == []

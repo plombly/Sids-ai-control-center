@@ -369,6 +369,9 @@ def _job(key, data):
         "review_aspects": _json_object(data.get("review_aspects")),
         "merge_queue_state": _text(data.get("merge_queue_state")),
         "merge_queue_reason": _text(data.get("merge_queue_reason")),
+        # Files the safety check flagged (services/candidate_safety.py): shown on the approval card.
+        "sensitive_paths": [_text(p) for p in (_json_list(data.get("sensitive_paths")) or [])][:20],
+        "defer_reason": _text(data.get("defer_reason")),
         "needs_human_kind": _text(data.get("needs_human_kind")),
         # An internet-access request (services/network_access.py); credentials already masked.
         "network_request_reason": _text(data.get("network_request_reason"), "")[:1200],
