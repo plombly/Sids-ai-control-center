@@ -1141,6 +1141,13 @@ def run_alternate_builder(job, provider, worktree, log_path, timeout, account=No
         returncode, duration = run_codex(independent, worktree, log_path, account=account)
     finally:
         provider_accounts.release(redis, "codex", account, holder)
+    if returncode != 0:  # the account's limit or sign-in: hold it like any other run would
+        try:
+            failure = provider_health.codex_failure(Path(log_path).read_text(errors="replace"))
+        except OSError:
+            failure = None
+        if failure is not None and failure.holds:
+            provider_health.hold(redis, "codex", failure, account=account)
     return returncode == 0, duration, "", job.get("model", DEFAULT_MODEL)
 
 
@@ -1171,6 +1178,9 @@ def run_best_of(job, worktree, log_path):
     def primary():
         try:
             results["primary"] = run_agent(job, worktree, log_path)
+        except ProviderWait as exc:  # waits for its provider unless the other build passes
+            results["primary_wait"] = exc
+            results["primary_error"] = str(exc)
         except Exception as exc:
             results["primary_error"] = str(exc)
 
@@ -1231,6 +1241,8 @@ def run_best_of(job, worktree, log_path):
     print(f"[{WORKER_ID}] job={job_id} best-of: {json.dumps(report)}", flush=True)
 
     if chosen == "primary" and "primary" not in candidates:
+        if "primary_wait" in results:
+            raise results["primary_wait"]
         if "primary" in results:
             return results["primary"]
         raise RuntimeError(f"best-of build failed: {report}")

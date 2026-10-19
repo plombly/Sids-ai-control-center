@@ -147,3 +147,24 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     module.run_best_of({"id": "b1", "role": "builder", "prompt": "task"}, worktree, worktree.parent / "l")
     assert len(prompts) == 1 and "independent second attempt" in prompts[0]
     assert json.loads(module.redis.records["laika:jobs:b1"]["best_of"])["alt"]["provider"] == "codex"
+
+
+def test_a_provider_wait_in_the_main_build_stays_a_wait(worker):
+    import provider_health
+    builders(worker, alt="broken\n")
+
+    def waiting(job, worktree, log_path):
+        raise worker.ProviderWait("codex", provider_health.Failure("auth", "sign in again"))
+
+    worker.run_agent = waiting
+    with pytest.raises(worker.ProviderWait):
+        build(worker)
+
+
+def test_the_other_build_still_wins_when_the_main_one_waits(worker):
+    import provider_health
+    builders(worker, alt="OK\n")
+    worker.run_agent = lambda job, wt, log: (_ for _ in ()).throw(
+        worker.ProviderWait("codex", provider_health.Failure("quota", "limit")))
+    (rc, _), worktree, report = build(worker)
+    assert rc == 0 and report["chosen"] == "alt"
