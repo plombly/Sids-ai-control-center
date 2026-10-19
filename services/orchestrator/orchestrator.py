@@ -2038,8 +2038,15 @@ def process_goal_safe(raw):
 PAUSE_KEY = "laika:pause"
 
 
+def paused():
+    try:
+        return bool(r.get(PAUSE_KEY))
+    except Exception:  # a client without strings (tests) or a Redis hiccup: not paused
+        return False
+
+
 def submit_queued_goals(executor, futures):
-    if r.get(PAUSE_KEY):
+    if paused():
         return  # all new work paused by the operator: goals wait in their queue
     while len(futures) < MAX_CONCURRENT_GOALS:
         raw = r.lpop(GOAL_QUEUE)

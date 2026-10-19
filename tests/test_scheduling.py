@@ -319,3 +319,12 @@ def test_reviewer_lines_become_a_checklist():
     review = worker.parse_criteria_review(messages, ["/ping exists", "a test covers it", "docs updated"])
     assert [(r["met"], r["note"]) for r in review] == [(True, "app.py adds /ping"), (False, "no test"), (None, "")]
     assert "CRITERION <number>: MET" in worker.criteria_review_note(["x"]) and worker.criteria_review_note([]) == ""
+
+
+def test_no_goal_is_planned_while_all_new_work_is_paused(orch):
+    orch.r.values["laika:pause"] = '{"by": "admin"}'
+    orch.r.values[orch.GOAL_QUEUE] = ['{"id": "g1", "goal": "x"}']
+    submitted = []
+    executor = type("E", (), {"submit": lambda self, fn, raw: submitted.append(raw)})()
+    orch.submit_queued_goals(executor, set())
+    assert submitted == [] and orch.r.values[orch.GOAL_QUEUE] == ['{"id": "g1", "goal": "x"}']

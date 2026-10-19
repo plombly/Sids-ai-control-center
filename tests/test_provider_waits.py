@@ -95,3 +95,11 @@ def test_claude_usage_readings_are_kept_and_a_full_window_holds_claude(tmp_path)
     assert agent_cli.claude_cooling_down(r)
     assert "7-day window at 97%" in r.values[agent_cli.COOLDOWN_KEY]
     assert agent_cli.record_rate_limits(r, tmp_path / "missing.json") is None      # fails open
+
+
+def test_a_paused_server_claims_no_new_job():
+    worker = load_module(ROOT / "services/worker/worker.py", "worker_pause_test")
+    worker.redis = MemoryRedis()
+    assert worker.pause_reason() is None
+    worker.redis.values["laika:pause"] = '{"by": "admin"}'
+    assert worker.pause_reason() == "paused"
