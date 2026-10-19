@@ -87,13 +87,13 @@ def test_codex_failures_come_only_from_its_final_error_event():
 
 def test_secrets_are_masked(monkeypatch):
     monkeypatch.setenv("REDIS_PASSWORD", "s3cret-redis-pass-123")
-    text = ("redis://default:s3cret-redis-pass-123@127.0.0.1:6379 failed; "
+    text = ("redis://default:s3cret-redis-pass-123@127.0.0.1:6379 failed; "  # release-scan: allow (fake)
             "Authorization: Bearer abcdefghijklmnop1234; token=abcdef123456; "
             "key sk-ant-api03-AAAAAAAAAAAAAAAAAAAA ghp_" + "a" * 36)  # release-scan: allow (fakes)
     clean = redaction.redact(text)
     for secret in ("s3cret-redis-pass-123", "abcdefghijklmnop1234", "abcdef123456", "sk-ant-api03", "ghp_aaaa"):
         assert secret not in clean
-    assert "redis://default:[redacted]@127.0.0.1" in clean
+    assert "redis://default:[redacted]@127.0.0.1" in clean  # release-scan: allow (fake)
     assert redaction.redact("\x1b[31mplain\x1b[0m text") == "plain text"
 
 
