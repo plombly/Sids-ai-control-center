@@ -37,6 +37,7 @@ def test_a_provider_wait_resumes_only_after_the_hold_ends_with_the_same_attempt(
     orch.resume_deferred_jobs()                                   # idempotent: queued once
     job = orch.r.records["laika:jobs:b1"]
     assert job["status"] == "queued" and job["build_attempt"] == "1" and job["prompt"] == "Add a cart"
+    assert "defer_reason" not in job and job["deferrals"] == "1"
     assert queued(orch) == ["b1"]
 
 

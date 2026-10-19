@@ -1536,7 +1536,8 @@ def resume_deferred_jobs(now_ts=None):
         if not r.hsetnx(key, f"resume_{round_id}_at", now()):
             continue
         release_stale_integration_lock(job_id)
-        r.hdel(key, *BUILD_DERIVED_FIELDS, "defer_until")
+        # The counters stay (they bound the waits); what it waited for goes.
+        r.hdel(key, *BUILD_DERIVED_FIELDS, "defer_until", "defer_kind", "defer_provider", "defer_reason")
         r.hset(key, mapping={"status": "queued", "updated_at": now()})
         dispatch_job_once({"id": job_id}, {
             "id": job_id,
