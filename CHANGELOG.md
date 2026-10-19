@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 2.0.0 (in progress)
+## 2.0.0 (2026-10-19)
 
 **Upgrading from 1.5:** update as usual (Settings → System → Update now,
 or `sudo laika update`); running jobs finish first. Nothing to redo:
