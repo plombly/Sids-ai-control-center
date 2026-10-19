@@ -387,8 +387,8 @@ def validate(fields, entry_id, now):
         what = fields.get("what", "")
         if action == "apply_settings" and what not in APPLY_WHAT:
             raise Invalid(f"what must be one of {', '.join(APPLY_WHAT)}")
-        if action == "provider_login" and what not in ("claude", "codex"):
-            raise Invalid("provider must be claude or codex")
+        if action == "provider_login" and not re.fullmatch(r"(claude|codex)(:[a-z0-9][a-z0-9-]{0,23})?", what):
+            raise Invalid("provider must be claude or codex (optionally :account)")
         if action in ("provider_status", "provider_apply_keys", "system_update", "backup_now",
                       "restore_check_now") or action.startswith("remote_"):
             what = ""
@@ -469,7 +469,7 @@ def call_action(request):
 
 SYSTEM_COMMANDS = {
     "apply_settings": ("apply", "scripts/laika-system.py", lambda what: [what]),
-    "provider_login": ("signin", "scripts/laika-providers.py", lambda what: ["login", what]),
+    "provider_login": ("signin", "scripts/laika-providers.py", lambda what: ["login", *what.split(":", 1)]),
     "provider_status": ("providers", "scripts/laika-providers.py", lambda what: ["status"]),
     "provider_apply_keys": ("keys", "scripts/laika-providers.py", lambda what: ["apply-keys"]),
     "system_update": ("update", "scripts/laika-update.py", lambda what: ["apply", "--yes"]),
@@ -497,6 +497,9 @@ def execute_system(request, runner=subprocess.run):
     result = runner([os.environ.get("SYSTEMD_RUN", "systemd-run"), f"--unit={name}", "--collect", "--quiet",
                      "--property=EnvironmentFile=-/etc/laika/providers/providers.env",
                      "--property=EnvironmentFile=-/etc/laika/redis.env", *as_user,
+                     # Extra accounts' API keys reach only the step that puts them in place.
+                     *(["--property=EnvironmentFile=-/etc/laika/providers/accounts.env"]
+                       if request["action"] == "provider_apply_keys" else []),
                      f"--description=LAIka: {request['action']}", PYTHON,
                      str(ROOT / script), *args(request["what"])],
                     text=True, capture_output=True, timeout=60)

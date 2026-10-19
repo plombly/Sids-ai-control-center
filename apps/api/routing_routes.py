@@ -16,7 +16,7 @@ router = APIRouter()
 def summarize(jobs, since):
     """{roles: [{role, runs: [{provider, model, count}]}], fallbacks: [...], waits: {...}}."""
     by_role = defaultdict(Counter)
-    fallbacks, waits = [], Counter()
+    fallbacks, waits, accounts = [], Counter(), Counter()
     for job in jobs:
         try:
             when = float(job.get("created_at") or job.get("updated_at") or 0)
@@ -28,6 +28,11 @@ def summarize(jobs, since):
         provider = job.get("provider") or ""
         if provider:
             by_role[role][(provider, job.get("model") or "")] += 1
+            if job.get("provider_account"):
+                accounts[(provider, job["provider_account"])] += 1
+        switches = int(job.get("account_switches") or 0)
+        if switches:
+            waits["account_switches"] += switches
         if job.get("provider_fallback"):
             fallbacks.append({"job": job.get("id", ""), "role": role, "at": when,
                               "reason": str(job["provider_fallback"])[:200]})
@@ -41,7 +46,8 @@ def summarize(jobs, since):
                                       for (p, m), n in counts.most_common()]}
              for role, counts in sorted(by_role.items())]
     fallbacks.sort(key=lambda item: -item["at"])
-    return {"roles": roles, "fallbacks": fallbacks[:50], "waits": dict(waits)}
+    return {"roles": roles, "fallbacks": fallbacks[:50], "waits": dict(waits),
+            "accounts": [{"provider": p, "account": a, "count": n} for (p, a), n in accounts.most_common()]}
 
 
 @router.get("/api/routing")

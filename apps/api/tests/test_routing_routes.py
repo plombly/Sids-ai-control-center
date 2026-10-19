@@ -14,3 +14,15 @@ def test_runs_per_role_switches_and_waits():
     assert {(x["provider"], x["count"]) for x in reviewer["runs"]} == {("codex", 1), ("claude", 1)}
     assert out["fallbacks"] == [{"job": "b", "role": "reviewer", "at": 200.0, "reason": "claude unavailable: quota"}]
     assert out["waits"] == {"provider_waits": 2}
+
+
+def test_runs_and_moves_per_account():
+    from routing_routes import summarize
+    jobs = [{"id": "a", "role": "reviewer", "provider": "claude", "provider_account": "default", "created_at": "10"},
+            {"id": "b", "role": "reviewer", "provider": "claude", "provider_account": "work", "created_at": "10",
+             "account_switches": "1"},
+            {"id": "c", "role": "builder", "provider": "codex", "provider_account": "default", "created_at": "10"}]
+    result = summarize(jobs, 0)
+    assert {(a["provider"], a["account"], a["count"]) for a in result["accounts"]} == {
+        ("claude", "default", 1), ("claude", "work", 1), ("codex", "default", 1)}
+    assert result["waits"]["account_switches"] == 1

@@ -43,7 +43,7 @@ def builders(worker, primary=None, alt=None, primary_rc=0, alt_ok=True, new_file
             (worktree / "app.py").write_text(primary)
         return primary_rc, 1.0
 
-    def run_alternate(job, provider, worktree, log_path, timeout):
+    def run_alternate(job, provider, worktree, log_path, timeout, account=None):
         if alt is not None:
             (worktree / "app.py").write_text(alt)
         if new_file:
@@ -139,7 +139,7 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     module.run_tests = lambda wt, network=False: (True, "")
     module.run_agent = lambda job, wt, log: (0, 1.0)
     prompts = []
-    module.run_codex = lambda job, wt, log: prompts.append(job["prompt"]) or (0, 1.0)
+    module.run_codex = lambda job, wt, log, account=None: prompts.append(job["prompt"]) or (0, 1.0)
     module.agent_cli.run_claude = lambda *a, **k: pytest.fail("Claude must not build")
     module.agent_cli.wait_for_claude_slot = lambda *a, **k: pytest.fail("no Claude slot needed")
     _, worktree = module.create_worktree("b1")

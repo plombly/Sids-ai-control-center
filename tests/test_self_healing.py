@@ -457,7 +457,7 @@ def repair_setup(worker_module, tmp_path):
 def test_repair_starts_from_clean_candidate_after_an_earlier_failure(worker_module, tmp_path):
     job, key, log, test_log = repair_setup(worker_module, tmp_path)
     worker_module.git_fake.dirty = True  # left by a failed repair
-    worker_module.run_codex = lambda *a: (_ for _ in ()).throw(RuntimeError("stop here"))
+    worker_module.run_codex = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop here"))
     with pytest.raises(RuntimeError, match="stop here"):
         worker_module.process_repair_job(job, key, log, test_log)
     resets = [c for c in worker_module.git_fake.calls if c[0] == "reset"]
@@ -468,7 +468,7 @@ def test_repair_starts_from_clean_candidate_after_an_earlier_failure(worker_modu
 def test_repair_timeout_restores_candidate_and_propagates(worker_module, tmp_path):
     job, key, log, test_log = repair_setup(worker_module, tmp_path)
 
-    def codex(*args):
+    def codex(*args, **kwargs):
         worker_module.git_fake.dirty = True
         raise RuntimeError("Codex exceeded 360 second repair timeout")
 
@@ -481,7 +481,7 @@ def test_repair_timeout_restores_candidate_and_propagates(worker_module, tmp_pat
 def test_repair_gate_failure_restores_candidate(worker_module, tmp_path):
     job, key, log, test_log = repair_setup(worker_module, tmp_path)
 
-    def codex(*args):
+    def codex(*args, **kwargs):
         worker_module.git_fake.dirty = True
         return 0, 1.0
 

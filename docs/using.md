@@ -188,3 +188,17 @@ While a limit stops new goals, the goal box is paused and says why.
 **Settings → AI & pipeline → Spending limits** chooses who may set project
 limits (project approvers and administrators, or only administrators) or
 turns spending limits off; first-run setup asks the same.
+
+## Several AI accounts
+
+**Settings → AI → More accounts** adds more Claude or Codex accounts: a
+subscription sign-in (the same steps as the first one, done for that
+account) or an API key. LAIka gives each run to the account with the most
+room left, so several plans are used evenly. **Runs at once** limits how
+many runs an account takes together (0 = no limit; Claude defaults to 2).
+When an account reaches a usage limit it is paused until its reset time
+and the work moves to the other accounts; the provider as a whole pauses
+only when every account is. **Turn off** stops using an account without
+removing it; **Remove** also deletes its sign-in or key from the server.
+The first sign-in is the "default" account and cannot be removed. Check
+each provider's terms before using several accounts.

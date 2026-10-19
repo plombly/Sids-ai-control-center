@@ -253,11 +253,9 @@ def live_workers(r, active):
 
 def free_claude_slots(r, now):
     import agent_cli
-    try:
-        used = r.zcount(agent_cli.SLOTS_KEY, now, "+inf")
-    except Exception:
-        used = 0
-    return agent_cli.claude_slot_limit() - int(used), agent_cli.claude_cooling_down(r)
+    import provider_accounts
+    free, _ = provider_accounts.capacity(r, "claude", now)  # over every Claude account
+    return free, agent_cli.claude_cooling_down(r)
 
 
 def stored_env(r):

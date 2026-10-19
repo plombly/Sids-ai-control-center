@@ -85,7 +85,8 @@ def test_levels_decide_what_a_member_may_do(team):
     approve = {"action": "approve", "request_id": "req-00000001", "expected_status": "awaiting_review",
                "expected_candidate": "c" * 40}
     assert builder.post("/api/jobs/jshop1/actions", json=approve).json()["detail"] == "You need approve access to this project"
-    for path in ("/api/settings", "/api/users", "/api/audit", "/api/ai-providers", "/api/notifications"):
+    for path in ("/api/settings", "/api/users", "/api/audit", "/api/ai-providers", "/api/ai-providers/accounts",
+                 "/api/notifications"):
         assert builder.get(path).status_code == 403, path
     assert builder.post("/api/workers/scale", json={"delta": 1}).status_code == 403
     assert builder.post("/api/projects/shop/delete", json={"request_id": "del-00000001"}).status_code == 403

@@ -12,11 +12,16 @@
                                         sends back, saves the token where only
                                         the laika user can read it
     laika-providers.py apply-keys      sign Codex in with the OpenAI API key
-                                        saved from the web (providers.env)
+                                        saved from the web (providers.env), and
+                                        put every extra account's key in place
+                                        (accounts.env); remove the credentials
+                                        of accounts that were deleted
+    ... login codex|claude ACCOUNT     the same for one of several accounts
+                                        (services/provider_accounts.py)
 
 Progress of a sign-in: laika:provider-login:<provider> (JSON: state
-starting|waiting|done|failed, url, code, message). Email addresses and
-tokens are never published.
+starting|waiting|done|failed, url, code, message, account). Email
+addresses and tokens are never published.
 """
 
 import json
@@ -31,6 +36,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "services"))
 import laika_env  # noqa: E402,F401
+import provider_accounts  # noqa: E402
+import provider_health  # noqa: E402
 
 PROVIDERS_ENV = Path(os.environ.get("LAIKA_PROVIDERS_DIR", "/etc/laika/providers")) / "providers.env"
 LOGIN_TIMEOUT = 900
@@ -48,8 +55,20 @@ def redis_client():
                                     password=laika_redis.password(), decode_responses=True)
 
 
+ACCOUNT = provider_accounts.DEFAULT  # the account a sign-in is for (main sets it)
+
+
 def publish(r, provider, **fields):
-    r.set(f"laika:provider-login:{provider}", json.dumps({"at": time.time(), **fields}), ex=3600)
+    r.set(f"laika:provider-login:{provider}", json.dumps({"at": time.time(), "account": ACCOUNT, **fields}), ex=3600)
+
+
+def codex_env(account):
+    """The environment for Codex as account (its own CODEX_HOME)."""
+    if account == provider_accounts.DEFAULT:
+        return None
+    home = provider_accounts.codex_home(account)
+    home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return {**os.environ, "CODEX_HOME": str(home)}
 
 
 def run(argv, timeout=30, stdin=None, env=None):
@@ -97,9 +116,33 @@ def codex_status(runner=run):
 
 
 def status(r, runner=run):
-    report = {"claude": claude_status(runner), "codex": codex_status(runner), "checked_at": time.time()}
+    report = {"claude": claude_status(runner), "codex": codex_status(runner), "checked_at": time.time(),
+              "accounts": {"claude": {}, "codex": {}}}
+    for provider in provider_accounts.PROVIDERS:
+        for account in provider_accounts.accounts(r, provider):
+            if account["id"] == provider_accounts.DEFAULT:
+                continue
+            report["accounts"][provider][account["id"]] = account_status(provider, account["id"], runner)
     r.set("laika:providers:status", json.dumps(report))
     return report
+
+
+def account_status(provider, account, runner=run):
+    """{signed_in, method} of one extra account."""
+    if provider == "codex":
+        env = codex_env(account)
+        result = runner(["codex", "login", "status"], env=env)
+        text = (result.stdout + result.stderr).strip()
+        signed = result.returncode == 0 and text.lower().startswith("logged in")
+        return {"signed_in": signed, "method": text.replace("Logged in using ", "") if signed else ""}
+    key = provider_accounts._read(provider_accounts.claude_key_path(account))
+    if key:
+        return {"signed_in": True, "method": "API key"}
+    token = provider_accounts._read(provider_accounts.claude_token_path(account))
+    if not token:
+        return {"signed_in": False, "method": ""}
+    works = token_works(token, runner)
+    return {"signed_in": works, "method": "long-lived token" if works else "long-lived token no longer works: sign in again"}
 
 
 def plain(text):
@@ -119,7 +162,7 @@ def parse_prompt(text):
 def login_codex(r, clock=time.time):
     publish(r, "codex", state="starting")
     process = subprocess.Popen(["codex", "login", "--device-auth"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               text=True, bufsize=1)
+                               text=True, bufsize=1, env=codex_env(ACCOUNT))
     output, shown, deadline = "", False, clock() + LOGIN_TIMEOUT
     while process.poll() is None and clock() < deadline:
         ready, _, _ = select.select([process.stdout], [], [], 1)
@@ -137,7 +180,7 @@ def login_codex(r, clock=time.time):
     ok = process.returncode == 0
     shown = re.sub(r"\bsk-\S+", "[key]", ANY_SECRET.sub("[token]", plain(output)))[-300:]
     if ok:  # a fresh sign-in ends a pause for sign-in or limits
-        r.delete("laika:provider-cooldown:codex", "laika:provider-hold:codex")
+        provider_health.release(r, "codex", ACCOUNT)
     publish(r, "codex", state="done" if ok else "failed", message="" if ok else shown)
     status(r)
     return 0 if ok else 1
@@ -233,8 +276,7 @@ ANY_SECRET = re.compile(r"sk-ant-\S*")
 
 def save_token(token, path=None):
     """Only the laika user can read it (0600 in its own home)."""
-    import agent_cli
-    path = Path(path or agent_cli.claude_token_file())
+    path = Path(path or provider_accounts.claude_token_path(ACCOUNT))
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temp = path.with_name(path.name + ".new")
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -259,7 +301,9 @@ def keep_transcript(output, path=None, notes=()):
 def token_works(token, runner=run, note=None):
     """One tiny Claude call with the token: it really signs in. note(text)
     receives Claude's answer for the transcript (never the token)."""
-    env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}
+    # Only the token: a saved API key would otherwise answer for it.
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     result = runner(["claude", "-p", "Reply with the single word OK.", "--model", "haiku", "--output-format", "json"],
                     timeout=90, env=env)
     try:
@@ -319,7 +363,7 @@ def finish_claude(r, exit_code, output, check=None, saver=save_token, tester=tok
             status(r)
             return 1
         saver(working)
-        r.delete("laika:provider-cooldown:claude", "laika:provider-hold:claude")
+        provider_health.release(r, "claude", ACCOUNT)
         publish(r, "claude", state="done", message="Signed in for a year.")
         status(r)
         return 0
@@ -341,14 +385,61 @@ def read_env(path=PROVIDERS_ENV):
     return values
 
 
-def apply_keys(r, runner=run):
-    # The unit gets providers.env as its environment (the file itself is root-only).
-    key = os.environ.get("OPENAI_API_KEY") or read_env().get("OPENAI_API_KEY", "")
+def account_key_name(provider, account):
+    """accounts.env variable holding an extra account's API key."""
+    return ("ANTHROPIC_API_KEY__" if provider == "claude" else "OPENAI_API_KEY__") + account.upper().replace("-", "_")
+
+
+def apply_keys(r, runner=run, environ=None, base=None):
+    # The unit gets providers.env and accounts.env as its environment (the
+    # files themselves are root-only).
+    environ = os.environ if environ is None else environ
+    key = environ.get("OPENAI_API_KEY") or read_env().get("OPENAI_API_KEY", "")
     if key:
         result = runner(["codex", "login", "--with-api-key"], stdin=key + "\n")
         print("codex:", "signed in with the API key" if result.returncode == 0 else "failed")
+    for provider in provider_accounts.PROVIDERS:
+        known = set()
+        for account in provider_accounts.accounts(r, provider):
+            name = account["id"]
+            known.add(name)
+            if name == provider_accounts.DEFAULT:
+                continue
+            value = environ.get(account_key_name(provider, name), "")
+            if provider == "claude":
+                path = provider_accounts.claude_key_path(name, base)
+                if value:
+                    save_token(value, path)
+                elif path.exists():
+                    path.unlink()
+            elif value:
+                env = {**environ, "CODEX_HOME": str(provider_accounts.codex_home(name, base))}
+                Path(env["CODEX_HOME"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+                result = runner(["codex", "login", "--with-api-key"], stdin=value + "\n", env=env)
+                print(f"codex ({name}):", "signed in with the API key" if result.returncode == 0 else "failed")
+        prune(provider, known, base)
     status(r, runner)
     return 0
+
+
+def prune(provider, known, base=None):
+    """Remove the credentials of accounts that no longer exist (only LAIka's
+    own per-account files; never the default account's)."""
+    import shutil
+    base = Path(base or provider_accounts.home())
+    folders = ([base / ".config/laika/claude-tokens", base / ".config/laika/claude-keys"] if provider == "claude"
+               else [base / ".codex-accounts"])
+    for folder in folders:
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        for entry in folder.iterdir():
+            if entry.name in known or not provider_accounts.ID.match(entry.name):
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+            print(f"{provider}: removed the credentials of deleted account {entry.name}")
 
 
 def main(argv):
@@ -358,6 +449,13 @@ def main(argv):
         print(json.dumps(status(r)))
         return 0
     if action == "login" and len(argv) > 2 and argv[2] in ("codex", "claude"):
+        global ACCOUNT
+        account = argv[3] if len(argv) > 3 else provider_accounts.DEFAULT
+        if not provider_accounts.ID.match(account) or account not in [
+                a["id"] for a in provider_accounts.accounts(r, argv[2])]:
+            print(f"unknown {argv[2]} account: {account}", file=sys.stderr)
+            return 2
+        ACCOUNT = account
         return login_codex(r) if argv[2] == "codex" else login_claude(r)
     if action == "apply-keys":
         return apply_keys(r)

@@ -129,7 +129,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
 
 ## Next after the Phoenix work (owner, 2026-10-19; discuss first)
 
-- [ ] 2.0 CP5 accounts (decided 2026-10-19): several Claude and Codex
+- [x] 2.0 CP5 accounts (decided 2026-10-19; built 2026-10-19): several Claude and Codex
       accounts per provider, each a subscription login or an API key;
       LAIka spreads runs over them (most room left: fewest running, lowest
       plan usage); concurrency per account (default 2); pauses per account

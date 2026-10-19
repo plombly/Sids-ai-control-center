@@ -58,7 +58,7 @@ def test_codex_limit_holds_codex_and_raises_a_provider_wait(tmp_path, monkeypatc
     worker.redis = MemoryRedis()
     log = tmp_path / "b.jsonl"
 
-    def failing_codex(job, worktree, log_path):
+    def failing_codex(job, worktree, log_path, account=None):
         log_path.write_text(json.dumps({"type": "turn.failed", "error": {
             "message": "You've hit your usage limit. Try again in 1 hour."}}) + "\n")
         return 1, 2.0
@@ -70,7 +70,7 @@ def test_codex_limit_holds_codex_and_raises_a_provider_wait(tmp_path, monkeypatc
     with pytest.raises(worker.ProviderWait):                       # held: not even started
         worker.codex_or_wait({"id": "b2", "role": "builder"}, tmp_path, log)
 
-    def broken_build(job, worktree, log_path):
+    def broken_build(job, worktree, log_path, account=None):
         log_path.write_text('{"type":"turn.failed","error":{"message":"tests failed"}}\n')
         return 1, 1.0
     worker.provider_health.release(worker.redis, "codex")
@@ -88,7 +88,7 @@ def test_claude_usage_readings_are_kept_and_a_full_window_holds_claude(tmp_path)
     log.write_text(event(0.2, 0.5) + "\n" + event(0.4, 0.6) + "\n")
     reading = agent_cli.record_rate_limits(r, log, now=1999990000)
     assert reading["windows"]["five_hour"]["percent"] == 40.0
-    assert json.loads(r.values[agent_cli.USAGE_KEY])["windows"]["seven_day"]["percent"] == 60.0
+    assert json.loads(r.values["laika:provider-usage:claude"])["windows"]["seven_day"]["percent"] == 60.0
     assert not agent_cli.claude_cooling_down(r)
     log.write_text(event(0.5, 0.97) + "\n")
     agent_cli.record_rate_limits(r, log, now=1999990000)

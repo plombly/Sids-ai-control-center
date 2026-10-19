@@ -143,7 +143,7 @@ class MemoryRedis:
             zset = self.zsets.setdefault(key, {})
             for member in [m for m, score in zset.items() if score <= now]:
                 del zset[member]
-            if holder in zset or len(zset) < limit:
+            if holder in zset or limit <= 0 or len(zset) < limit:
                 zset[holder] = expiry
                 return 1
             return 0
@@ -152,6 +152,11 @@ class MemoryRedis:
             del self.values[key]
             return 1
         return 0
+
+    def zcount(self, key, low, high):
+        low = float("-inf") if low in ("-inf",) else float(low)
+        high = float("inf") if high in ("+inf", "inf") else float(high)
+        return sum(1 for score in self.zsets.get(key, {}).values() if low <= score <= high)
 
     def zrem(self, key, *members):
         zset = self.zsets.setdefault(key, {})

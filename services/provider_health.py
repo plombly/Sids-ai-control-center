@@ -14,12 +14,9 @@ and reads the reset time the provider gave ("try again in 2h 5m",
 epoch after "limit reached|"). Only the provider's explicit wording counts:
 a successful run is never classified.
 
-A hold stops sending work to that provider until the reset time (+2 min
-margin), capped (rate limits 24 h, quotas 8 days). Holds live in Redis:
-  laika:provider-cooldown:<provider>   the reason (string), TTL = the hold
-  laika:provider-hold:<provider>       JSON {kind, reason, until, at, hint}
-The first key is the one LAIka has always used for Claude, so everything
-that already reads it keeps working.
+A hold stops sending work to that account of the provider until the reset
+time (+2 min margin), capped (rate limits 24 h, quotas 8 days); see "holds
+in Redis" below for the keys.
 """
 
 import datetime
@@ -242,51 +239,106 @@ def hold_seconds(failure, now=None):
 
 
 # --- holds in Redis ---------------------------------------------------------------------
+#
+# Holds are per account (services/provider_accounts.py):
+#   laika:provider-cooldown:<provider>:<account>   reason, TTL = the hold
+#   laika:provider-hold:<provider>:<account>       JSON {kind, reason, until, at, hint}
+# The provider-wide keys (no account) are a summary kept for everything that
+# already reads them (dashboard, watchdog): set only while EVERY enabled
+# account of the provider is held, for as long as the first of them stays
+# held, with that account's details.
 
-def cooldown_key(provider):
-    return f"laika:provider-cooldown:{provider}"
+def cooldown_key(provider, account=None):
+    return f"laika:provider-cooldown:{provider}" + (f":{account}" if account else "")
 
 
-def hold_key(provider):
-    return f"laika:provider-hold:{provider}"
+def hold_key(provider, account=None):
+    return f"laika:provider-hold:{provider}" + (f":{account}" if account else "")
 
 
-def hold(r, provider, failure, now=None):
-    """Hold provider for this failure; returns the hold seconds (0 = none).
-    A longer existing hold is never shortened."""
+def usage_key(provider, account=None):
+    """Plan-usage readings; the default account keeps the key it always had."""
+    import provider_accounts
+    account = account or provider_accounts.DEFAULT
+    return f"laika:provider-usage:{provider}" + ("" if account == provider_accounts.DEFAULT else f":{account}")
+
+
+def _account(account):
+    import provider_accounts
+    return account or provider_accounts.DEFAULT
+
+
+def hold(r, provider, failure, now=None, account=None):
+    """Hold this account of provider for this failure; returns the hold
+    seconds (0 = none). A longer existing hold is never shortened."""
     seconds = hold_seconds(failure, now)
     if not seconds:
         return 0
+    account = _account(account)
     now = time.time() if now is None else now
     try:
-        left = r.ttl(cooldown_key(provider))
+        left = r.ttl(cooldown_key(provider, account))
         if isinstance(left, int) and left > seconds:
             return left
         reason = f"{provider} {failure.kind}: {failure.reason}"[:300]
-        r.set(cooldown_key(provider), reason, ex=seconds)
-        r.set(hold_key(provider), json.dumps({"kind": failure.kind, "reason": failure.reason[:300],
-                                              "until": now + seconds, "at": now, "hint": failure.hint}), ex=seconds)
+        r.set(cooldown_key(provider, account), reason, ex=seconds)
+        r.set(hold_key(provider, account), json.dumps({"kind": failure.kind, "reason": failure.reason[:300],
+                                                       "until": now + seconds, "at": now, "hint": failure.hint}),
+              ex=seconds)
     except Exception:
         pass
+    summarize(r, provider, now)
     return seconds
 
 
-def held(r, provider):
+def summarize(r, provider, now=None):
+    """Keep the provider-wide summary keys in step with the accounts' holds."""
+    import provider_accounts
+    now = time.time() if now is None else now
     try:
-        return bool(r.get(cooldown_key(provider)))
+        waits = []
+        for account in provider_accounts.accounts(r, provider):
+            if not account["enabled"] or not provider_accounts.has_credentials(provider, account["id"]):
+                continue
+            left = r.ttl(cooldown_key(provider, account["id"]))
+            if not (isinstance(left, int) and left > 0):
+                return  # an account can serve: no provider-wide hold (an older one stays until it ends)
+            waits.append((left, account["id"]))
+        if not waits:
+            return
+        left, account = min(waits)
+        r.set(cooldown_key(provider), r.get(cooldown_key(provider, account)) or f"{provider} on hold", ex=left)
+        r.set(hold_key(provider), r.get(hold_key(provider, account)) or "{}", ex=left)
+    except Exception:
+        pass
+
+
+def held(r, provider, account=None):
+    """account given: that account cannot be used now; None: no account of
+    the provider can (the provider-wide summary)."""
+    try:
+        if r.get(cooldown_key(provider)):
+            return True
+        if account:
+            return bool(r.get(cooldown_key(provider, account)))
+        import provider_accounts
+        enabled = [a["id"] for a in provider_accounts.accounts(r, provider)
+                   if a["enabled"] and provider_accounts.has_credentials(provider, a["id"])]
+        return bool(enabled) and all(r.get(cooldown_key(provider, a)) for a in enabled)
     except Exception:
         return False
 
 
-def info(r, provider, now=None):
-    """{held, kind, reason, until, seconds_left, hint} for the dashboard."""
+def info(r, provider, now=None, account=None):
+    """{held, kind, reason, until, seconds_left, hint} for the dashboard
+    (account None: the provider-wide summary)."""
     now = time.time() if now is None else now
     try:
-        reason = r.get(cooldown_key(provider))
+        reason = r.get(cooldown_key(provider, account))
         if not reason:
             return {"held": False}
-        left = r.ttl(cooldown_key(provider))
-        detail = json.loads(r.get(hold_key(provider)) or "{}")
+        left = r.ttl(cooldown_key(provider, account))
+        detail = json.loads(r.get(hold_key(provider, account)) or "{}")
     except Exception:
         return {"held": False}
     seconds = left if isinstance(left, int) and left > 0 else 0
@@ -294,8 +346,11 @@ def info(r, provider, now=None):
             "until": detail.get("until") or (now + seconds), "seconds_left": seconds, "hint": detail.get("hint", "absent")}
 
 
-def release(r, provider):
+def release(r, provider, account=None):
+    """End an account's hold (None: the default account) and the provider-wide
+    summary: at least that account can serve again."""
     try:
-        r.delete(cooldown_key(provider), hold_key(provider))
+        r.delete(cooldown_key(provider, _account(account)), hold_key(provider, _account(account)),
+                 cooldown_key(provider), hold_key(provider))
     except Exception:
         pass

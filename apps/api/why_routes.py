@@ -78,7 +78,8 @@ def explain(job, state):
         if until and role == "builder":
             return True, f"Codex is paused until about {_clock(until)}; the build waits without using an attempt."
         if role in ("reviewer", "repair") and state.get("claude_full"):
-            return True, "Waiting for a Claude slot (all are in use); it falls back to Codex after 15 minutes."
+            return True, ("Waiting for a Claude slot (every account's are in use); it falls back to Codex "
+                          "after 15 minutes.")
         workers = state.get("workers") or []
         idle = [w for w in workers if (w.get("status") or "") == "idle"]
         queue = state.get("queue") or []
@@ -116,8 +117,9 @@ def live_state():
                 state["held"][provider] = time.time() + left
         state["workers"] = [main._hash(key) for key in main._keys("laika:workers:*")]
         state["queue"] = [json.loads(raw).get("id") for raw in r.lrange("laika:jobs", 0, 200) or []]
-        limit = int(r.get("laika:provider-limit:claude") or 2)
-        state["claude_full"] = len(r.zrangebyscore("laika:provider-slots:claude", time.time(), "+inf")) >= limit
+        import provider_routes
+        room = provider_routes.capacity("claude")
+        state["claude_full"] = not room["unlimited"] and room["free"] <= 0
         state["statuses"] = main._job_statuses()
     except Exception:
         pass

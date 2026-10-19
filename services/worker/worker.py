@@ -21,6 +21,7 @@ import laika_env  # noqa: E402,F401  (Settings → environment, before any confi
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import provider_health  # noqa: E402  (services/provider_health.py)
+import provider_accounts  # noqa: E402  (services/provider_accounts.py)
 import redaction  # noqa: E402  (services/redaction.py)
 import candidate_safety  # noqa: E402  (services/candidate_safety.py)
 import safe_git  # noqa: E402  (services/safe_git.py)
@@ -906,7 +907,9 @@ CODEX_ISOLATION = tuple(arg for feature in (
     "skill_mcp_dependency_install") for arg in ("--disable", feature))
 
 
-def run_codex(job, worktree, log_path):
+def run_codex(job, worktree, log_path, account=None):
+    """account: which Codex account (provider_accounts; None = default)."""
+    account = account or provider_accounts.DEFAULT
     model = job.get("model", DEFAULT_MODEL)
     prompt = job["prompt"]
     role = job.get("role", "builder")
@@ -943,8 +946,10 @@ def run_codex(job, worktree, log_path):
     ]
 
     env = agent_cli.agent_env()
+    env = provider_accounts.apply_env(env, provider_accounts.env_for("codex", account, base=env["HOME"]))
     # Projects: inside the project sandbox (reviewers read-only).
-    command = project_sandbox.codex_command(command, PROJECT, worktree, writable=(role != "reviewer"))
+    state = () if account == provider_accounts.DEFAULT else (provider_accounts.codex_home(account, env["HOME"]),)
+    command = project_sandbox.codex_command(command, PROJECT, worktree, writable=(role != "reviewer"), state=state)
 
     started = time.time()
 
@@ -1048,7 +1053,7 @@ def repair_allowed_bash():
     return (f"Bash({LAIKA_PYTHON} -m pytest *)", "Bash(node apps/web/app.test.js)") + allowed
 
 
-def run_review_aspects(job, worktree, log_path, timeout):
+def run_review_aspects(job, worktree, log_path, timeout, account=None):
     """Run the configured specialist reviews concurrently and combine them
     into one Claude result at log_path (see agent_cli.combined_review_result).
     Returns an unavailable/failed run as-is so run_agent can fall back."""
@@ -1061,7 +1066,8 @@ def run_review_aspects(job, worktree, log_path, timeout):
                   + agent_cli.REVIEW_ASPECT_FOCUS[aspect])
         run = agent_cli.run_claude(
             "reviewer", prompt, worktree, log_path.with_name(f"{log_path.stem}.{aspect}.json"),
-            timeout, model=model, tick=lambda: heartbeat("working"), wrap=agent_sandbox(worktree))
+            timeout, model=model, tick=lambda: heartbeat("working"), wrap=agent_sandbox(worktree),
+            account=account)
         if run.result is not None:
             run.result["_model"] = model
         runs[aspect] = run
@@ -1074,14 +1080,14 @@ def run_review_aspects(job, worktree, log_path, timeout):
     for aspect in aspects:
         run = runs.get(aspect)
         if run is None or not run.ok:
-            return run or agent_cli.ClaudeRun(1, 0.0, None)  # unavailable/failed: caller decides
+            return run or agent_cli.ClaudeRun(1, 0.0, None, account=account)  # unavailable/failed: caller decides
     verdicts = {a: parse_review_verdict([runs[a].text])[0] for a in aspects}
     missing = [a for a, v in verdicts.items() if v == "unknown"]
     if missing:
         raise RuntimeError(f"specialist review(s) gave no verdict: {', '.join(missing)}")
     combined = agent_cli.combined_review_result(runs, verdicts)
     log_path.write_text(json.dumps(combined))
-    return agent_cli.ClaudeRun(0, max(r.duration for r in runs.values()), combined)
+    return agent_cli.ClaudeRun(0, max(r.duration for r in runs.values()), combined, account=account)
 
 
 # --- best-of-N builds -------------------------------------------------------------
@@ -1115,7 +1121,7 @@ def change_size(worktree):
     return total
 
 
-def run_alternate_builder(job, provider, worktree, log_path, timeout):
+def run_alternate_builder(job, provider, worktree, log_path, timeout, account=None):
     """(ok, duration, cost_usd, model) for the alternate provider's build."""
     started = time.time()
     if provider == "claude":
@@ -1123,13 +1129,18 @@ def run_alternate_builder(job, provider, worktree, log_path, timeout):
         run = agent_cli.run_claude(
             "builder", efficiency_prefix("builder") + job["prompt"], worktree, log_path, timeout,
             model=model, allowed_bash=repair_allowed_bash(), tick=lambda: heartbeat("working"),
-            wrap=agent_sandbox(worktree))
+            wrap=agent_sandbox(worktree), account=account)
         cost = agent_cli.claude_usage(run.result)["cost_usd"] if run.result else ""
         return run.ok, run.duration, cost, model
     independent = {**job, "role": "builder", "prompt": job["prompt"] + (
         "\n\nThis is an independent second attempt built in parallel with another. "
         "Prefer the simplest correct approach and keep the change small.")}
-    returncode, duration = run_codex(independent, worktree, log_path)
+    holder = f"job:{job['id']}:alt"
+    account = provider_accounts.acquire(redis, "codex", holder, timeout + 120) or provider_accounts.DEFAULT
+    try:
+        returncode, duration = run_codex(independent, worktree, log_path, account=account)
+    finally:
+        provider_accounts.release(redis, "codex", account, holder)
     return returncode == 0, duration, "", job.get("model", DEFAULT_MODEL)
 
 
@@ -1145,13 +1156,13 @@ def run_best_of(job, worktree, log_path):
     timeout = int(job.get("timeout_seconds") or role_limit(
         "builder", "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
     slot = f"job:{job_id}:alt"
-    if alt_provider == "claude" and (
-        agent_cli.claude_cooling_down(redis)
-        or not agent_cli.wait_for_claude_slot(redis, slot, timeout + 120, 60,
-                                              tick=lambda: heartbeat("working"))
-    ):
-        redis.hset(key, "best_of", json.dumps({"skipped": "claude unavailable or at capacity"}))
-        return run_agent(job, worktree, log_path)
+    alt_account = None
+    if alt_provider == "claude":
+        alt_account = None if agent_cli.claude_cooling_down(redis) else agent_cli.wait_for_claude_slot(
+            redis, slot, timeout + 120, 60, tick=lambda: heartbeat("working"))
+        if not alt_account:
+            redis.hset(key, "best_of", json.dumps({"skipped": "claude unavailable or at capacity"}))
+            return run_agent(job, worktree, log_path)
 
     _, alt_worktree = create_worktree(job_id, "-alt")
     alt_log = log_path.with_name(f"{log_path.stem}.alt{log_path.suffix}")
@@ -1165,7 +1176,8 @@ def run_best_of(job, worktree, log_path):
 
     def alternate():
         try:
-            results["alt"] = run_alternate_builder(job, alt_provider, alt_worktree, alt_log, timeout)
+            results["alt"] = run_alternate_builder(job, alt_provider, alt_worktree, alt_log, timeout,
+                                                   account=alt_account)
         except Exception as exc:
             results["alt_error"] = str(exc)
 
@@ -1178,7 +1190,7 @@ def run_best_of(job, worktree, log_path):
             thread.join()
     finally:
         if alt_provider == "claude":
-            agent_cli.release_claude_slot(redis, slot)
+            agent_cli.release_claude_slot(redis, slot, alt_account)
 
     report = {"primary": {"provider": primary_provider}, "alt": {"provider": alt_provider}}
     candidates = {}
@@ -1230,11 +1242,14 @@ class ProviderWait(Exception):
     outage). Builders wait for it without using up an attempt
     (orchestrator resume_deferred_jobs)."""
 
-    def __init__(self, provider, failure):
-        self.provider, self.failure = provider, failure
+    def __init__(self, provider, failure, account=None):
+        self.provider, self.failure, self.account = provider, failure, account
+        # Another account of the provider can take it at once: a switch, not a wait.
+        self.switch = not provider_health.held(redis, provider)
         until = provider_health.info(redis, provider).get("until") or failure.until
         self.until = until
-        super().__init__(f"{provider} {failure.kind}: {failure.reason}")
+        super().__init__(f"{provider}{f' ({account})' if account and account != provider_accounts.DEFAULT else ''} "
+                         f"{failure.kind}: {failure.reason}")
 
 
 def codex_or_wait(job, worktree, log_path):
@@ -1244,16 +1259,28 @@ def codex_or_wait(job, worktree, log_path):
         detail = provider_health.info(redis, "codex")
         raise ProviderWait("codex", provider_health.Failure(detail.get("kind", "unavailable"),
                                                             detail.get("reason", "on hold"), detail.get("until")))
-    returncode, duration = run_codex(job, worktree, log_path)
+    holder = f"job:{job['id']}"
+    timeout = int(job.get("timeout_seconds") or role_limit(job.get("role", "builder"), "TIMEOUT_SECONDS",
+                                                           ROLE_RUNTIME_DEFAULTS))
+    account = provider_accounts.wait(redis, "codex", holder, timeout + 120,
+                                     int(os.environ.get("CODEX_SLOT_WAIT_SECONDS", "900")),
+                                     tick=lambda: heartbeat("working"))
+    if not account:
+        raise ProviderWait("codex", provider_health.Failure("rate", "every Codex account is busy"))
+    redis.hset(f"laika:jobs:{job['id']}", "provider_account", account)
+    try:
+        returncode, duration = run_codex(job, worktree, log_path, account=account)
+    finally:
+        provider_accounts.release(redis, "codex", account, holder)
     if returncode != 0:
         try:
             failure = provider_health.codex_failure(Path(log_path).read_text(errors="replace"))
         except OSError:
             failure = None
         if failure is not None and failure.holds:
-            provider_health.hold(redis, "codex", failure)
-            print(f"[{WORKER_ID}] job={job['id']} codex {failure.kind}: {failure.reason}", flush=True)
-            raise ProviderWait("codex", failure)
+            provider_health.hold(redis, "codex", failure, account=account)
+            print(f"[{WORKER_ID}] job={job['id']} codex ({account}) {failure.kind}: {failure.reason}", flush=True)
+            raise ProviderWait("codex", failure, account=account)
     return returncode, duration
 
 
@@ -1272,22 +1299,26 @@ def run_agent(job, worktree, log_path):
         provider, fallback = "codex", "claude cooling down after an unavailable response"
 
     slot = f"job:{job['id']}"
+    account = None
     if provider == "claude":
         timeout = int(job.get("timeout_seconds") or role_limit(
             role, "TIMEOUT_SECONDS", ROLE_RUNTIME_DEFAULTS))
         redis.hset(key, mapping={"provider_wait": "waiting for a claude slot",
                                  "updated_at": str(time.time())})
-        if not agent_cli.wait_for_claude_slot(
-                redis, slot, timeout + 120,
-                int(os.environ.get("CLAUDE_SLOT_WAIT_SECONDS", "900")),
-                tick=lambda: heartbeat("working")):
-            provider, fallback = "codex", "claude at capacity (CLAUDE_MAX_CONCURRENT)"
+        account = agent_cli.wait_for_claude_slot(
+            redis, slot, timeout + 120,
+            int(os.environ.get("CLAUDE_SLOT_WAIT_SECONDS", "900")),
+            tick=lambda: heartbeat("working"))
+        if not account:
+            provider, fallback = "codex", "claude at capacity (every account's concurrent runs in use)"
         redis.hset(key, "provider_wait", "")
 
-    if provider == "claude":
+    tried = set()
+    while provider == "claude" and account:
+        switch_to = None
         try:
             model = agent_cli.claude_model(role)
-            redis.hset(key, mapping={"provider": "claude", "model": model,
+            redis.hset(key, mapping={"provider": "claude", "model": model, "provider_account": account,
                                      "updated_at": str(time.time())})
             CURRENT_AGENT.update(provider="claude", model=model)
             heartbeat("working")
@@ -1297,9 +1328,10 @@ def run_agent(job, worktree, log_path):
                 run = agent_cli.run_claude(
                     role, efficiency_prefix(role) + job["prompt"] + REBASE_CHECK_NOTE, worktree,
                     log_path, timeout, model=model, tick=lambda: heartbeat("working"),
-                    tools="", wrap=agent_sandbox(worktree))  # one turn: everything it needs is in the prompt
+                    tools="", wrap=agent_sandbox(worktree),  # one turn: everything it needs is in the prompt
+                    account=account)
             elif role == "reviewer" and len(agent_cli.review_aspects()) > 1:
-                run = run_review_aspects(job, worktree, log_path, timeout)
+                run = run_review_aspects(job, worktree, log_path, timeout, account=account)
             else:
                 run = agent_cli.run_claude(
                     role, efficiency_prefix(role) + job["prompt"], worktree, log_path, timeout,
@@ -1307,15 +1339,23 @@ def run_agent(job, worktree, log_path):
                     allowed_bash=repair_allowed_bash() if role in ("builder", "repair") else (),
                     tick=lambda: heartbeat("working"),
                     wrap=agent_sandbox(worktree),
+                    account=account,
                 )
             try:
-                agent_cli.record_rate_limits(redis, log_path)
+                agent_cli.record_rate_limits(redis, log_path, account=account)
             except Exception as exc:  # a usage reading is a bonus, never a failure
                 print(f"[{WORKER_ID}] claude usage reading: {exc}", flush=True)
             if run.unavailable:
                 fallback = f"claude unavailable: {run.describe_error()}"
-                agent_cli.start_cooldown(redis, fallback, failure=run.failure)
-                print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
+                agent_cli.start_cooldown(redis, fallback, failure=run.failure, account=account)
+                # Another Claude account may still serve it (several accounts).
+                tried.add(account)
+                other = agent_cli.acquire_claude_slot(redis, slot, timeout + 120)
+                if other and other not in tried:
+                    redis.hset(key, "account_switches", str(int(redis.hget(key, "account_switches") or 0) + 1))
+                    switch_to = other
+                elif other:
+                    agent_cli.release_claude_slot(redis, slot, other)
             elif run.timed_out:
                 raise RuntimeError(f"Claude exceeded {timeout} second {role} timeout")
             elif not run.ok:
@@ -1327,7 +1367,12 @@ def run_agent(job, worktree, log_path):
                 })
                 return 0, run.duration
         finally:
-            agent_cli.release_claude_slot(redis, slot)
+            agent_cli.release_claude_slot(redis, slot, account)
+        if not switch_to:
+            print(f"[{WORKER_ID}] job={job['id']} {fallback}; falling back to codex", flush=True)
+            break
+        print(f"[{WORKER_ID}] job={job['id']} {fallback}; trying Claude account {switch_to}", flush=True)
+        account = switch_to
 
     model = job.get("model", DEFAULT_MODEL)
     redis.hset(key, mapping={"provider": "codex", "model": model,
@@ -2582,13 +2627,16 @@ def _process_job(raw_job):
         if isinstance(exc, ProviderWait) and job.get("role", "builder") in ("", "builder"):
             # Nobody could build it right now: wait for the provider without
             # using up a build attempt (orchestrator resume_deferred_jobs).
+            # Another account of the provider is free: a switch, counted on
+            # its own (several accounts must not use up the provider waits).
+            counter = "account_switches" if exc.switch else "deferrals"
             redis.hset(key, mapping={
                 "status": "deferred",
                 "defer_kind": "provider",
                 "defer_provider": exc.provider,
                 "defer_until": str(exc.until or (time.time() + 300)),
                 "defer_reason": redaction.redact(str(exc))[:500],
-                "deferrals": str(int(redis.hget(key, "deferrals") or 0) + 1),
+                counter: str(int(redis.hget(key, counter) or 0) + 1),
                 "updated_at": str(time.time()),
             })
             print(f"[{WORKER_ID}] job={job_id} deferred: {exc}", flush=True)

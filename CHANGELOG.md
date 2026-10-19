@@ -4,7 +4,7 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 2.0.0 (in progress)
 
-**AI providers that don't waste attempts** (ideas from Phoenix, reimplemented):
+**AI providers that don't waste attempts:**
 
 - Claude and Codex failures are sorted into usage limit, rate limit,
   sign-in needed and outage, from the providers' own wording, and LAIka
@@ -62,6 +62,23 @@ instead of it):
 - Every job status change is recorded (who, from what, to what, why) and
   shown as a History in the job's details; unusual changes are flagged and
   logged (not refused yet).
+
+**Several AI accounts:**
+
+- Add more Claude and Codex accounts in Settings → AI → More accounts,
+  each a subscription sign-in or an API key, with its own number of runs
+  at once. Every run goes to the account with the most room left (fewest
+  runs going, then lowest plan usage), so limits are reached later and
+  evenly.
+- Pauses are per account: when one hits its usage limit, work carries on
+  with the others (a Claude run moves to another Claude account before
+  falling back to Codex; a build moves to another Codex account without
+  using a wait). A provider is paused only when all its accounts are.
+- Each job records which account ran it; Routing counts runs per account.
+- Extra accounts' credentials stay on the server: sign-ins in LAIka's own
+  folder, API keys in a root-only file put in place by the host. A run
+  sees only its own account's credential, sandboxes none of the others.
+  Removing an account deletes its sign-in and key.
 
 **What you see:**
 

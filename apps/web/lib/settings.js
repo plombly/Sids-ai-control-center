@@ -120,7 +120,7 @@ async function load(section = currentSection) {
         requestJSON('/api/routing?days=7').catch(() => null)
       ]);
       window.dispatchEvent(new CustomEvent('laika:providers-loaded', { detail: providers }));
-      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${availabilityMarkup(providers)}${routing ? routingMarkup(routing) : ''}${sectionMarkup(settings, section, settings.values, settings.pending)}`;
+      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div><div class="settings-card" data-accounts-card><p class="subtle">Loading accounts…</p></div>${availabilityMarkup(providers)}${routing ? routingMarkup(routing) : ''}${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'workers') {
       body = `<div class="settings-card"><h3>Right now</h3><div data-worker-scale="log"></div></div><div class="settings-card" data-pause-card></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'access') {

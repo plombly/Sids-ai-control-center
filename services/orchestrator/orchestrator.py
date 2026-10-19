@@ -19,6 +19,7 @@ import laika_env  # noqa: E402,F401  (Settings → environment, before any confi
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import provider_health  # noqa: E402  (services/provider_health.py)
+import provider_accounts  # noqa: E402  (services/provider_accounts.py)
 import job_events  # noqa: E402  (services/job_events.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
@@ -471,33 +472,38 @@ def run_planner(goal, atomic=False, info=None, project=None):
     filled with the provider/model that produced the plan."""
     info = {} if info is None else info
     project = project or laika_projects.load(r, laika_projects.BUILTIN_PROJECT)
-    if agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
+    tried = set()
+    while agent_cli.role_provider("planner") == "claude" and not agent_cli.claude_cooling_down(r):
         log_path = PLANNER_LOG_ROOT / f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}.json"
         slot = f"planner:{log_path.stem}"
-        if not agent_cli.wait_for_claude_slot(
-                r, slot, plan_timeout(goal) + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300"))):
-            info["fallback"] = "claude at capacity (CLAUDE_MAX_CONCURRENT)"
-            info.update(provider="codex", model=DEFAULT_MODEL)
-            return run_codex_planner(goal, atomic, project)
+        account = agent_cli.wait_for_claude_slot(
+            r, slot, plan_timeout(goal) + 60, int(os.getenv("PLANNER_SLOT_WAIT_SECONDS", "300")))
+        if not account or account in tried:
+            agent_cli.release_claude_slot(r, slot, account)
+            info["fallback"] = info.get("fallback") or "claude at capacity (every account's concurrent runs in use)"
+            break
         try:
             run = agent_cli.run_claude(
                 "planner", planner_prompt(goal, atomic=atomic, project=project),
                 project.repo, log_path, plan_timeout(goal), model=planner_model(atomic),
-                wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False))
+                wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False),
+                account=account)
         finally:
-            agent_cli.release_claude_slot(r, slot)
+            agent_cli.release_claude_slot(r, slot, account)
         try:
-            agent_cli.record_rate_limits(r, log_path)
+            agent_cli.record_rate_limits(r, log_path, account=account)
         except Exception as exc:
             print(f"[{ORCHESTRATOR_ID}] claude usage reading: {exc}", flush=True)
         if run.ok:
-            info.update(provider="claude", model=planner_model(atomic),
+            info.update(provider="claude", model=planner_model(atomic), provider_account=account,
                         cost_usd=agent_cli.claude_usage(run.result)["cost_usd"])
             return extract_json(run.text)
         if not run.unavailable:
             raise RuntimeError(f"claude planner failed: {run.describe_error()}")
-        agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=run.failure)
-        print(f"[{ORCHESTRATOR_ID}] claude planner unavailable; falling back to codex", flush=True)
+        agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=run.failure,
+                                 account=account)
+        tried.add(account)
+        print(f"[{ORCHESTRATOR_ID}] claude planner unavailable on account {account}; trying another", flush=True)
         info["fallback"] = run.describe_error()
     info.update(provider="codex", model=DEFAULT_MODEL)
     return run_codex_planner(goal, atomic, project)
@@ -528,15 +534,24 @@ def run_codex_planner(goal, atomic=False, project=None):
         "-",
     ]
 
-    cmd = project_sandbox.codex_command(cmd, project, project.repo, writable=False)
-    proc = subprocess.run(
-        cmd,
-        input=planner_prompt(goal, atomic=atomic, project=project),
-        text=True,
-        capture_output=True,
-        timeout=plan_timeout(goal),
-        env=agent_cli.agent_env(),
-    )
+    # Codex accounts (provider_accounts): the one with the most room left.
+    holder = f"planner:{uuid.uuid4().hex[:8]}"
+    account = provider_accounts.acquire(r, "codex", holder, plan_timeout(goal) + 60) or provider_accounts.DEFAULT
+    env = agent_cli.agent_env()
+    env = provider_accounts.apply_env(env, provider_accounts.env_for("codex", account, base=env["HOME"]))
+    state = () if account == provider_accounts.DEFAULT else (provider_accounts.codex_home(account, env["HOME"]),)
+    cmd = project_sandbox.codex_command(cmd, project, project.repo, writable=False, state=state)
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=planner_prompt(goal, atomic=atomic, project=project),
+            text=True,
+            capture_output=True,
+            timeout=plan_timeout(goal),
+            env=env,
+        )
+    finally:
+        provider_accounts.release(r, "codex", account, holder)
 
     if proc.returncode != 0:
         raise RuntimeError(
@@ -1008,6 +1023,7 @@ def _process_goal(raw, data, goal_id):
         "jobs": json.dumps(job_ids),
         "planner_provider": planner.get("provider", ""),
         "planner_model": planner.get("model", ""),
+        "planner_account": planner.get("provider_account", ""),
         "planner_cost_usd": planner.get("cost_usd", ""),
         "plan_warnings": json.dumps(plan.get("warnings", [])[:20]),
         "updated_at": now(),
@@ -1589,6 +1605,9 @@ def recover_lost_jobs(now_ts=None):
 INTERRUPTIBLE_STATES = {"queued", "claimed", "running", "testing"}
 MAX_INTERRUPTIONS = int(os.getenv("MAX_INTERRUPTIONS", "3"))
 MAX_PROVIDER_DEFERRALS = int(os.getenv("MAX_PROVIDER_DEFERRALS", "6"))
+# Moves to another account of the same provider (several accounts): each is
+# immediate and uses no wait, but they are bounded too.
+MAX_ACCOUNT_SWITCHES = 12
 
 
 def resume_deferred_jobs(now_ts=None):
@@ -1605,7 +1624,7 @@ def resume_deferred_jobs(now_ts=None):
         job_id = job.get("id") or key.rsplit(":", 1)[-1]
         deferrals = _int(job.get("deferrals"))
         if job.get("defer_kind") == "provider":
-            if deferrals > MAX_PROVIDER_DEFERRALS:
+            if deferrals > MAX_PROVIDER_DEFERRALS or _int(job.get("account_switches")) > MAX_ACCOUNT_SWITCHES:
                 r.hset(key, mapping={
                     "status": "failed",
                     "error": f"waited for {job.get('defer_provider') or 'a provider'} {deferrals} times: "
@@ -1617,7 +1636,8 @@ def resume_deferred_jobs(now_ts=None):
             provider = job.get("defer_provider") or "codex"
             if provider_health.held(r, provider):
                 continue
-        round_id = f"{job.get('defer_kind') or 'deferred'}_{job.get('interruptions') or 0}_{deferrals}"
+        round_id = (f"{job.get('defer_kind') or 'deferred'}_{job.get('interruptions') or 0}_{deferrals}"
+                    f"_{job.get('account_switches') or 0}")
         if not r.hsetnx(key, f"resume_{round_id}_at", now()):
             continue
         release_stale_integration_lock(job_id)

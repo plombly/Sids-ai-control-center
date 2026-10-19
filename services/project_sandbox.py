@@ -51,6 +51,7 @@ HIDDEN = (
 # only the agent CLIs that need them (kind "agent").
 LAIKA_SECRETS = ("REDIS_URL", "REDIS_PASSWORD", "LAIKA_OPERATOR_TOKEN", "DATABASE_URL", "POSTGRES_PASSWORD")
 PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+EXTRA_ACCOUNT_KEYS = ("ANTHROPIC_API_KEY__", "OPENAI_API_KEY__")
 # Sockets that grant root on the host.
 MASKED_FILES = ("/run/docker.sock", "/var/run/docker.sock", "/run/containerd/containerd.sock")
 def agent_state(home=None):
@@ -80,7 +81,7 @@ def _exists(path):
     return os.path.lexists(path)
 
 
-def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None, network=False):
+def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_dir=None, network=False, state=()):
     """argv wrapped in bubblewrap for this project (unchanged for LAIka).
 
     kind: "gate" (no network, no agent state), "setup" (network, package
@@ -122,7 +123,9 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
     if repo_git.exists():
         args += ["--ro-bind", str(repo_git), str(repo_git)]
     if kind == "agent":
-        for path in agent_state():
+        # state: the CLI home of the account this run uses (provider_accounts),
+        # never the other accounts'.
+        for path in [*agent_state(), *(str(p) for p in state)]:
             if _exists(path):
                 args += ["--bind", path, path]
     if kind == "app":
@@ -163,13 +166,16 @@ def command(argv, project, workdir, *, kind, writable=True, extra_ro=(), data_di
         # No caches in the worktree (they would end up in the candidate).
         args += ["--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--setenv", "PYTEST_ADDOPTS", "-p no:cacheprovider"]
     args += ["--setenv", "TMPDIR", "/tmp"]
-    for name in LAIKA_SECRETS + (() if kind == "agent" else PROVIDER_KEYS):
+    # Extra accounts' keys (provider_accounts) never reach a sandbox: the
+    # chosen account's credential is set by the caller as the plain name.
+    others = tuple(sorted(n for n in os.environ if n.startswith(EXTRA_ACCOUNT_KEYS)))
+    for name in LAIKA_SECRETS + (() if kind == "agent" else PROVIDER_KEYS) + others:
         args += ["--unsetenv", name]
     args += ["--chdir", str(workdir), "--"]
     return args + list(argv)
 
 
-def codex_command(argv, project, workdir, writable=True):
+def codex_command(argv, project, workdir, writable=True, state=()):
     """A `codex exec` command for this project.
 
     Codex starts its own bubblewrap sandbox for the commands it runs, which
@@ -188,4 +194,4 @@ def codex_command(argv, project, workdir, writable=True):
     if "--sandbox" in argv:
         index = argv.index("--sandbox")
         argv[index:index + 2] = ["--dangerously-bypass-approvals-and-sandbox"]
-    return command(argv, project, workdir, kind="agent", writable=writable)
+    return command(argv, project, workdir, kind="agent", writable=writable, state=state)

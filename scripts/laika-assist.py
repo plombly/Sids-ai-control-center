@@ -27,6 +27,7 @@ import project_reference  # noqa: E402
 import project_sandbox  # noqa: E402
 import laika_projects  # noqa: E402
 import laika_redis  # noqa: E402
+import provider_accounts  # noqa: E402
 
 MODEL = os.getenv("ASSIST_MODEL", "claude-haiku-4-5-20251001")
 BUDGET_USD = float(os.getenv("ASSIST_BUDGET_USD", "0.30"))
@@ -112,7 +113,8 @@ def ask(r, session, project, force_brief=False, runner=agent_cli.run_claude):
     return with_usage(r, log_path, runner(
         "assistant", prompt, project.repo, log_path, TIMEOUT, model=MODEL, budget_usd=BUDGET_USD,
         tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.SYSTEM_PROMPT,
-        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False)))
+        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False),
+        account=session.get("_account")), session.get("_account"))
 
 
 def situation(r, project, limit=5, days=7):
@@ -170,13 +172,14 @@ def chat(r, session, project, runner=agent_cli.run_claude):
     return with_usage(r, log_path, runner(
         "assistant", prompt, project.repo, log_path, CHAT_TIMEOUT, model=CHAT_MODEL, budget_usd=CHAT_BUDGET_USD,
         tools=agent_cli.READ_ONLY_TOOLS, system_prompt=goal_assist.CHAT_SYSTEM_PROMPT,
-        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False)))
+        wrap=lambda argv: project_sandbox.command(argv, project, project.repo, kind="agent", writable=False),
+        account=session.get("_account")), session.get("_account"))
 
 
-def with_usage(r, log_path, run):
+def with_usage(r, log_path, run, account=None):
     """Claude's plan-usage reading from this turn (dashboard, early hold)."""
     try:
-        agent_cli.record_rate_limits(r, log_path)
+        agent_cli.record_rate_limits(r, log_path, account=account)
     except Exception as exc:
         print(f"[assist] claude usage reading: {exc}", flush=True)
     return run
@@ -218,6 +221,8 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
             return fail(r, session_id, "The assistant is busy with other requests. Try again in a minute.")
         wait(3)
     goal_assist.save(r, session_id, status="thinking", error="")
+    # The Claude account with the most room left (its own slots are the assistant's).
+    session["_account"] = (provider_accounts.candidates(r, "claude") or [provider_accounts.DEFAULT])[0]
     try:
         cost = float(session.get("cost_usd") or 0)
         chatting = session.get("mode") == "chat"
@@ -228,7 +233,8 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
             if not run.ok:
                 goal_assist.save(r, session_id, cost_usd=cost)
                 if run.unavailable:
-                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None))
+                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None),
+                                          account=session.get("_account"))
                     return fail(r, session_id, "Claude is not available right now (usage limit or login). Try again later.")
                 return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")
             try:
@@ -250,7 +256,8 @@ def main(session_id, r=None, runner=agent_cli.run_claude, wait=time.sleep):
                 cost += charge(r, session, run)
             if not run.ok:
                 if run.unavailable:
-                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None))
+                    agent_cli.start_cooldown(r, f"claude unavailable: {run.describe_error()}", failure=getattr(run, "failure", None),
+                                          account=session.get("_account"))
                     return fail(r, session_id, "Claude is not available right now (usage limit or login). Use Send as written.")
                 goal_assist.save(r, session_id, cost_usd=cost)
                 return fail(r, session_id, f"The assistant failed: {run.describe_error()[:300]}")

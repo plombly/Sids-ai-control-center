@@ -17,10 +17,13 @@ export function routingMarkup(data = {}) {
     .map(item => `<li><span class="subtle">${esc(when(item.at))}</span> ${esc(item.role)} <code>${esc(item.job)}</code>: ${esc(item.reason)}</li>`)
     .join('');
   const waits = data.waits || {};
-  const waitText = [waits.provider_waits ? `${waits.provider_waits} wait(s) for a paused provider` : '', waits.interruptions ? `${waits.interruptions} restart(s) survived` : '']
+  const waitText = [waits.provider_waits ? `${waits.provider_waits} wait(s) for a paused provider` : '', waits.account_switches ? `${waits.account_switches} move(s) to another account` : '', waits.interruptions ? `${waits.interruptions} restart(s) survived` : '']
     .filter(Boolean).join(' · ');
   const scaler = (data.scaler || []).slice(0, 10)
     .map(item => `<li><span class="subtle">${esc(when(item.at))}</span> ${esc(item.reason || item.action || '')}${item.target != null ? ` → ${esc(item.target)} worker(s)` : ''}</li>`)
     .join('');
-  return `<div class="settings-card"><h3>Routing (last ${esc(data.days || 7)} days)</h3>${rows ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Role</th><th>Ran on</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="subtle">No runs yet.</p>'}<h4>Switched provider</h4>${fallbacks ? `<ul class="plain-list">${fallbacks}</ul>` : '<p class="subtle">Never: every run used its usual provider.</p>'}${waitText ? `<p class="subtle">Without using attempts: ${esc(waitText)}.</p>` : ''}<h4>Worker scaling</h4>${scaler ? `<ul class="plain-list">${scaler}</ul>` : '<p class="subtle">No recent decisions.</p>'}</div>`;
+  const accounts = (data.accounts || []).length > 1
+    ? `<p class="subtle">By account: ${(data.accounts || []).map(a => `${esc(a.provider)} ${esc(a.account)} × ${esc(a.count)}`).join(' · ')}</p>`
+    : '';
+  return `<div class="settings-card"><h3>Routing (last ${esc(data.days || 7)} days)</h3>${rows ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Role</th><th>Ran on</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="subtle">No runs yet.</p>'}${accounts}<h4>Switched provider</h4>${fallbacks ? `<ul class="plain-list">${fallbacks}</ul>` : '<p class="subtle">Never: every run used its usual provider.</p>'}${waitText ? `<p class="subtle">Without using attempts: ${esc(waitText)}.</p>` : ''}<h4>Worker scaling</h4>${scaler ? `<ul class="plain-list">${scaler}</ul>` : '<p class="subtle">No recent decisions.</p>'}</div>`;
 }

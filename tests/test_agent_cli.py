@@ -235,7 +235,7 @@ def worker(tmp_path, fake_claude, monkeypatch):
     module.agent_cli.POLL_SECONDS = 0.05
     module.codex_calls = []
 
-    def fake_codex(job, worktree, log_path):
+    def fake_codex(job, worktree, log_path, account=None):
         module.codex_calls.append(job["id"])
         Path(log_path).write_text(json.dumps(
             {"type": "item.completed", "item": {"type": "agent_message", "text": "codex says hi"}}))
@@ -383,7 +383,7 @@ def test_orchestrator_heartbeat_and_goal_record_the_planner(orch, fake_claude, m
     monkeypatch.setenv("FAKE_CLAUDE_RESULT", '{"jobs": []}')
     info = {}
     orch.run_planner("goal", info=info)
-    assert info == {"provider": "claude", "model": "opus", "cost_usd": "0.0421"}
+    assert info == {"provider": "claude", "model": "opus", "provider_account": "default", "cost_usd": "0.0421"}
     monkeypatch.setenv("FAKE_CLAUDE_MODE", "limit")
     orch.run_codex_planner = lambda goal, atomic=False, project=None: {"jobs": []}
     info = {}
@@ -404,7 +404,6 @@ def test_slots_are_capped_leased_and_released(agent_cli, monkeypatch):
     assert agent_cli.acquire_claude_slot(fake, "c", 100, now=1000)
     # b's lease expires (its worker died): the slot comes back by itself
     assert agent_cli.acquire_claude_slot(fake, "d", 100, now=1101)
-    assert fake.get(agent_cli.SLOT_LIMIT_KEY) == "2"
 
 
 def test_wait_for_slot_gives_up_after_max_wait(agent_cli, monkeypatch):

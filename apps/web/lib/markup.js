@@ -116,6 +116,7 @@ export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
       ['Role', 'role'],
       ['Worker', 'worker'],
       ['Provider', 'provider'],
+      ['AI account', 'provider_account'],
       ['Model', 'model'],
       ['Review status', 'review_status'],
       ['Review verdict', 'review_verdict'],

@@ -12,3 +12,9 @@ test('routing shows runs per role, switches with reasons, waits and scaling', ()
   assert.match(html, /jobs waiting → 3 worker\(s\)/);
   assert.match(routingMarkup({}), /Never: every run used its usual provider/);
 });
+
+test('runs per account when there are several', () => {
+  const html = routingMarkup({ roles: [], accounts: [{ provider: 'claude', account: 'work', count: 3 }, { provider: 'claude', account: 'default', count: 2 }], waits: { account_switches: 2 } });
+  assert.match(html, /By account: claude work × 3 · claude default × 2/);
+  assert.match(html, /2 move\(s\) to another account/);
+});

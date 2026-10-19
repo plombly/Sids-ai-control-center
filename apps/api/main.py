@@ -331,6 +331,7 @@ def _job(key, data):
         "role": _text(data.get("job_role", data.get("role"))),
         "worker": _text(data.get("worker_id", data.get("worker"))),
         "provider": _text(data.get("provider")),
+        "provider_account": _text(data.get("provider_account")),
         "model": _text(data.get("model")),
         "review_status": _text(data.get("review_status")),
         "review_verdict": _text(data.get("review_verdict")),
@@ -1078,10 +1079,16 @@ def api_system_health():
 def api_providers():
     """Claude capacity (shared slots, cooldown) and per-role routing as the
     workers report it. Read-only; the workers own the semaphore."""
+    import provider_routes
     now_ts = time.time()
     try:
-        slots = redis.zrangebyscore("laika:provider-slots:claude", now_ts, "+inf", withscores=True)
-        limit = redis.get("laika:provider-limit:claude")
+        slots = []
+        limit = 0
+        for row in provider_routes.account_rows("claude", now_ts):
+            if row["enabled"]:
+                limit += row["max_concurrent"]
+            key = provider_routes._slots_key("claude", row["id"])
+            slots += redis.zrangebyscore(key, now_ts, "+inf", withscores=True)
         cooldown = redis.get("laika:provider-cooldown:claude")
         cooldown_ttl = redis.ttl("laika:provider-cooldown:claude") if cooldown else None
     except Exception:
