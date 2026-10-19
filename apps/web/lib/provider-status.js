@@ -38,7 +38,7 @@ export function usageMarkup(reading) {
     .join('');
   if (!rows) return '';
   const when = reading.at ? ` (reported ${esc(clock(reading.at))})` : '';
-  return `<h4>Claude plan usage${when}</h4>${rows}<p class="field-hint">From Claude's own report in each run. At 95% LAIka stops sending Claude work until the window resets (setting CLAUDE_EARLY_HOLD_PERCENT).</p>`;
+  return `<h4>Claude plan usage${when}</h4>${rows}<p class="field-hint">From Claude's own report in each run. At 95% LAIka stops sending Claude work until the window resets (setting CLAUDE_EARLY_HOLD_PERCENT; each account can have its own "Stop at" under More accounts).</p>`;
 }
 
 export function availabilityMarkup(data = {}) {

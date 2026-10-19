@@ -260,3 +260,21 @@ def test_no_spending_notifications_when_limits_are_off(notify):
     r.values["laika:projects"] = {"shop"}
     r.values["laika:settings"] = _json.dumps({"SPENDING_LIMITS": "off"})
     assert module.budget_events(r, "http://x") == []
+
+
+def test_ai_accounts_that_need_signing_in_or_reached_their_limit(notify):
+    module, r, outbox, sender = notify
+    module.run(r, CONFIG, now=1, sender=sender)
+    r.values["laika:provider-accounts:claude"] = {"work"}
+    r.records["laika:provider-account:claude:work"] = {"label": "Work plan"}
+    r.values["laika:provider-hold:claude:work"] = json.dumps({"kind": "auth", "reason": "401 OAuth token expired", "at": 5})
+    r.values["laika:provider-hold:codex:default"] = json.dumps({"kind": "quota", "reason": "limit", "until": 9e9, "at": 6})
+    r.values["laika:provider-hold:claude:default"] = json.dumps({"kind": "rate", "reason": "429", "at": 7})  # passes by itself
+    module.run(r, CONFIG, now=2, sender=sender)
+    titles = sorted(title for title, *_ in outbox)
+    assert titles == ["Claude account needs signing in · Work plan", "Codex account reached its limit · Default"]
+    assert all(link.endswith("/#/settings/ai") for _, _, link, _ in outbox)
+    r.values["laika:provider-hold:codex"] = json.dumps({"kind": "quota", "at": 6, "until": 9e9})
+    r.values["laika:provider-cooldown:codex"] = "codex quota"
+    module.run(r, CONFIG, now=3, sender=sender)
+    assert outbox[-1][0] == "Codex is paused: no account can work" and len(outbox) == 3

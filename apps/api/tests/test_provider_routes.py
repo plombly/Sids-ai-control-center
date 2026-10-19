@@ -91,6 +91,9 @@ def test_accounts_are_added_changed_signed_in_and_removed(accounts_api):
     assert client.patch("/api/ai-providers/claude/accounts/work", json={"enabled": False}).json()["enabled"] is False
     assert client.patch("/api/ai-providers/claude/accounts/default", json={"enabled": False}).status_code == 409
     assert client.patch("/api/ai-providers/claude/accounts/default", json={"max_concurrent": 1}).json()["max_concurrent"] == 1
+    assert client.patch("/api/ai-providers/claude/accounts/default", json={"stop_percent": 70}).json()["stop_percent"] == 70
+    assert client.patch("/api/ai-providers/claude/accounts/default", json={"stop_percent": 5}).status_code == 422
+    assert client.patch("/api/ai-providers/claude/accounts/default", json={"stop_percent": 0}).json()["stop_percent"] == 95
     login = client.post("/api/ai-providers/claude/accounts/work/login", json={"request_id": "login-acct-1"})
     assert login.status_code == 202 and fake.stream[-1][1]["what"] == "claude:work"
     assert client.post("/api/ai-providers/claude/accounts/nope/login", json={"request_id": "login-acct-2"}).status_code == 404

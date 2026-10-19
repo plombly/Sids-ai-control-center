@@ -101,6 +101,25 @@ def accounts(r, provider):
     return list(found.values())
 
 
+def stop_percent(r, provider, account):
+    """Plan usage at which LAIka stops using this account until its window
+    resets: the account's own "stop at" (e.g. lower on the plan the owner
+    also uses by hand), else CLAUDE_EARLY_HOLD_PERCENT (95)."""
+    try:
+        value = (r.hgetall(account_key(provider, account or DEFAULT)) or {}).get("stop_percent")
+    except Exception:
+        value = None
+    try:
+        if value not in (None, ""):
+            return min(100.0, max(10.0, float(value)))
+    except ValueError:
+        pass
+    try:
+        return float(os.getenv("CLAUDE_EARLY_HOLD_PERCENT", "95"))
+    except ValueError:
+        return 95.0
+
+
 def _int(value, default):
     try:
         return max(0, int(value))

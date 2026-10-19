@@ -227,3 +227,18 @@ def test_sandboxes_never_see_extra_accounts_keys(monkeypatch, tmp_path):
     for kind in ("agent", "gate"):
         argv = project_sandbox.command(["true"], project, tmp_path / "repo", kind=kind)
         assert "ANTHROPIC_API_KEY__PAID" in argv[argv.index("--unsetenv"):]
+
+
+def test_each_claude_account_stops_at_its_own_share_of_the_plan(tmp_path, monkeypatch):
+    import agent_cli
+    monkeypatch.setenv("CLAUDE_EARLY_HOLD_PERCENT", "95")
+    r = MemoryRedis()
+    add(r, "claude", "mine")
+    r.hset("laika:provider-account:claude:mine", mapping={"stop_percent": "70"})
+    log = tmp_path / "run.jsonl"
+    log.write_text(json.dumps({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
+        "five_hour": {"utilization": 0.75, "resetsAt": 9e9}}}}) + "\n")
+    agent_cli.record_rate_limits(r, log, now=1000, account="mine")
+    agent_cli.record_rate_limits(r, log, now=1000, account="default")
+    assert provider_health.held(r, "claude", "mine") and not provider_health.held(r, "claude", "default")
+    assert json.loads(r.get("laika:provider-usage:claude:mine"))["windows"]["five_hour"]["percent"] == 75.0

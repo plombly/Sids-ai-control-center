@@ -178,12 +178,15 @@ class NewAccount(BaseModel):
     label: str = Field(min_length=1, max_length=60)
     kind: str = Field(pattern=r"^(login|key)$")
     max_concurrent: int = Field(default=2, ge=0, le=20)
+    stop_percent: Optional[int] = Field(default=None, ge=10, le=100)
 
 
 class AccountChange(BaseModel):
     label: Optional[str] = Field(default=None, min_length=1, max_length=60)
     max_concurrent: Optional[int] = Field(default=None, ge=0, le=20)
     enabled: Optional[bool] = None
+    # Claude: stop at this % of the plan (None = unchanged, 0 = back to the default).
+    stop_percent: Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class AccountKey(BaseModel):
@@ -252,6 +255,7 @@ def account_rows(provider, now=None):
         row = {"id": account, "label": record.get("label") or ("Default" if account == DEFAULT_ACCOUNT else account),
                "kind": record.get("kind") if record.get("kind") in ("login", "key") else "login",
                "max_concurrent": limit, "enabled": record.get("enabled", "1") == "1", "running": running,
+               "stop_percent": _stop_percent(record),
                "hold": hold(provider, account), "usage": _json(_usage_key(provider, account))}
         if account == DEFAULT_ACCOUNT:
             row.update(signed_in=bool((status.get(provider) or {}).get("signed_in")),
@@ -262,6 +266,19 @@ def account_rows(provider, now=None):
                        key_saved=account_key_name(provider, account) in saved)
         rows.append(row)
     return rows
+
+
+def _stop_percent(record):
+    """The account's own "stop at", else the CLAUDE_EARLY_HOLD_PERCENT setting."""
+    try:
+        return int(float(record.get("stop_percent")))
+    except (TypeError, ValueError):
+        pass
+    try:
+        import settings_schema
+        return int(settings_schema.values(_redis()).get("CLAUDE_EARLY_HOLD_PERCENT") or 95)
+    except Exception:
+        return 95
 
 
 def capacity(provider, now=None):
@@ -310,7 +327,7 @@ def add_account(provider: str, payload: NewAccount):
     r = _redis()
     r.hset(f"laika:provider-account:{provider}:{payload.id}", mapping={
         "label": payload.label.strip(), "kind": payload.kind, "max_concurrent": str(payload.max_concurrent),
-        "enabled": "1", "created_at": str(time.time())})
+        "stop_percent": str(payload.stop_percent or ""), "enabled": "1", "created_at": str(time.time())})
     r.sadd(f"laika:provider-accounts:{provider}", payload.id)
     # A new account can serve: the provider is no longer paused as a whole.
     r.delete(f"laika:provider-cooldown:{provider}", f"laika:provider-hold:{provider}")
@@ -329,6 +346,10 @@ def change_account(provider: str, account: str, payload: AccountChange):
         changes["label"] = payload.label.strip()
     if payload.max_concurrent is not None:
         changes["max_concurrent"] = str(payload.max_concurrent)
+    if payload.stop_percent is not None:
+        if 0 < payload.stop_percent < 10:
+            raise HTTPException(status_code=422, detail="Stop at 10% or more (0 = the default)")
+        changes["stop_percent"] = str(payload.stop_percent) if payload.stop_percent else ""
     if payload.enabled is not None:
         others = [row for row in account_rows(provider) if row["id"] != account and row["enabled"]]
         if payload.enabled is False and not others:

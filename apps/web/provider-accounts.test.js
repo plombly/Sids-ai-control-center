@@ -17,6 +17,8 @@ test('each account with its state, limit and actions; the default cannot be remo
   assert.match(html, /data-account-key="codex:second">Save key/);
   assert.match(html, /No key yet/);
   assert.match(html, /data-account-add>Add account/);
+  assert.match(html, /name="stop-claude:work"/);
+  assert.doesNotMatch(html, /name="stop-codex:/);   // only Claude reports plan usage
 });
 
 test('states, sign-in progress for the right account, ids from names', () => {

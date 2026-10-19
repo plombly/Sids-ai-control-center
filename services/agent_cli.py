@@ -564,7 +564,7 @@ def rate_limit_reading(log_path):
 
 def record_rate_limits(redis_client, log_path, now=None, account=None):
     """Store Claude's latest plan-usage reading (dashboard) and hold Claude
-    until the window resets once a window passes EARLY_HOLD_PERCENT or
+    until the window resets once a window passes the account's "stop at" (provider_accounts.stop_percent) or
     Claude says it rejected the call. Fails open: an unknown format does
     nothing."""
     reading = rate_limit_reading(log_path)
@@ -576,8 +576,9 @@ def record_rate_limits(redis_client, log_path, now=None, account=None):
                          ex=8 * 86400)
     except Exception:
         pass
+    limit = provider_accounts.stop_percent(redis_client, "claude", account)
     full = [(name, window) for name, window in reading["windows"].items()
-            if window["percent"] >= EARLY_HOLD_PERCENT and isinstance(window.get("resets_at"), (int, float))]
+            if window["percent"] >= limit and isinstance(window.get("resets_at"), (int, float))]
     if reading["status"] == "rejected" and isinstance(reading.get("resets_at"), (int, float)):
         full.append(("current", {"percent": 100, "resets_at": reading["resets_at"]}))
     if full:

@@ -11,6 +11,8 @@ hours that hold non-urgent events until they end. Events:
   app_problem   a project app crashed or could not install its dependencies
   backup_failed a failed backup
   health_red    the health watchdog turned red (incl. a failed restore check)
+  ai_account    an AI account needs signing in again or reached its usage
+                limit; or every account of a provider is paused
 The first run only records what already exists; events while nothing is
 configured or switched off are recorded too, so turning things on later
 never floods you. `--test` sends a test message (with a ping).
@@ -142,6 +144,7 @@ def events(r, dashboard):
             found.append(_event(f"playtest:{project}:{test['commit']}", "app_problem", f"App looks broken · {project}",
                                 f"Play-test of the latest version: {why}"[:300], f"{dashboard}/#/projects/{project}", project))
     found += budget_events(r, dashboard)
+    found += account_events(r, dashboard)
     for raw in r.lrange("laika:sftp:conflicts", 0, 49) or []:
         try:
             item = json.loads(raw)
@@ -168,6 +171,56 @@ def events(r, dashboard):
     if failing:
         details = "; ".join(f"{c['name']}: {c.get('detail', '')}" for c in health["checks"] if c.get("level") == "fail")
         found.append((f"health:{','.join(failing)}", "health_red", "LAIka health is red", details[:300], f"{dashboard}/#/"))
+    return found
+
+
+PROVIDER_NAMES = {"claude": "Claude", "codex": "Codex"}
+
+
+def _clock(epoch):
+    try:
+        return time.strftime("%a %H:%M", time.localtime(float(epoch)))
+    except (TypeError, ValueError):
+        return "later"
+
+
+def account_events(r, dashboard):
+    """AI accounts that need signing in again or reached their limit
+    (services/provider_health.py holds), and a provider with every account
+    paused. Rate limits and short outages pass by themselves: not sent."""
+    found = []
+    link = f"{dashboard}/#/settings/ai"
+    for provider, name in PROVIDER_NAMES.items():
+        ids = ["default", *sorted(set(r.smembers(f"laika:provider-accounts:{provider}") or []) - {"default"})]
+        for account in ids:
+            try:
+                hold = json.loads(r.get(f"laika:provider-hold:{provider}:{account}") or "{}")
+            except ValueError:
+                continue
+            kind = hold.get("kind")
+            if kind not in ("auth", "quota"):
+                continue
+            label = (r.hgetall(f"laika:provider-account:{provider}:{account}") or {}).get("label") or (
+                "Default" if account == "default" else account)
+            if kind == "auth":
+                title, text = (f"{name} account needs signing in · {label}",
+                               f"LAIka cannot use the {name} account \"{label}\": {hold.get('reason', '')[:160]}. "
+                               "Sign it in again in Settings → AI.")
+            else:
+                title, text = (f"{name} account reached its limit · {label}",
+                               f"The {name} account \"{label}\" is paused until {_clock(hold.get('until'))}; "
+                               "other accounts carry on.")
+            found.append(_event(f"ai_account:{provider}:{account}:{kind}:{int(float(hold.get('at') or 0))}",
+                                "ai_account", title, text, link))
+        try:
+            everything = json.loads(r.get(f"laika:provider-hold:{provider}") or "{}")
+        except ValueError:
+            everything = {}
+        if everything.get("kind") in ("auth", "quota") and r.get(f"laika:provider-cooldown:{provider}"):
+            found.append(_event(f"ai_account:{provider}:all:{int(float(everything.get('at') or 0))}", "ai_account",
+                                f"{name} is paused: no account can work",
+                                f"Every {name} account is paused (first back: {_clock(everything.get('until'))}). "
+                                "Work that needs it waits without using attempts.", link))
     return found
 
 
