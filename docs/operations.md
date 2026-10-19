@@ -37,6 +37,12 @@ Restore is manual and deliberate:
    the Redis `dump.rdb` into `/var/lib/laika/db/redis`, `psql` with the
    Postgres dump, the config archive into `/etc/laika`.
 4. `sudo laika repair`, then `sudo laika doctor`.
+5. Sign the AI accounts in again (Settings → AI). Backups keep the list of
+   accounts and their API keys (in `/etc/laika`), but deliberately not the
+   subscription sign-ins, which live in LAIka's own home folder; the doctor
+   lists every account that still needs one. To put saved API keys of extra
+   accounts back in place, open Settings → AI and save any account's key
+   again, or remove and re-add the account.
 
 ## Logs
 

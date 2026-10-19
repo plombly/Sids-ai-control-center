@@ -4,6 +4,27 @@ All notable changes to LAIka. Versions follow [semantic versioning](https://semv
 
 ## 2.0.0 (in progress)
 
+**Upgrading from 1.5:** update as usual (Settings → System → Update now,
+or `sudo laika update`); running jobs finish first. Nothing to redo:
+
+- Your Claude and Codex sign-ins and API keys become each provider's
+  "Default" account. A provider pause that is running when you update
+  keeps counting.
+- Changes are checked more strictly before integration and approval:
+  submodules, links out of the repository and odd paths are now refused,
+  and changes to files that steer tests, git or agents are flagged. A
+  change that deletes the project's tests now fails its tests.
+- Acceptance criteria, test evidence and the job History appear for work
+  planned or run after the update; older jobs keep what they had.
+- The Backups list in Settings → System fills after the first backup
+  after the update ("Back up now" does it at once).
+- A new notification, "An AI account needs signing in again or reached its
+  limit", pings administrators by default; change it in the notification
+  settings.
+- Backups keep the list of AI accounts and their API keys but not the
+  subscription sign-ins: after restoring a backup, sign the accounts in
+  again (the doctor lists them).
+
 **AI providers that don't waste attempts:**
 
 - Claude and Codex failures are sorted into usage limit, rate limit,
@@ -77,6 +98,16 @@ instead of it):
 - Reviews and repairs that no provider can serve right now wait for it,
   like builds: no review recovery or repair attempt is used.
 - Each job records which account ran it; Routing counts runs per account.
+- Codex's plan usage (5-hour and weekly windows) is now read too, from the
+  session file Codex keeps for each run (deleted right after), so Codex
+  accounts are paused before their limit just like Claude's. Each account
+  can have its own "Stop at" share of its plan: lower it on the plan you
+  also use yourself.
+- Administrators are notified when an account needs signing in again or
+  reaches its limit, and when every account of a provider is paused.
+- `laika doctor` checks the extra accounts' credentials: the key file is
+  root-only, sign-ins private, none left by removed accounts, every
+  account signed in.
 - Extra accounts' credentials stay on the server: sign-ins in LAIka's own
   folder, API keys in a root-only file put in place by the host. A run
   sees only its own account's credential, sandboxes none of the others.

@@ -163,6 +163,7 @@ you can see:
 | A job is stuck, an app crashed | **Build** and up |
 | A goal finished or failed | whoever gave it (choose "every goal in my projects" for all of them) |
 | A backup failed, health turned red | administrators |
+| An AI account needs signing in again or reached its limit | administrators |
 
 **Settings → Server notifications** (administrators): the server's own
 channel, for example a team Discord channel. It gets every event, and the
@@ -200,5 +201,9 @@ When an account reaches a usage limit it is paused until its reset time
 and the work moves to the other accounts; the provider as a whole pauses
 only when every account is. **Turn off** stops using an account without
 removing it; **Remove** also deletes its sign-in or key from the server.
+**Stop at** pauses an account at that share of its plan (5-hour or weekly
+window) until the window resets: lower it on the plan you also use
+yourself, so LAIka leaves room on it. Administrators are notified when an
+account needs signing in again or reaches its limit.
 The first sign-in is the "default" account and cannot be removed. Check
 each provider's terms before using several accounts.
