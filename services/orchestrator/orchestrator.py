@@ -19,6 +19,7 @@ import laika_env  # noqa: E402,F401  (Settings → environment, before any confi
 import agent_cli  # noqa: E402  (services/agent_cli.py)
 import network_access  # noqa: E402  (services/network_access.py)
 import provider_health  # noqa: E402  (services/provider_health.py)
+import job_events  # noqa: E402  (services/job_events.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
@@ -70,7 +71,8 @@ MAX_REVIEW_RECOVERIES = int(os.getenv("MAX_REVIEW_RECOVERIES", "2"))
 # (across loop passes) before it is declared lost.
 LOST_CONFIRM_SECONDS = int(os.getenv("LOST_JOB_CONFIRM_SECONDS", "60"))
 
-r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
+r = job_events.JobEventRedis(redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True),
+                             "orchestrator")
 
 
 # --- one light read of all jobs per pass -------------------------------------------
@@ -902,7 +904,7 @@ def _process_goal(raw, data, goal_id):
     for item in jobs:
         number_to_id[item["number"]] = uuid.uuid4().hex[:8]
 
-    job_ids = []
+    job_ids, records, payloads = [], [], {}
 
     for item in jobs:
         job_id = number_to_id[item["number"]]
@@ -912,12 +914,12 @@ def _process_goal(raw, data, goal_id):
             number_to_id[n]
             for n in item.get("depends_on", [])
         ]
-
+        prompt = scoped_builder_prompt(item, target.repo, goal, len(jobs))
         record = {
             "id": job_id,
             "goal_id": goal_id,
             "title": item["title"],
-            "prompt": scoped_builder_prompt(item, target.repo, goal, len(jobs)),
+            "prompt": prompt,
             "provider": DEFAULT_PROVIDER,
             "model": DEFAULT_MODEL,
             "role": "builder",
@@ -927,49 +929,51 @@ def _process_goal(raw, data, goal_id):
             "build_attempt": "1",
             "created_at": now(),
             "updated_at": now(),
-            "prompt_chars": str(len(scoped_builder_prompt(item, target.repo, goal, len(jobs)))),
+            "prompt_chars": str(len(prompt)),
             "project_id": target.id,
             "scope": json.dumps(item.get("scope", [])),
             "size": item.get("size", "M"),
         }
 
-        # Files another in-flight job is changing: wait instead of building
-        # into a guaranteed integration conflict (release_dependencies()
-        # dispatches it once the files are free).
-        holder = None if dependencies else scope_conflict(record)
+        # Files another in-flight job is changing (including an earlier job
+        # of this plan): wait instead of building into a guaranteed
+        # integration conflict (release_dependencies() dispatches it later).
+        holder = None if dependencies else (scope_conflict(record) or plan_scope_conflict(record, records))
         if holder:
             record["status"] = "blocked"
             record["blocked_reason"] = holder[1]
-
-        r.hset(f"laika:jobs:{job_id}", mapping=record)
-
+        records.append(record)
         if not dependencies and not holder:
-            dispatch_job_once(record, {
-                    "id": job_id,
-                    "goal_id": goal_id,
-                    "prompt": scoped_builder_prompt(item, target.repo, goal, len(jobs)),
-                    "project_id": target.id,
-                    "provider": DEFAULT_PROVIDER,
-                    "model": DEFAULT_MODEL,
-                    "role": "builder",
-                    "priority": 0,
-                    "created_at": record["created_at"],
-                })
-
+            payloads[job_id] = {
+                "id": job_id,
+                "goal_id": goal_id,
+                "prompt": prompt,
+                "project_id": target.id,
+                "provider": DEFAULT_PROVIDER,
+                "model": DEFAULT_MODEL,
+                "role": "builder",
+                "priority": 0,
+                "created_at": record["created_at"],
+            }
         job_ids.append(job_id)
 
-    r.hset(
-        key,
-        mapping={
-            "status": "running",
-            "plan": json.dumps(plan),
-            "jobs": json.dumps(job_ids),
-            "planner_provider": planner.get("provider", ""),
-            "planner_model": planner.get("model", ""),
-            "planner_cost_usd": planner.get("cost_usd", ""),
-            "updated_at": now(),
-        },
-    )
+    # Every job and the goal's own record in one transaction: a crash can
+    # no longer leave a half-made plan behind that a re-plan then
+    # duplicates. Queueing comes after; a ready job whose queue entry was
+    # lost to a crash here is picked up by recover_lost_jobs.
+    goal_fields = {
+        "status": "running",
+        "plan": json.dumps(plan),
+        "jobs": json.dumps(job_ids),
+        "planner_provider": planner.get("provider", ""),
+        "planner_model": planner.get("model", ""),
+        "planner_cost_usd": planner.get("cost_usd", ""),
+        "updated_at": now(),
+    }
+    write_plan(key, records, goal_fields)
+    for record in records:
+        if record["id"] in payloads:
+            dispatch_job_once(record, payloads[record["id"]])
 
     print(
         f"[{ORCHESTRATOR_ID}] goal={goal_id} planned "
@@ -978,6 +982,35 @@ def _process_goal(raw, data, goal_id):
     )
     r.delete(claim_key)
 
+
+
+def plan_scope_conflict(record, earlier):
+    """(holder id, reason) if an earlier, ready job of the same plan already
+    claims one of record's files, else None."""
+    mine = job_scope(record)
+    for other in earlier:
+        if other.get("status") != "queued" or other.get("project_id") != record.get("project_id"):
+            continue
+        shared = sorted({a for a in mine for b in job_scope(other) if paths_overlap(a, b)})
+        if shared:
+            return other["id"], (f"waiting for {', '.join(shared[:4])}{' …' if len(shared) > 4 else ''} "
+                                 f"held by job {other['id']} (queued)")
+    return None
+
+
+def write_plan(goal_key, records, goal_fields):
+    """All job records plus the goal's plan fields in one MULTI/EXEC (plain
+    writes on clients without transactions, e.g. the tests' in-memory Redis)."""
+    try:
+        pipe = r.pipeline(transaction=True)
+    except AttributeError:
+        pipe = None
+    target = pipe if pipe is not None else r
+    for record in records:
+        target.hset(f"laika:jobs:{record['id']}", mapping=record)
+    target.hset(goal_key, mapping=goal_fields)
+    if pipe is not None:
+        pipe.execute()
 
 
 def review_findings(review):
@@ -1474,6 +1507,9 @@ def recover_lost_jobs(now_ts=None):
             continue
         if not confirmed_lost(f"job:{job_id}", seen, now_ts):
             continue
+        # Take the job away from the lost run: if its worker wakes up, its
+        # writes no longer match (services/worker FencedRedis).
+        r.hset(key, "execution_id", f"revoked:{uuid.uuid4().hex[:12]}")
         interruptions = _int(job.get("interruptions"))
         if (is_builder(job) and job.get("build_attempt") and job.get("status") in INTERRUPTIBLE_STATES
                 and interruptions < MAX_INTERRUPTIONS):

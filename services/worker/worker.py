@@ -24,6 +24,7 @@ import provider_health  # noqa: E402  (services/provider_health.py)
 import redaction  # noqa: E402  (services/redaction.py)
 import candidate_safety  # noqa: E402  (services/candidate_safety.py)
 import safe_git  # noqa: E402  (services/safe_git.py)
+import job_events  # noqa: E402  (services/job_events.py)
 import project_reference  # noqa: E402  (services/project_reference.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
@@ -102,7 +103,80 @@ def efficiency_prefix(role):
 {network_access.PROMPT_NOTE if role in ("builder", "repair") and PROJECT is not None and not PROJECT.is_builtin else ""}{GROUP_NOTE}
 """
 
-redis = Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
+class StaleExecution(Exception):
+    """This worker's run of a job was taken away (the worker was declared
+    lost and the job re-run elsewhere): its late writes must not land."""
+
+
+class FencedRedis:
+    """The worker's Redis client: writes to a job this worker is running
+    (FENCES[key] = its execution id) land only while the job's execution_id
+    still names this run. Without it, a worker that stalled past the
+    lost-worker timeout and then woke up wrote its stale result over the
+    retry's record. Everything else passes straight through."""
+
+    _FENCED_WRITE = """
+local current = redis.call('HGET', KEYS[1], 'execution_id')
+if current ~= ARGV[1] then return redis.error_reply('STALE ' .. tostring(current)) end
+local op = ARGV[2]
+if op == 'hset' then return redis.call('HSET', KEYS[1], unpack(ARGV, 3)) end
+if op == 'hdel' then return redis.call('HDEL', KEYS[1], unpack(ARGV, 3)) end
+if op == 'hsetnx' then return redis.call('HSETNX', KEYS[1], ARGV[3], ARGV[4]) end
+return redis.error_reply('unknown op')
+"""
+
+    def __init__(self, client, fences=None):
+        self._client = client
+        self._fences = FENCES if fences is None else fences
+        self._script = None
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    def _write(self, op, key, args, plain):
+        expected = self._fences.get(key)
+        if expected is None:
+            return plain()
+        if not hasattr(self._client, "register_script"):   # test doubles: same rule, not atomic
+            if self._client.hget(key, "execution_id") != expected:
+                raise StaleExecution(f"{key} now belongs to another run")
+            return plain()
+        if self._script is None:
+            self._script = self._client.register_script(self._FENCED_WRITE)
+        try:
+            return self._script(keys=[key], args=[expected, op, *args])
+        except Exception as exc:
+            if "STALE" in str(exc):
+                raise StaleExecution(f"{key} now belongs to another run") from None
+            raise
+
+    def hset(self, key, field=None, value=None, mapping=None):
+        fields = dict(mapping or {})
+        if field is not None:
+            fields[field] = value
+        before = None
+        if "status" in fields and job_events.job_id_of(key):
+            try:
+                before = self._client.hget(key, "status")
+            except Exception:
+                pass
+        pairs = [x for kv in fields.items() for x in kv]
+        result = self._write("hset", key, [str(x) for x in pairs],
+                             lambda: self._client.hset(key, mapping=fields))
+        if "status" in fields:  # the job's history (services/job_events.py)
+            job_events.record(self._client, key, before, fields["status"], fields, f"worker {WORKER_ID}")
+        return result
+
+    def hdel(self, key, *fields):
+        return self._write("hdel", key, list(fields), lambda: self._client.hdel(key, *fields))
+
+    def hsetnx(self, key, field, value):
+        return self._write("hsetnx", key, [field, str(value)], lambda: self._client.hsetnx(key, field, value))
+
+
+# key -> execution id of the job run this worker holds (FencedRedis).
+FENCES = {}
+redis = FencedRedis(Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True))
 
 # The job this process is working on, published in every heartbeat. The
 # orchestrator treats work as in flight only while a live worker holds it
@@ -2198,7 +2272,11 @@ def process_job(raw_job):
         job_key = f"laika:jobs:{CURRENT_JOB_ID}"
         if redis.exists(job_key):
             CURRENT_JOB_STARTED_AT = str(time.time())
-            redis.hset(job_key, "started_at", CURRENT_JOB_STARTED_AT)
+            # This run's identity: every later write to the job must match it.
+            execution = uuid.uuid4().hex
+            redis.hset(job_key, mapping={"started_at": CURRENT_JOB_STARTED_AT, "execution_id": execution,
+                                         "executions": str(int(redis.hget(job_key, "executions") or 0) + 1)})
+            FENCES[job_key] = execution
             redis.hdel(job_key, "finished_at")
         else:
             CURRENT_JOB_STARTED_AT = ""
@@ -2210,11 +2288,18 @@ def process_job(raw_job):
         heartbeat("working")
         with keep_alive("working"):
             _process_job(raw_job)
+    except StaleExecution as exc:
+        # Declared lost and re-run elsewhere: leave the job to that run.
+        print(f"[{WORKER_ID}] job={CURRENT_JOB_ID} taken over by another run; stopped ({exc})", flush=True)
     finally:
         if CURRENT_JOB_ID:
             job_key = f"laika:jobs:{CURRENT_JOB_ID}"
-            if redis.exists(job_key):
-                redis.hset(job_key, "finished_at", str(time.time()))
+            try:
+                if redis.exists(job_key):
+                    redis.hset(job_key, "finished_at", str(time.time()))
+            except StaleExecution:
+                pass
+            FENCES.pop(job_key, None)
         CURRENT_JOB_ID = CURRENT_JOB_ROLE = CURRENT_JOB_STARTED_AT = ""
         CURRENT_AGENT.clear()
         use_project(None)

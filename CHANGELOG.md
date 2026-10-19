@@ -2,7 +2,7 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
-## 1.6.0 (in progress)
+## 2.0.0 (in progress)
 
 **AI providers that don't waste attempts** (ideas from Phoenix, reimplemented):
 
@@ -49,6 +49,19 @@ instead of it):
   on LAIka's own jobs; Codex runs with plugins, apps, hooks and
   browser/computer control off, and Claude loads only the laika user's own
   settings (not settings files an AI could write into a project).
+
+**Correct job state through crashes and delays:**
+
+- Every run of a job gets its own identity, and a worker may only write
+  to its job while that identity still matches. A worker that stalled past
+  the lost-worker timeout and then woke up used to write its stale result
+  over the re-run's record; now it is turned away and stops quietly.
+- A plan's jobs and the goal's record are saved in one transaction: a crash
+  while saving can no longer leave half a plan that a re-plan duplicates.
+  Two jobs of one plan that touch the same file no longer start together.
+- Every job status change is recorded (who, from what, to what, why) and
+  shown as a History in the job's details; unusual changes are flagged and
+  logged (not refused yet).
 
 ## 1.5.3 (2026-10-15)
 

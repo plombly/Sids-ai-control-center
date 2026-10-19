@@ -156,7 +156,19 @@ export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
       ['Review job ID', 'review_job_id'],
       ['Review findings', 'review_findings']
     ]) + `<h4>Source candidate commits</h4>${sourceMarkup}<h4>Review history</h4>${historyMarkup}`
-  )}${detailSection('Gate', gateMarkup)}${detailSection('Related jobs', relatedMarkup)}`;
+  )}${detailSection('Gate', gateMarkup)}${detailSection('History', timelineMarkup(job.timeline, now))}${detailSection('Related jobs', relatedMarkup)}`;
+};
+
+// Every status change of the job (services/job_events.py): who, when, why.
+export const timelineMarkup = (timeline, now = Date.now() / 1000) => {
+  const items = Array.isArray(timeline) ? timeline : [];
+  if (!items.length) return '<p class="subtle">No recorded changes yet.</p>';
+  return `<ol class="job-timeline">${items
+    .map(
+      entry =>
+        `<li class="${entry.unexpected ? 'unexpected' : ''}"><span class="subtle">${esc(clockText(entry.at, now))}</span> <b>${esc(entry.from || 'new')} → ${esc(entry.to)}</b> <span class="subtle">by ${esc(entry.actor || '?')}</span>${entry.reason ? `<div class="subtle">${esc(entry.reason)}</div>` : ''}${entry.unexpected ? '<div class="subtle">Unusual change: reported to the operator log.</div>' : ''}</li>`
+    )
+    .join('')}</ol>`;
 };
 export const tokenStateText = auth =>
   !auth?.token_required

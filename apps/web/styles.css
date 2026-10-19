@@ -2785,3 +2785,13 @@ table {
   border-left: 3px solid var(--amber, #d29922);
   font-size: 0.92em;
 }
+.job-timeline {
+  margin: 0;
+  padding-left: 18px;
+}
+.job-timeline li {
+  margin: 4px 0;
+}
+.job-timeline li.unexpected b {
+  color: var(--amber, #d29922);
+}

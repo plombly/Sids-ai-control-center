@@ -905,7 +905,23 @@ def get_job_detail(job_id: str):
     result["lineage"] = _job_lineage(data)
     result["gate"] = _job_gate(data)
     result["related"] = _related_jobs(_text(data.get("id"), _key_suffix(key)))
+    result["timeline"] = _job_timeline(_text(data.get("id"), _key_suffix(key)))
     return _redact(result)
+
+
+def _job_timeline(job_id):
+    """The job's status changes (services/job_events.py writes them)."""
+    try:
+        entries = redis.xrange(f"laika:job-events:{job_id}", count=200)
+    except Exception:
+        return []
+    out = []
+    for _, fields in entries or []:
+        fields = fields or {}
+        out.append({"from": _text(fields.get("from")), "to": _text(fields.get("to")),
+                    "actor": _text(fields.get("actor")), "reason": _text(fields.get("reason")),
+                    "at": _number(fields.get("at")), "unexpected": fields.get("unexpected") == "1"})
+    return out
 
 
 def _json_value(value, expected):

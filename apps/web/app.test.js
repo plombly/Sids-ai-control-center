@@ -230,3 +230,15 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
     { action: 'extend', request_id: 'req-2', expected_status: 'needs_human', extra: 1 });
   assert.equal(jobActionBody('reject', { status: 'awaiting_review' }, 'r').action, 'reject');
 }
+
+{
+  const { timelineMarkup } = await import('./lib/markup.js');
+  const html = timelineMarkup([
+    { from: 'running', to: 'deferred', actor: 'orchestrator', reason: 'worker lost while running', at: 100, unexpected: false },
+    { from: 'merged', to: 'running', actor: 'worker w1', reason: '', at: 200, unexpected: true }
+  ], 300);
+  assert.match(html, /running → deferred<\/b> <span class="subtle">by orchestrator/);
+  assert.match(html, /worker lost while running/);
+  assert.match(html, /class="unexpected".*Unusual change/s);
+  assert.match(timelineMarkup([]), /No recorded changes yet/);
+}

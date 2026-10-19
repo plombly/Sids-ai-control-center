@@ -170,6 +170,10 @@ class MemoryRedis:
         entries.append((entry_id, {str(k): str(v) for k, v in fields.items()}))
         return entry_id
 
+    def xrange(self, name, min="-", max="+", count=None):
+        entries = list(self.streams.get(name, []))
+        return entries[:count] if count else entries
+
     def xgroup_create(self, name, groupname, id="$", mkstream=False):
         if name not in self.streams:
             if not mkstream:

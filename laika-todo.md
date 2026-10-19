@@ -105,7 +105,7 @@ or imported projects; dashboard caching.
 - Release scan: scripts/release-scan-reviewed.txt for findings in history
   (nightly backup push works again).
 
-## 1.6: improvements from Phoenix (agreed 2026-10-18; dev LAIka only for testing)
+## 2.0: improvements from Phoenix + more (agreed 2026-10-18; 2.0 per owner 2026-10-19; dev LAIka only for testing)
 
 Reimplemented ideas only (memory phoenix-integration). Order:
 - [x] CP1 providers: classify Claude/Codex failures (quota/rate/auth/other)
@@ -119,7 +119,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       gitlinks, unsafe/.git paths; flag sensitive files to reviewer and
       approval card), host re-check at approve; hardened git; merge exact
       SHA + assert; env allowlist + redaction; Codex/Claude isolation flags.
-- [ ] CP3 state: execution_id fencing of worker writes; atomic plan
+- [x] CP3 state: execution_id fencing of worker writes; atomic plan
       materialization; transition helper + job event stream (warn-only
       first); job timeline in detail.
 - [ ] CP4 visibility: acceptance criteria per job (plan schema, unknown

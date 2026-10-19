@@ -284,3 +284,17 @@ def test_release_inside_a_pass_still_holds_files_one_at_a_time(orch):
     orch.release_dependencies()   # the pass read still says "blocked" for early when late is checked
     orch.end_pass()
     assert queued(orch) == ["early"] and job(orch, "late")["status"] == "blocked"
+
+
+def test_two_jobs_of_one_plan_on_the_same_file_do_not_start_together(orch, monkeypatch):
+    orch.r.records["laika:goals:g5"] = {"id": "g5", "goal": "shop", "status": "queued"}
+    plan = {"jobs": [{"number": 1, "title": "cart", "task": "t", "size": "M", "scope": ["shop.py"], "depends_on": []},
+                     {"number": 2, "title": "checkout", "task": "t", "size": "M", "scope": ["shop.py"], "depends_on": []}]}
+    monkeypatch.setattr(orch, "run_planner", lambda goal, atomic=False, info=None, project=None: plan)
+    monkeypatch.setattr(orch, "repository_manifest", lambda repo=None: "")
+    orch.process_goal(json.dumps({"id": "g5", "goal": "shop"}))
+    jobs = {j["title"]: j for k, j in orch.r.records.items() if k.startswith("laika:jobs:") and j.get("goal_id") == "g5"}
+    assert jobs["cart"]["status"] == "queued" and jobs["checkout"]["status"] == "blocked"
+    assert "held by job" in jobs["checkout"]["blocked_reason"]
+    goal = orch.r.records["laika:goals:g5"]
+    assert goal["status"] == "running" and sorted(json.loads(goal["jobs"])) == sorted(j["id"] for j in jobs.values())

@@ -27,13 +27,15 @@ import laika_redis  # noqa: E402  (services/laika_redis.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import candidate_safety  # noqa: E402  (services/candidate_safety.py)
 import safe_git  # noqa: E402  (services/safe_git.py)
+import job_events  # noqa: E402  (services/job_events.py)
 
 # Run by hand as root, merges must leave files the laika group can use
 # (the operator service already runs with umask 0007).
 _mask = os.umask(0o022)
 os.umask(0o007 if _mask == 0o022 else _mask)
 
-r = redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True)
+r = job_events.JobEventRedis(redis.Redis.from_url(REDIS_URL, password=laika_redis.password(), decode_responses=True),
+                             "operator")
 
 # The project the current action works on. LAIka's paths are the module
 # settings above; any other project's repository and worktrees are swapped
