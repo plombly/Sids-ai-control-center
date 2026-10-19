@@ -127,6 +127,13 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       gate evidence view; "why is this waiting"; routing page; pause all new
       work; while-you-were-away; diagnostics hints; backup catalogue.
 
+## Next after the Phoenix work (owner, 2026-10-19; discuss first)
+
+- [ ] Multiple Claude / Codex logins (several paid accounts) so LAIka can
+      use more tokens. Discuss design before building: account pool per
+      provider, choosing an account per run, holds per account, and each
+      provider's terms for multiple accounts.
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
