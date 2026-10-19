@@ -564,22 +564,28 @@ def rate_limit_reading(log_path):
 
 def record_rate_limits(redis_client, log_path, now=None, account=None):
     """Store Claude's latest plan-usage reading (dashboard) and hold Claude
-    until the window resets once a window passes the account's "stop at" (provider_accounts.stop_percent) or
-    Claude says it rejected the call. Fails open: an unknown format does
-    nothing."""
-    reading = rate_limit_reading(log_path)
+    until the window resets once a window passes the account's "stop at"
+    (provider_accounts.stop_percent) or Claude says it rejected the call.
+    Fails open: an unknown format does nothing."""
+    return apply_usage(redis_client, "claude", rate_limit_reading(log_path), now=now, account=account)
+
+
+def apply_usage(redis_client, provider, reading, now=None, account=None):
+    """Store a plan-usage reading {"status", "windows": {name: {percent,
+    resets_at}}} for provider's account, and hold the account until the
+    fullest window resets once it passes the account's "stop at"."""
     if not reading:
         return None
     now = time.time() if now is None else now
     try:
-        redis_client.set(provider_health.usage_key("claude", account), json.dumps({**reading, "at": now}),
+        redis_client.set(provider_health.usage_key(provider, account), json.dumps({**reading, "at": now}),
                          ex=8 * 86400)
     except Exception:
         pass
-    limit = provider_accounts.stop_percent(redis_client, "claude", account)
+    limit = provider_accounts.stop_percent(redis_client, provider, account)
     full = [(name, window) for name, window in reading["windows"].items()
             if window["percent"] >= limit and isinstance(window.get("resets_at"), (int, float))]
-    if reading["status"] == "rejected" and isinstance(reading.get("resets_at"), (int, float)):
+    if reading.get("status") == "rejected" and isinstance(reading.get("resets_at"), (int, float)):
         full.append(("current", {"percent": 100, "resets_at": reading["resets_at"]}))
     if full:
         name, window = max(full, key=lambda item: item[1]["resets_at"])
@@ -587,5 +593,93 @@ def record_rate_limits(redis_client, log_path, now=None, account=None):
         failure = provider_health.Failure(
             "quota", f"{label} window at {window['percent']:g}% of the plan (resets then)",
             until=float(window["resets_at"]), hint="parsed")
-        provider_health.hold(redis_client, "claude", failure, now=now, account=account)
+        provider_health.hold(redis_client, provider, failure, now=now, account=account)
     return reading
+
+
+# --- Codex plan usage -------------------------------------------------------------------
+#
+# `codex exec --json` does not report plan usage, but the session file Codex
+# keeps for the run (CODEX_HOME/sessions/.../rollout-*-<thread id>.jsonl)
+# records its rate limits: the 5-hour and weekly windows' used percent and
+# reset times. LAIka reads the last reading and deletes the session file
+# (it holds the whole conversation), plus any older than a day that a
+# crashed run left behind.
+
+CODEX_WINDOWS = {300: "five_hour", 10080: "seven_day"}
+
+
+def codex_thread_id(log_path=None, text=None):
+    try:
+        text = Path(log_path).read_text(errors="replace") if text is None else text
+        for line in text.splitlines():
+            if '"thread.started"' in line:
+                return str(json.loads(line).get("thread_id") or "")
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def _find_rate_limits(value):
+    if isinstance(value, dict):
+        if isinstance(value.get("rate_limits"), dict):
+            return value["rate_limits"]
+        for item in value.values():
+            found = _find_rate_limits(item)
+            if found:
+                return found
+    return None
+
+
+def codex_session_reading(codex_home, thread_id, remove=True, now=None):
+    """The last plan-usage reading in this run's Codex session file, in
+    rate_limit_reading's format, or None. The file is removed."""
+    if not re.fullmatch(r"[0-9a-f-]{8,64}", thread_id or ""):
+        return None
+    sessions = Path(codex_home) / "sessions"
+    reading = None
+    for path in sessions.glob(f"*/*/*/rollout-*{thread_id}.jsonl"):
+        limits = None
+        try:
+            for line in path.read_text(errors="replace").splitlines():
+                if '"rate_limits"' in line:
+                    try:
+                        limits = _find_rate_limits(json.loads(line)) or limits
+                    except ValueError:
+                        continue
+        except OSError:
+            continue
+        if remove:
+            path.unlink(missing_ok=True)
+        windows = {}
+        for key in ("primary", "secondary"):
+            window = (limits or {}).get(key)
+            if isinstance(window, dict) and isinstance(window.get("used_percent"), (int, float)):
+                minutes = int(window.get("window_minutes") or 0)
+                windows[CODEX_WINDOWS.get(minutes, f"{minutes}_minutes")] = {
+                    "percent": round(float(window["used_percent"]), 1), "resets_at": window.get("resets_at")}
+        if windows:
+            reading = {"status": "", "windows": windows}
+    if remove:
+        prune_codex_sessions(sessions, now=now)
+    return reading
+
+
+def prune_codex_sessions(sessions, max_age=86400, now=None):
+    now = time.time() if now is None else now
+    for path in Path(sessions).glob("*/*/*/rollout-*.jsonl"):
+        try:
+            if now - path.stat().st_mtime > max_age:
+                path.unlink()
+        except OSError:
+            continue
+
+
+def record_codex_limits(redis_client, log_path, codex_home, account=None, now=None, text=None):
+    """Codex's plan usage after a run (see above): stored per account, and
+    the account paused at its "stop at" like Claude's. Never raises."""
+    try:
+        reading = codex_session_reading(codex_home, codex_thread_id(log_path, text), now=now)
+        return apply_usage(redis_client, "codex", reading, now=now, account=account)
+    except Exception:
+        return None

@@ -242,3 +242,28 @@ def test_each_claude_account_stops_at_its_own_share_of_the_plan(tmp_path, monkey
     agent_cli.record_rate_limits(r, log, now=1000, account="default")
     assert provider_health.held(r, "claude", "mine") and not provider_health.held(r, "claude", "default")
     assert json.loads(r.get("laika:provider-usage:claude:mine"))["windows"]["five_hour"]["percent"] == 75.0
+
+
+def test_codex_plan_usage_comes_from_its_session_file_which_is_then_removed(tmp_path):
+    import agent_cli
+    r = MemoryRedis()
+    thread = "01a15677-315a-7180-b53a-9c6817edbac3"
+    folder = tmp_path / "codex/sessions/2026/10/19"
+    folder.mkdir(parents=True)
+    session = folder / f"rollout-2026-10-19T23-20-16-{thread}.jsonl"
+    limits = {"limit_id": "codex", "primary": {"used_percent": 97.0, "window_minutes": 300, "resets_at": 9e9},
+              "secondary": {"used_percent": 40.0, "window_minutes": 10080, "resets_at": 9.5e9}}
+    session.write_text(json.dumps({"type": "event_msg", "payload": {"type": "token_count", "rate_limits": limits}}) + "\n")
+    old = folder / "rollout-2026-10-18T00-00-00-0000aaaa-0000-0000-0000-000000000000.jsonl"
+    old.write_text("{}\n")
+    os.utime(old, (1000, 1000))
+    log = tmp_path / "run.jsonl"
+    log.write_text(json.dumps({"type": "thread.started", "thread_id": thread}) + "\n")
+    reading = agent_cli.record_codex_limits(r, log, tmp_path / "codex", account="default", now=200000)
+    assert reading["windows"] == {"five_hour": {"percent": 97.0, "resets_at": 9e9},
+                                  "seven_day": {"percent": 40.0, "resets_at": 9.5e9}}
+    assert json.loads(r.get("laika:provider-usage:codex"))["windows"]["five_hour"]["percent"] == 97.0
+    assert provider_health.held(r, "codex", "default")              # past the 95% default "stop at"
+    assert not session.exists() and not old.exists()                 # nothing of the conversation is kept
+    assert agent_cli.record_codex_limits(r, log, tmp_path / "codex") is None   # already read: nothing more
+    assert agent_cli.codex_session_reading(tmp_path, "../../etc") is None       # ids are checked

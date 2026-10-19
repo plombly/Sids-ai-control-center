@@ -106,7 +106,7 @@ def providers():
             "keys": {field: env in keys for field, env in KEYS.items()},
             "holds": {name: hold(name) for name in ("claude", "codex")},
             "accounts": {name: account_rows(name) for name in ("claude", "codex")},
-            "usage": {"claude": _json("laika:provider-usage:claude")}}
+            "usage": {"claude": _json("laika:provider-usage:claude"), "codex": _json("laika:provider-usage:codex")}}
 
 
 def hold(provider, account=None):

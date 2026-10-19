@@ -935,7 +935,8 @@ def run_codex(job, worktree, log_path, account=None):
         "exec",
         "--model", model,
         "--sandbox", sandbox,
-        "--ephemeral",
+        # Not --ephemeral: the session file is the only place Codex reports
+        # plan usage; LAIka reads it and deletes it (agent_cli.record_codex_limits).
         "--color", "never",
         "--json",
         # Nothing beyond reading, editing and running commands in the
@@ -1010,6 +1011,9 @@ def run_codex(job, worktree, log_path, account=None):
         # Nothing the agent started may outlive it (a dev server, a watcher):
         # LAIka's own jobs have no sandbox to take them down.
         kill_leftovers(process)
+        # The account's plan usage (and its session file removed).
+        agent_cli.record_codex_limits(redis, log_path, provider_accounts.codex_home(account, env["HOME"]),
+                                      account=account)
 
         if timed_out:
             raise RuntimeError(

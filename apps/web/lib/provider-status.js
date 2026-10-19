@@ -25,7 +25,7 @@ export function holdMarkup(name, hold) {
   return `<li><b>${esc(name)}</b> <span class="pill warn">${esc(kind)}</span> <span class="subtle">paused until ${esc(clock(hold.until))}</span><div class="subtle">${esc(hold.reason || '')}</div></li>`;
 }
 
-export function usageMarkup(reading) {
+export function usageMarkup(reading, name = 'Claude') {
   const windows = reading?.windows || {};
   const labels = { five_hour: '5-hour window', seven_day: '7-day window' };
   const rows = Object.entries(windows)
@@ -38,10 +38,10 @@ export function usageMarkup(reading) {
     .join('');
   if (!rows) return '';
   const when = reading.at ? ` (reported ${esc(clock(reading.at))})` : '';
-  return `<h4>Claude plan usage${when}</h4>${rows}<p class="field-hint">From Claude's own report in each run. At 95% LAIka stops sending Claude work until the window resets (setting CLAUDE_EARLY_HOLD_PERCENT; each account can have its own "Stop at" under More accounts).</p>`;
+  return `<h4>${esc(name)} plan usage${when}</h4>${rows}<p class="field-hint">From ${esc(name)}'s own report in each run (the first sign-in). At 95% LAIka stops sending it work until the window resets (setting CLAUDE_EARLY_HOLD_PERCENT; each account can have its own "Stop at" under More accounts).</p>`;
 }
 
 export function availabilityMarkup(data = {}) {
   const holds = data.holds || {};
-  return `<div class="settings-card"><h3>Availability</h3><ul class="plain-list">${holdMarkup('Claude', holds.claude)}${holdMarkup('Codex', holds.codex)}</ul><p class="field-hint">When a provider reports a usage limit, a rate limit or a sign-in problem, LAIka pauses it until the time it gave. Builds that only it can do wait without using up an attempt; roles that can, switch to the other provider.</p>${usageMarkup(data.usage?.claude)}</div>`;
+  return `<div class="settings-card"><h3>Availability</h3><ul class="plain-list">${holdMarkup('Claude', holds.claude)}${holdMarkup('Codex', holds.codex)}</ul><p class="field-hint">When a provider reports a usage limit, a rate limit or a sign-in problem, LAIka pauses it until the time it gave. Builds that only it can do wait without using up an attempt; roles that can, switch to the other provider.</p>${usageMarkup(data.usage?.claude)}${usageMarkup(data.usage?.codex, 'Codex')}</div>`;
 }

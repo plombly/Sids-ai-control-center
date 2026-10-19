@@ -524,7 +524,7 @@ def run_codex_planner(goal, atomic=False, project=None):
         DEFAULT_MODEL,
         "--sandbox",
         "read-only",
-        "--ephemeral",
+        # Not --ephemeral: see agent_cli.record_codex_limits.
         "--color",
         "never",
         "--json",
@@ -558,6 +558,8 @@ def run_codex_planner(goal, atomic=False, project=None):
         )
     finally:
         provider_accounts.release(r, "codex", account, holder)
+    agent_cli.record_codex_limits(r, None, provider_accounts.codex_home(account, env["HOME"]), account=account,
+                                  text=proc.stdout)
 
     if proc.returncode != 0:
         raise RuntimeError(

@@ -112,9 +112,10 @@ FIELDS = [
     _f("MAX_INTERRUPTIONS", "ai", "Restarts survived per build", "int", 3,
        "A build whose worker was lost (restart, crash, reboot) runs again without using an attempt, up to "
        "this many times.", min=0, max=20),
-    _f("CLAUDE_EARLY_HOLD_PERCENT", "ai", "Pause Claude at plan usage (%)", "int", 95,
-       "Claude reports its 5-hour and 7-day plan usage with every run; at this share LAIka stops sending it "
-       "work until the window resets, instead of waiting for a hard limit.", apply="restart", min=50, max=100),
+    _f("CLAUDE_EARLY_HOLD_PERCENT", "ai", "Pause an AI account at plan usage (%)", "int", 95,
+       "Claude and Codex report their 5-hour and weekly plan usage with every run; at this share LAIka stops "
+       "sending that account work until the window resets, instead of waiting for a hard limit. Each account "
+       "can have its own \"Stop at\" (Settings → AI → More accounts).", apply="restart", min=50, max=100),
     _f("MAX_REVIEW_RECOVERIES", "ai", "Review retries before asking you", "int", 2, min=0, max=10),
     _f("BEST_OF_FROM_ATTEMPT", "ai", "Build twice from attempt", "int", 2,
        "A retried build is made twice in parallel and the smaller passing change wins. 0 = never.", min=0, max=10),
