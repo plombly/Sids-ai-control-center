@@ -1434,3 +1434,5 @@ from routing_routes import router as routing_router  # noqa: E402
 app.include_router(routing_router)
 from away_routes import router as away_router  # noqa: E402
 app.include_router(away_router)
+from backups_routes import router as backups_router  # noqa: E402
+app.include_router(backups_router)

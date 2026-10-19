@@ -130,7 +130,8 @@ async function load(section = currentSection) {
         requestJSON('/api/app/info').catch(() => ({})),
         requestJSON('/api/system/update').catch(() => null)
       ]);
-      body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name }, update);
+      body = systemMarkup({ version: info.version, commit: info.laika_commit, server_name: info.server_name }, update) +
+        '<div class="settings-card" data-backups-card><p class="subtle">Loading backups…</p></div>';
     } else {
       body = sectionMarkup(settings, section, settings.values, settings.pending) || sectionMarkup(settings, 'general', settings.values, settings.pending);
     }

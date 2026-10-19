@@ -122,7 +122,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
 - [x] CP3 state: execution_id fencing of worker writes; atomic plan
       materialization; transition helper + job event stream (warn-only
       first); job timeline in detail.
-- [ ] CP4 visibility: acceptance criteria per job (plan schema, unknown
+- [x] CP4 visibility: acceptance criteria per job (plan schema, unknown
       keys rejected, builder + per-criterion review, approval checklist);
       gate evidence view; "why is this waiting"; routing page; pause all new
       work; while-you-were-away; diagnostics hints; backup catalogue.

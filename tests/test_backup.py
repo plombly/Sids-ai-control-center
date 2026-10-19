@@ -147,3 +147,19 @@ def test_a_release_install_has_no_repository_to_bundle(tmp_path, monkeypatch):
     (tmp_path / "VERSION").write_text("1.0.0\n")
     monkeypatch.setattr(backup, "REPO_ROOT", tmp_path)
     assert backup.backup_repo(tmp_path / "out") == {"skipped": "installed from a release", "version": "1.0.0"}
+
+
+def test_the_catalog_lists_snapshots_newest_first(tmp_path):
+    import json as _json
+    from laika_testing import ROOT, load_module
+    backup = load_module(ROOT / "scripts/laika-backup.py", "backup_catalog_test")
+    for name, errors in (("20261001T000000Z", {}), ("20261002T000000Z", {"git_remote": "refused"})):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "repo.bundle").write_bytes(b"x" * 10)
+        (folder / "manifest.json").write_text(_json.dumps({"created": name, "parts": {"repo": {}, "redis": {}}, "errors": errors}))
+    (tmp_path / "not-a-snapshot").mkdir()
+    entries = backup.catalog(tmp_path)
+    assert [e["name"] for e in entries] == ["20261002T000000Z", "20261001T000000Z"]
+    assert entries[0]["errors"] == {"git_remote": "refused"} and entries[1]["parts"] == ["redis", "repo"]
+    assert entries[1]["bytes"] > 10

@@ -193,6 +193,34 @@ def record_status(status):
     run(redis_cli("SET", LAST_BACKUP_KEY, json.dumps(status)))
 
 
+CATALOG_KEY = "laika:backup:catalog"
+
+
+def catalog(root):
+    """[{name, created, bytes, parts, errors}] of the snapshots, newest first
+    (Settings -> System shows it; the API cannot read /var/backups)."""
+    snapshots = []
+    for folder in sorted(Path(root).iterdir(), reverse=True) if Path(root).is_dir() else []:
+        manifest_path = folder / "manifest.json"
+        if not folder.is_dir() or folder.is_symlink() or not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, ValueError):
+            continue
+        size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file() and not p.is_symlink())
+        snapshots.append({"name": folder.name, "created": manifest.get("created", folder.name), "bytes": size,
+                          "parts": sorted(manifest.get("parts", {})), "errors": manifest.get("errors", {})})
+    return snapshots
+
+
+def publish_catalog(root):
+    try:
+        run(redis_cli("SET", CATALOG_KEY, json.dumps(catalog(root)[:30])))
+    except Exception as exc:  # best effort, like record_status
+        print(f"backup catalog not published: {exc}", file=sys.stderr)
+
+
 def main():
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -220,6 +248,7 @@ def main():
     manifest["rotated"] = rotate(BACKUP_ROOT, KEEP)
     ok = not manifest["errors"] and manifest.get("remote", {}).get("ok", True)
     record_status({"at": stamp, "ok": ok, "path": str(dest), "errors": manifest["errors"]})
+    publish_catalog(BACKUP_ROOT)
     print(json.dumps({"ok": ok, "path": str(dest), "errors": manifest["errors"],
                       "rotated": manifest["rotated"]}))
     return 0 if ok else 1

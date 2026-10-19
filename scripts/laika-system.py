@@ -59,6 +59,12 @@ def main(argv):
     elif action == "apply":
         timers()
         return restart()
+    elif action in ("backup-now", "restore-check-now"):
+        # Settings -> System buttons: start the same units the timers start.
+        unit = "laika-backup.service" if action == "backup-now" else "laika-restore-check.service"
+        result = run(SYSTEMCTL, "start", "--no-block", unit)
+        print(f"started {unit}" if result.returncode == 0 else result.stderr[-500:])
+        return result.returncode
     else:
         print(__doc__.strip(), file=sys.stderr)
         return 2

@@ -24,3 +24,4 @@ import './elapsed.js';
 import './why.js';
 import './pause.js';
 import './away.js';
+import './backups.js';

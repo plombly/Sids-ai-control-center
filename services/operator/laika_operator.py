@@ -66,7 +66,8 @@ OUTPUT_LIMIT = 8000
 NETWORK_ACTIONS = ("network_once", "network_always", "network_deny")
 # Host helpers (scripts/laika-system.py, laika-providers.py), run as their own unit.
 SYSTEM_ACTIONS = ("apply_settings", "provider_login", "provider_status", "provider_apply_keys", "system_update",
-                  "remote_status", "remote_install", "remote_login", "remote_logout")
+                  "remote_status", "remote_install", "remote_login", "remote_logout", "backup_now",
+                  "restore_check_now")
 ACTIONS = ("approve", "queue_approve", "dequeue_approve", "reject", "extend", "reintegrate", "reopen", *NETWORK_ACTIONS,
            "create_project", "project_retry_clone", "project_push_setup", "delete_project",
            "project_commit_upload", "restore_project", "project_revert", *SYSTEM_ACTIONS)
@@ -388,7 +389,8 @@ def validate(fields, entry_id, now):
             raise Invalid(f"what must be one of {', '.join(APPLY_WHAT)}")
         if action == "provider_login" and what not in ("claude", "codex"):
             raise Invalid("provider must be claude or codex")
-        if action in ("provider_status", "provider_apply_keys", "system_update") or action.startswith("remote_"):
+        if action in ("provider_status", "provider_apply_keys", "system_update", "backup_now",
+                      "restore_check_now") or action.startswith("remote_"):
             what = ""
         return {"action": action, "what": what, "job_id": "", "project_id": ""}
     if action in PROJECT_ACTIONS:
@@ -476,9 +478,12 @@ SYSTEM_COMMANDS = {
     "remote_install": ("remote", "scripts/laika-remote.py", lambda what: ["install"]),
     "remote_login": ("remote", "scripts/laika-remote.py", lambda what: ["login"]),
     "remote_logout": ("remote", "scripts/laika-remote.py", lambda what: ["logout"]),
+    # Settings -> System: a backup or a restore check now (the timers' own units).
+    "backup_now": ("backup", "scripts/laika-system.py", lambda what: ["backup-now"]),
+    "restore_check_now": ("restore", "scripts/laika-system.py", lambda what: ["restore-check-now"]),
 }
 ROOT_SYSTEM_ACTIONS = ("apply_settings", "system_update", "remote_status", "remote_install", "remote_login",
-                       "remote_logout")
+                       "remote_logout", "backup_now", "restore_check_now")
 
 
 def execute_system(request, runner=subprocess.run):

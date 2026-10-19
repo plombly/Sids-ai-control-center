@@ -63,6 +63,31 @@ instead of it):
   shown as a History in the job's details; unusual changes are flagged and
   logged (not refused yet).
 
+**What you see:**
+
+- **Acceptance criteria per job.** The planner states what "done" means
+  for every job; the builder gets the list, the reviewer judges each one
+  (a criterion not met is a blocking finding), and the Approve card shows
+  the checklist with ✓ / ✗. Misspelled plan fields (e.g. "dependencies")
+  are read correctly and unknown ones are reported, never silently dropped.
+- **Test evidence** in a job's details: the command LAIka ran (chosen from
+  main), each check with its time, and the output.
+- **Why is this waiting?** on home cards and at the top of a job's
+  details: paused, waiting for a provider until when, every worker busy
+  (and its place in line), waiting for files or earlier jobs, in review,
+  in the merge queue, or waiting for you.
+- **Pause all new work** (Settings → Workers): workers take no new job and
+  no goal is planned; running jobs finish and approved changes still
+  merge. A banner shows while paused.
+- **While you were away** on the home page: what LAIka handled by itself
+  (restarts survived, waits for providers, automatic rebuilds).
+- **Routing** (Settings → AI): which AI did which work, every switch to
+  the other provider and why, waits that used no attempt, scaler decisions.
+- **Diagnostics** say what each failing check means and what to do.
+- **Backups** (Settings → System): the snapshots on the server with size,
+  contents and problems, the last restore check, and "Back up now" /
+  "Check a restore now".
+
 ## 1.5.3 (2026-10-15)
 
 Faster everywhere, found by watching a server with a few hundred jobs:
