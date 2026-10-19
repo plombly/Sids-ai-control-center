@@ -190,9 +190,26 @@ def systemd_literal(text):
     return text.replace("$", "$$")
 
 
+def run_script(project, unit, command):
+    """The run command as a script under <project root>/run/<unit>.sh, which
+    the app's sandbox can read but not change. systemd must never see the
+    command itself: escaping its "$" as "$$" (systemd_literal) worked until
+    a daemon-reload, which re-reads transient units and doubles the escape,
+    so a restarted app got "$$(" and crashed (NGINX-Manager, 2026-10-18)."""
+    folder = Path(project.root) / "run"
+    folder.mkdir(parents=True, exist_ok=True)
+    script = folder / f"{unit}.sh"
+    temporary = script.with_name(script.name + ".tmp")
+    temporary.write_text(f"#!/bin/sh\n# Written by LAIka (services/apps/laika_apps.py); the project's run command.\n{command}\n")
+    os.chmod(temporary, 0o640)
+    os.replace(temporary, script)
+    return script
+
+
 def start_unit(project, live, port, unit=None, data_dir=None, description=None):
     env = app_env(live, port)
-    inner = project_sandbox.command(["/bin/sh", "-c", project.run_command], project, live, kind="app",
+    script = run_script(project, unit or unit_name(project.id), project.run_command)
+    inner = project_sandbox.command(["/bin/sh", str(script)], project, live, kind="app",
                                     data_dir=data_dir)
     # No --collect: a unit that gave up must stay "failed" (with its Result)
     # until stop_unit's reset-failed, or the crash would vanish and the app
