@@ -330,6 +330,9 @@ def change_account(provider: str, account: str, payload: AccountChange):
     if payload.max_concurrent is not None:
         changes["max_concurrent"] = str(payload.max_concurrent)
     if payload.enabled is not None:
+        others = [row for row in account_rows(provider) if row["id"] != account and row["enabled"]]
+        if payload.enabled is False and not others:
+            raise HTTPException(status_code=409, detail="This is the only account turned on; turn on another one first")
         changes["enabled"] = "1" if payload.enabled else ""
     if not changes:
         raise HTTPException(status_code=422, detail="Nothing to change")

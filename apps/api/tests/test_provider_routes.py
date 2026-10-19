@@ -89,6 +89,7 @@ def test_accounts_are_added_changed_signed_in_and_removed(accounts_api):
     assert client.post("/api/ai-providers/claude/accounts",
                        json={"id": "Bad Name", "label": "x", "kind": "login"}).status_code == 422
     assert client.patch("/api/ai-providers/claude/accounts/work", json={"enabled": False}).json()["enabled"] is False
+    assert client.patch("/api/ai-providers/claude/accounts/default", json={"enabled": False}).status_code == 409
     assert client.patch("/api/ai-providers/claude/accounts/default", json={"max_concurrent": 1}).json()["max_concurrent"] == 1
     login = client.post("/api/ai-providers/claude/accounts/work/login", json={"request_id": "login-acct-1"})
     assert login.status_code == 202 and fake.stream[-1][1]["what"] == "claude:work"

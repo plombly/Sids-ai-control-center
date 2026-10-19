@@ -93,6 +93,12 @@ def explain(job, state):
     if status == "awaiting_review":
         if job.get("merge_queue_state") in ("queued", "waiting"):
             return True, f"Approved; in the merge queue: {(job.get('merge_queue_reason') or 'merges once current on main')[:200]}"
+        for kind, label in (("review", "Its review"), ("repair", "Its repair")):
+            provider = job.get(f"{kind}_wait_provider")
+            if provider and (kind != "repair" or job.get("repair_status") == "waiting"):
+                until = (state.get("held") or {}).get(provider)
+                when = f" until about {_clock(until)}" if until else ""
+                return True, f"{label} waits for {provider}, which is paused{when}; no attempt is used."
         if job.get("integration_status") == "running":
             return True, "Being put on top of the latest main and tested (integration)."
         if job.get("review_status") != "complete":

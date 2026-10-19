@@ -27,3 +27,13 @@ def test_pause_is_admin_only_and_round_trips(team):
     assert admin.post("/api/system/pause", json={"paused": True, "reason": "maintenance"}).json()["paused"] is True
     assert admin.get("/api/system/pause").json()["reason"] == "maintenance"
     assert admin.post("/api/system/pause", json={"paused": False}).json() == {"paused": False}
+
+
+def test_a_review_or_repair_waiting_for_a_provider_says_so():
+    from why_routes import explain
+    state = {"held": {"codex": 1792400000}}
+    _, reason = explain({"status": "awaiting_review", "review_status": "failed", "review_wait_provider": "codex"}, state)
+    assert reason.startswith("Its review waits for codex") and "no attempt is used" in reason
+    _, reason = explain({"status": "awaiting_review", "review_status": "complete", "review_verdict": "changes_required",
+                         "repair_status": "waiting", "repair_wait_provider": "codex"}, state)
+    assert reason.startswith("Its repair waits for codex")

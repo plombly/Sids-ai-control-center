@@ -326,7 +326,7 @@ def held(r, provider, account=None):
         import provider_accounts
         enabled = [a["id"] for a in provider_accounts.accounts(r, provider)
                    if a["enabled"] and provider_accounts.has_credentials(provider, a["id"])]
-        return bool(enabled) and all(r.get(cooldown_key(provider, a)) for a in enabled)
+        return all(r.get(cooldown_key(provider, a)) for a in enabled)  # none usable at all: held too
     except Exception:
         return False
 

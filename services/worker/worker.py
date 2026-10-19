@@ -1266,6 +1266,30 @@ class ProviderWait(Exception):
                          f"{failure.kind}: {failure.reason}")
 
 
+MAX_PROVIDER_DEFERRALS = int(os.environ.get("MAX_PROVIDER_DEFERRALS", "6"))
+
+
+def provider_wait_fields(builder_id, exc, kind, job_id):
+    """Builder fields for a review or repair that no provider could serve
+    (ProviderWait): the orchestrator retries it once the provider is back,
+    without using a review recovery or a repair attempt. Bounded by
+    MAX_PROVIDER_DEFERRALS waits; past that (or for any other failure) the
+    usual rules apply."""
+    if not isinstance(exc, ProviderWait):
+        return {}
+    builder = redis.hgetall(f"laika:jobs:{builder_id}") or {}
+    waits = int(builder.get(f"{kind}_waits") or 0)
+    if waits >= MAX_PROVIDER_DEFERRALS:
+        return {}
+    fields = {f"{kind}_wait_provider": exc.provider, f"{kind}_waits": str(waits + 1),
+              f"{kind}_wait_until": str(exc.until or (time.time() + 300))}
+    if kind == "repair":
+        # The attempt that could not run is given back.
+        fields.update(repair_status="waiting", last_repair_job_id=job_id,
+                      repair_attempts=str(max(0, int(builder.get("repair_attempts") or 0) - 1)))
+    return fields
+
+
 def codex_or_wait(job, worktree, log_path):
     """run_codex, turning a Codex quota/rate/sign-in failure into a hold on
     Codex plus ProviderWait instead of an ordinary failed build."""
@@ -2675,6 +2699,7 @@ def _process_job(raw_job):
                         "repair_status": "failed",
                         "repair_error": redaction.redact(str(exc)),
                         "updated_at": str(time.time()),
+                        **provider_wait_fields(target_builder_id, exc, "repair", job_id),
                     },
                 )
                 redis.hdel(
@@ -2691,6 +2716,7 @@ def _process_job(raw_job):
                         "review_status": "failed",
                         "review_error": redaction.redact(str(exc)),
                         "updated_at": str(time.time()),
+                        **provider_wait_fields(builder_job_id, exc, "review", job_id),
                     },
                 )
 

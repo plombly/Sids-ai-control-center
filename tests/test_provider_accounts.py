@@ -65,6 +65,12 @@ def test_an_account_that_is_not_signed_in_is_never_used():
     assert provider_health.held(r, "codex")          # nothing else can serve: the provider pauses
 
 
+def test_no_usable_account_at_all_counts_as_paused():
+    r = MemoryRedis()
+    r.hset("laika:provider-account:codex:default", mapping={"enabled": ""})
+    assert provider_health.held(r, "codex")
+
+
 def test_lower_plan_usage_wins_a_tie(monkeypatch):
     r = MemoryRedis()
     add(r, "claude", "work")

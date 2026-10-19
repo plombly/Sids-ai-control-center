@@ -1140,6 +1140,10 @@ def queue_repairs():
             }:
                 continue
 
+        if builder.get("repair_status") == "waiting" and provider_health.held(
+                r, builder.get("repair_wait_provider") or "codex"):
+            continue  # the last repair could not run: no provider can serve it yet
+
         if builder.get("network_request") == "pending":
             # The last repair's tests failed for lack of internet access:
             # the operator decides (job-review.py network) before any
@@ -1831,6 +1835,18 @@ def recover_stalled_reviews(now_ts=None):
             builder.get("last_repair_job_id"), builder.get("last_integrate_job_id"),
         } - {None, ""}
         if related & busy:
+            continue
+        waiting_for = builder.get("review_wait_provider")
+        if waiting_for and builder.get("review_status") == "failed":
+            # No provider could review it: retry once one can, without using
+            # a review recovery (worker provider_wait_fields bounds the waits).
+            if provider_health.held(r, waiting_for):
+                continue
+            waits = builder.get("review_waits") or "1"
+            if r.hsetnx(key, f"review_wait_{waits}_resumed_at", now()):
+                integrate_id = queue_reintegration(key, builder, {"review_wait_provider": ""})
+                print(f"[{ORCHESTRATOR_ID}] review of builder={builder_id} resumes after waiting for "
+                      f"{waiting_for} via {integrate_id}", flush=True)
             continue
         if not confirmed_lost(f"stall:{builder_id}", seen, now_ts):
             continue

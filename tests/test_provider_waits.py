@@ -103,3 +103,44 @@ def test_a_paused_server_claims_no_new_job():
     assert worker.pause_reason() is None
     worker.redis.values["laika:pause"] = '{"by": "admin"}'
     assert worker.pause_reason() == "paused"
+
+
+def test_a_review_or_repair_that_no_provider_can_serve_waits_without_using_an_attempt():
+    import provider_health
+    worker = load_module(ROOT / "services/worker/worker.py", "worker_review_wait_test")
+    worker.redis = MemoryRedis()
+    worker.redis.records["laika:jobs:b1"] = {"id": "b1", "repair_attempts": "2"}
+    wait = worker.ProviderWait("codex", provider_health.Failure("quota", "usage limit"))
+    review = worker.provider_wait_fields("b1", wait, "review", "rv1")
+    assert review["review_wait_provider"] == "codex" and review["review_waits"] == "1"
+    repair = worker.provider_wait_fields("b1", wait, "repair", "rp1")
+    assert repair["repair_status"] == "waiting" and repair["repair_attempts"] == "1"   # the attempt comes back
+    assert worker.provider_wait_fields("b1", RuntimeError("tests failed"), "repair", "rp1") == {}
+    worker.redis.records["laika:jobs:b1"]["review_waits"] = str(worker.MAX_PROVIDER_DEFERRALS)
+    assert worker.provider_wait_fields("b1", wait, "review", "rv1") == {}             # bounded
+
+
+def test_a_waiting_repair_is_dispatched_only_once_the_provider_is_back(orch):
+    import provider_health
+    orch.r.records["laika:jobs:b1"] = {
+        "id": "b1", "role": "builder", "status": "awaiting_review", "review_status": "complete",
+        "review_verdict": "changes_required", "repair_attempts": "0", "repair_status": "waiting",
+        "repair_wait_provider": "codex", "review_job_id": "r1", "worktree": "/w/job-b1", "prompt": "x"}
+    provider_health.hold(orch.r, "codex", provider_health.Failure("quota", "usage limit"))
+    orch.queue_repairs()
+    assert not orch.r.values.get("laika:jobs") and orch.r.records["laika:jobs:b1"]["repair_status"] == "waiting"
+
+
+def test_a_waiting_review_resumes_without_using_a_recovery(orch):
+    import provider_health
+    orch.r.records["laika:jobs:b1"] = {
+        "id": "b1", "role": "builder", "status": "awaiting_review", "review_status": "failed",
+        "review_wait_provider": "codex", "review_waits": "1", "review_job_id": "rv1", "goal_id": "g1"}
+    provider_health.hold(orch.r, "codex", provider_health.Failure("quota", "usage limit"))
+    orch.recover_stalled_reviews(1000)
+    assert queued(orch) == []
+    provider_health.release(orch.r, "codex")
+    orch.recover_stalled_reviews(1001)
+    orch.recover_stalled_reviews(1002)                                   # once
+    builder = orch.r.records["laika:jobs:b1"]
+    assert len(queued(orch)) == 1 and builder["review_wait_provider"] == "" and "review_recoveries" not in builder

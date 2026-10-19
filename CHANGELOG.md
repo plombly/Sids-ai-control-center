@@ -74,6 +74,8 @@ instead of it):
   with the others (a Claude run moves to another Claude account before
   falling back to Codex; a build moves to another Codex account without
   using a wait). A provider is paused only when all its accounts are.
+- Reviews and repairs that no provider can serve right now wait for it,
+  like builds: no review recovery or repair attempt is used.
 - Each job records which account ran it; Routing counts runs per account.
 - Extra accounts' credentials stay on the server: sign-ins in LAIka's own
   folder, API keys in a root-only file put in place by the host. A run

@@ -134,10 +134,15 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       LAIka spreads runs over them (most room left: fewest running, lowest
       plan usage); concurrency per account (default 2); pauses per account
       (a provider is paused only when all its accounts are); admins only
-      (Settings -> AI). Existing login = account "default". Per-account
-      homes: CLAUDE_CONFIG_DIR / CODEX_HOME under the laika home; keys
-      root:laika 0640 in /etc/laika/providers/accounts/. Record the
-      account per job; routing and usage per account.
+      (Settings -> AI). Existing login = account "default". Built: tokens
+      and keys in the laika home (claude-tokens/, claude-keys/, CODEX_HOME
+      ~/.codex-accounts/<id>); keys arrive via root-only
+      /etc/laika/providers/accounts.env, given only to provider_apply_keys.
+      Account per job; routing per account. Live-tested on dev with a broken
+      Codex account; not yet with a second real paid account (owner).
+- [x] 2.0 CP6 waits for reviews and repairs (CP1 gap): a review or repair
+      that no provider can serve right now waits for the provider instead
+      of failing and using up a review recovery / repair attempt.
 
 ## Backlog (not scheduled)
 
