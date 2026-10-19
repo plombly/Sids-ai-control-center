@@ -2813,3 +2813,19 @@ table {
   font-size: 0.85em;
   white-space: pre-wrap;
 }
+.pause-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--amber, #d29922);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.why-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}

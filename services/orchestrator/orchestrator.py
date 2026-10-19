@@ -2035,7 +2035,12 @@ def process_goal_safe(raw):
         raise
 
 
+PAUSE_KEY = "laika:pause"
+
+
 def submit_queued_goals(executor, futures):
+    if r.get(PAUSE_KEY):
+        return  # all new work paused by the operator: goals wait in their queue
     while len(futures) < MAX_CONCURRENT_GOALS:
         raw = r.lpop(GOAL_QUEUE)
         if not raw:

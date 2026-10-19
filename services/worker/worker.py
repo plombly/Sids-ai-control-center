@@ -207,6 +207,9 @@ def worker_disabled():
         return False
 
 
+PAUSE_KEY = "laika:pause"
+
+
 def pause_reason():
     """Why this worker must not claim a new job now, or None: the operator
     stopped it ("disabled"), the scaler is removing it ("draining",
@@ -215,6 +218,8 @@ def pause_reason():
     if worker_disabled():
         return "disabled"
     try:
+        if redis.get(PAUSE_KEY):
+            return "paused"  # the operator paused all new work (running jobs finish)
         if redis.get(f"laika:worker-drain:{WORKER_ID}"):
             return "draining"
         if redis.get("laika:scaler:hold"):

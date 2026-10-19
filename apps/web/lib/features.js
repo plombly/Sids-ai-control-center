@@ -21,3 +21,5 @@ import './home.js';
 import './settings.js';
 import './devices.js';
 import './elapsed.js';
+import './why.js';
+import './pause.js';

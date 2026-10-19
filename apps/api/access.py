@@ -146,7 +146,7 @@ ID = r"[A-Za-z0-9_-]{1,64}"
 PID = r"[a-z0-9][a-z0-9-]{0,39}"
 SIGNED_IN = [
     ("GET", rf"/api/auth/state|/api/auth/sessions|/api/app/info|/api/app/summary|/api/project-catalog|/api/workers"
-            rf"|/api/heartbeat|/api/orchestrators|/api/status|/api/system-health|/api/workers/scale|/api/system/update"
+            rf"|/api/heartbeat|/api/orchestrators|/api/status|/api/system-health|/api/workers/scale|/api/system/update|/api/system/pause"
             rf"|/api/goals|/api/goals/recent|/api/jobs|/api/jobs/recent|/api/approvals|/api/jobs/approvals|/api/failures"
             rf"|/api/action-required|/api/actions-required|/api/queue|/api/merge-queue|/api/dismissals|/api/projects"
             rf"|/api/usage|/api/devices|/api/repository|/api/operator/status|/api/operator-requests/{ID}|/api/me"
@@ -169,7 +169,7 @@ PROJECT_RULES = [
     ("PUT", rf"/api/projects/({PID})/env", "project", "approve"),
     ("DELETE", rf"/api/projects/({PID})/env/.+", "project", "approve"),
     ("POST", rf"/api/projects/({PID})/(?:parent|push-setup|undo|retry-clone)", "project", "approve"),
-    ("GET", rf"/api/jobs/({ID})(?:/log)?", "job", "view"),
+    ("GET", rf"/api/jobs/({ID})(?:/log|/why)?", "job", "view"),
     ("POST", rf"/api/jobs/({ID})/preview", "job", "build"),
     ("DELETE", rf"/api/jobs/({ID})/preview", "job", "build"),
     ("POST", rf"/api/jobs/({ID})/actions", "job", "build"),  # approving needs more: checked in the endpoint

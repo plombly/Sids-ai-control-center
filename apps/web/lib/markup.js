@@ -76,6 +76,7 @@ export const gateEvidenceMarkup = gate => {
 };
 
 export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
+  const whyLine = `<p class="why-line subtle" data-why-auto="${esc(job.id)}"></p>`;
   job = { ...job, _started: clockText(job.started_at, now), _finished: job.started_at == null ? '' : job.finished_at == null ? '—' : clockText(job.finished_at, now), _elapsed: job.started_at == null ? '' : job.finished_at == null ? elapsedMarkup(job.started_at, null, now) : elapsedText(job.elapsed_seconds) };
   const lineage = asObject(job.lineage) || {},
     reviewHistory = Array.isArray(lineage.review_findings_history) ? lineage.review_findings_history : [],
@@ -106,7 +107,7 @@ export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
     relatedMarkup = related.length
       ? `<div class="table-wrap"><table class="job-table"><thead><tr><th>Job</th><th>Role</th><th>Status</th><th>Review verdict</th><th>Duration</th><th>Started</th><th>Elapsed</th><th>Tokens</th><th>Created</th></tr></thead><tbody>${related.map(item => `<tr><td><button class="detail-button" data-detail="${esc(item.id)}">${esc(item.id)}</button></td><td>${esc(item.role)}</td><td>${esc(item.status)}</td><td>${esc(item.review_verdict)}</td><td>${esc(item.duration)}</td><td>${clockText(item.started_at, now)}</td><td>${item.started_at == null ? '' : item.finished_at == null ? elapsedMarkup(item.started_at, null, now) : elapsedText(item.elapsed_seconds)}</td><td>${esc(item.effective_tokens)}</td><td>${esc(item.created_at)}</td></tr>`).join('')}</tbody></table></div>`
       : detailValue(null);
-  return `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div><section class="job-log-section"><h3>Live log</h3><div class="job-log" data-job-log="${esc(job.id)}"><div class="subtle">Loading…</div></div><button type="button" class="detail-button" data-job-log-tests="${esc(job.id)}">Show test output</button><pre class="job-test-log" hidden></pre></section>${detailSection(
+  return whyLine + `<div class="detail-title"><h2>${detailValue(job.id)}</h2>${pill(job.status)}</div><section class="job-log-section"><h3>Live log</h3><div class="job-log" data-job-log="${esc(job.id)}"><div class="subtle">Loading…</div></div><button type="button" class="detail-button" data-job-log-tests="${esc(job.id)}">Show test output</button><pre class="job-test-log" hidden></pre></section>${detailSection(
     'Summary',
     detailRows(job, [
       ['ID', 'id'],

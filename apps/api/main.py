@@ -1428,3 +1428,5 @@ app.include_router(users_router)
 app.include_router(assist_router)
 from remote_routes import router as remote_router  # noqa: E402
 app.include_router(remote_router)
+from why_routes import router as why_router  # noqa: E402
+app.include_router(why_router)

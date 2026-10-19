@@ -120,7 +120,10 @@ export function inProgressMarkup({ goals = [], jobs = [] }, names = {}, now = Da
       const current = jobs.find(job => job.goal_id === goal.id && RUNNING_JOB[job.status]);
       const step = goal.status === 'queued' ? 'Waiting to be planned' : goal.status === 'planning' ? 'Planning the work' : current ? `${ROLE_WORD[current.role] || 'Working'}: ${firstLine(current.title)}` : total ? 'Waiting for a free worker' : 'Planning the work';
       const elapsed = current && current.started_at != null ? ` · ${elapsedMarkup(current.started_at, current.finished_at, now)}` : '';
-      return `<article class="home-card"><div class="card-top">${projectChip(goal.project_id, names)}<span class="subtle">${esc(timeAgo(goal.created_at, now))}</span></div><h3>${esc(firstLine(goal.summary || goal.prompt) || goal.id)}</h3><div class="progress"><i style="width:${percent}%"></i></div><p class="subtle">${total ? `${esc(done)} of ${esc(total)} steps done · ` : ''}${esc(step)}${elapsed}</p></article>`;
+      // Nothing running for this goal: offer "Why?" for its first waiting job.
+      const waiting = current ? null : jobs.find(job => job.goal_id === goal.id && /^(queued|blocked|deferred|awaiting_review)$/.test(text(job.status, '')));
+      const why = waiting ? `<div class="why-row"><button type="button" class="detail-button" data-why="${escValue(waiting.id)}">Why?</button><span class="subtle" data-why-text="${escValue(waiting.id)}"></span></div>` : '';
+      return `<article class="home-card"><div class="card-top">${projectChip(goal.project_id, names)}<span class="subtle">${esc(timeAgo(goal.created_at, now))}</span></div><h3>${esc(firstLine(goal.summary || goal.prompt) || goal.id)}</h3><div class="progress"><i style="width:${percent}%"></i></div><p class="subtle">${total ? `${esc(done)} of ${esc(total)} steps done · ` : ''}${esc(step)}${elapsed}</p>${why}</article>`;
     })
     .join('')}</div>`;
 }

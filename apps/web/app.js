@@ -316,6 +316,7 @@ if (typeof document !== 'undefined') {
         .then(job => {
           const section = document.getElementById('job-detail');
           document.getElementById('job-detail-content').innerHTML = jobDetailMarkup(job);
+          window.dispatchEvent(new CustomEvent('laika:detail-shown', { detail: job.id }));
           section.hidden = false;
           section.scrollIntoView({ behavior: 'smooth', block: 'start' });
         })

@@ -124,3 +124,10 @@ test('an approval card shows the acceptance checklist with the reviewer verdicts
   assert.match(html, /class="crit unknown">\?<\/span> a test covers it/);
   assert.equal(criteriaMarkup({}), '');
 });
+
+test('a goal with nothing running offers "Why?" for its first waiting job', () => {
+  const goals = [{ id: 'g1', status: 'running', summary: 'Shop', project_id: 'shop', progress: { total: 2, completed: 0 } }];
+  const html = inProgressMarkup({ goals, jobs: [{ id: 'j1', goal_id: 'g1', status: 'deferred' }] });
+  assert.match(html, /data-why="j1"/);
+  assert.doesNotMatch(inProgressMarkup({ goals, jobs: [{ id: 'j1', goal_id: 'g1', status: 'running', role: 'builder' }] }), /data-why=/);
+});
