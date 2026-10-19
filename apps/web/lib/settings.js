@@ -2,6 +2,7 @@
 // quiet hours and the weekly digest (apps/api/notify_routes.py). The server's
 // channel (administrators) and everyone's own (My notifications, 1.2) share
 // the same forms; KINDS says which endpoints and element ids each uses.
+import { routingMarkup } from './routing.js';
 import { availabilityMarkup } from './provider-status.js';
 import { requestJSON } from './api.js';
 import { esc, escValue } from './format.js';
@@ -114,9 +115,12 @@ async function load(section = currentSection) {
     } else if (section === 'phones') {
       body = '<section class="settings-section" id="devices-section"></section>';
     } else if (section === 'ai') {
-      const providers = await requestJSON('/api/ai-providers').catch(() => ({}));
+      const [providers, routing] = await Promise.all([
+        requestJSON('/api/ai-providers').catch(() => ({})),
+        requestJSON('/api/routing?days=7').catch(() => null)
+      ]);
       window.dispatchEvent(new CustomEvent('laika:providers-loaded', { detail: providers }));
-      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${availabilityMarkup(providers)}${sectionMarkup(settings, section, settings.values, settings.pending)}`;
+      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${availabilityMarkup(providers)}${routing ? routingMarkup(routing) : ''}${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'workers') {
       body = `<div class="settings-card"><h3>Right now</h3><div data-worker-scale="log"></div></div><div class="settings-card" data-pause-card></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'access') {
