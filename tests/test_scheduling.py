@@ -328,3 +328,9 @@ def test_no_goal_is_planned_while_all_new_work_is_paused(orch):
     executor = type("E", (), {"submit": lambda self, fn, raw: submitted.append(raw)})()
     orch.submit_queued_goals(executor, set())
     assert submitted == [] and orch.r.values[orch.GOAL_QUEUE] == ['{"id": "g1", "goal": "x"}']
+
+
+def test_one_not_met_from_any_specialist_review_wins():
+    worker = load_module(ROOT / "services/worker/worker.py", "worker_criteria_merge_test")
+    messages = ["## spec review\nCRITERION 1: MET - fine\n## safety review\nCRITERION 1: NOT MET - leaks a token\nCRITERION 1: MET - ok"]
+    assert worker.parse_criteria_review(messages, ["x"]) == [{"criterion": "x", "met": False, "note": "leaks a token"}]

@@ -463,3 +463,12 @@ def test_the_repository_panel_shows_the_version_on_a_release_install(monkeypatch
     import main
     monkeypatch.setattr(main, "redis", FakeRedis({}, strings={"laika:system-info": _json.dumps({"version": "1.5.0"})}))
     assert main._repository() == {"branch": "release", "head": None, "short": "1.5.0", "version": "1.5.0", "status": "ok"}
+
+
+def test_acceptance_keeps_the_planners_order_and_the_reviewers_verdicts():
+    import json as _json
+    import main
+    job = main._job("laika:jobs:j1", {"id": "j1", "acceptance": _json.dumps(["z first", "a second"]),
+                                      "acceptance_review": _json.dumps([{"criterion": "z first", "met": True, "note": "ok"}])})
+    assert job["acceptance"] == ["z first", "a second"]
+    assert job["acceptance_review"] == [{"criterion": "z first", "met": True, "note": "ok"}]

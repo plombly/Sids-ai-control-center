@@ -1495,7 +1495,11 @@ def parse_criteria_review(messages, criteria):
         for line in str(text).splitlines():
             match = _CRITERION.match(line)
             if match and 1 <= int(match.group(1)) <= len(criteria):
-                found[int(match.group(1))] = (match.group(2).upper() == "MET", match.group(3).strip()[:300])
+                number, met = int(match.group(1)), match.group(2).upper() == "MET"
+                # Several specialist reviews may judge the same criterion:
+                # one NOT MET wins (it is a blocking finding).
+                if number not in found or (found[number][0] and not met):
+                    found[number] = (met, match.group(3).strip()[:300])
     return [{"criterion": c, "met": found.get(n, (None, ""))[0], "note": found.get(n, (None, ""))[1]}
             for n, c in enumerate(criteria, 1)]
 
