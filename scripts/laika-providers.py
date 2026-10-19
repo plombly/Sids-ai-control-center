@@ -435,10 +435,14 @@ def prune(provider, known, base=None):
         for entry in folder.iterdir():
             if entry.name in known or not provider_accounts.ID.match(entry.name):
                 continue
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError as exc:  # one stuck folder must not stop the rest
+                print(f"{provider}: could not remove deleted account {entry.name}: {exc}")
+                continue
             print(f"{provider}: removed the credentials of deleted account {entry.name}")
 
 
