@@ -311,19 +311,33 @@ def test_review_recoveries_are_bounded(orch):
 
 # --- end to end: a worker dies mid-build ---------------------------------------------
 
-def test_worker_death_mid_build_leads_to_a_rebuild(orch):
+def test_worker_death_mid_build_reruns_the_same_attempt(orch):
+    # A restart, crash or reboot is not the build's fault: the same attempt
+    # runs again with the same prompt (no "attempt 1 failed" note), a bounded
+    # number of times.
     worker(orch, "w1")  # restarted: idle, holds nothing
     put(orch, "b1", role="builder", status="running", worker_id="w1",
         build_attempt="1", prompt="Add a thing", goal_id="g1")
     put(orch, "d1", role="builder", status="blocked", dependencies='["b1"]', prompt="p")
     for t in (T0, T0 + orch.LOST_CONFIRM_SECONDS):
         orch.recover_lost_jobs(t)
+        orch.resume_deferred_jobs()
         orch.retry_failed_builds()
         orch.release_dependencies()
     assert job(orch, "b1")["status"] == "queued"
-    assert "worker lost" in job(orch, "b1")["prompt"]
+    assert job(orch, "b1")["build_attempt"] == "1" and job(orch, "b1")["prompt"] == "Add a thing"
+    assert job(orch, "b1")["interruptions"] == "1"
     assert queued_ids(orch) == ["b1"]
     assert job(orch, "d1")["status"] == "blocked"
+
+
+def test_repeated_interruptions_fall_back_to_a_normal_failure(orch):
+    worker(orch, "w1")
+    put(orch, "b2", role="builder", status="running", worker_id="w1", build_attempt="1", prompt="x",
+        goal_id="g1", interruptions=str(orch.MAX_INTERRUPTIONS))
+    for t in (T0, T0 + orch.LOST_CONFIRM_SECONDS):
+        orch.recover_lost_jobs(t)
+    assert job(orch, "b2")["status"] == "failed" and "worker lost" in job(orch, "b2")["error"]
 
 
 # --- worker side ------------------------------------------------------------------------
