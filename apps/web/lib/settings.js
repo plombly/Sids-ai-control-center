@@ -2,6 +2,7 @@
 // quiet hours and the weekly digest (apps/api/notify_routes.py). The server's
 // channel (administrators) and everyone's own (My notifications, 1.2) share
 // the same forms; KINDS says which endpoints and element ids each uses.
+import { availabilityMarkup } from './provider-status.js';
 import { requestJSON } from './api.js';
 import { esc, escValue } from './format.js';
 import { onRoute } from './registry.js';
@@ -115,7 +116,7 @@ async function load(section = currentSection) {
     } else if (section === 'ai') {
       const providers = await requestJSON('/api/ai-providers').catch(() => ({}));
       window.dispatchEvent(new CustomEvent('laika:providers-loaded', { detail: providers }));
-      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
+      body = `<div class="settings-card" id="setup-root-ai"><h3>Accounts</h3>${providerCard('claude', 'Claude', providers.status?.claude, providers.login?.claude, providers.keys?.anthropic_api_key)}${providerCard('codex', 'Codex', providers.status?.codex, providers.login?.codex, providers.keys?.openai_api_key)}<p class="subtle">Sign-in steps open in the setup guide: <a href="#/setup">run setup again</a>.</p></div>${availabilityMarkup(providers)}${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'workers') {
       body = `<div class="settings-card"><h3>Right now</h3><div data-worker-scale="log"></div></div>${sectionMarkup(settings, section, settings.values, settings.pending)}`;
     } else if (section === 'access') {

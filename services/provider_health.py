@@ -58,7 +58,8 @@ _RATE = [re.compile(p, re.IGNORECASE) for p in (
 )]
 _AUTH = [re.compile(p, re.IGNORECASE) for p in (
     r"\bnot (?:logged|signed) in\b",
-    r"\bplease (?:run )?/?(?:log ?in|login|sign in|authenticate)\b",
+    r"\bplease (?:run )?/login\b",
+    r"\bplease (?:log ?in|sign in|re-?authenticate) again\b",
     r"\b(?:authentication|login) (?:is )?required\b",
     r"\bauthentication failed\b",
     r"\bunauthori[sz]ed\b",

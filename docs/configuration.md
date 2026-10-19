@@ -87,6 +87,9 @@ Which AI does what, how much it may spend and how hard LAIka tries.
 | Review aspects | `spec,safety` | Does exactly what was asked, Security and safety | after **Apply now** | Independent reviews every change must pass. |
 | Repairs before asking you | `2` | 0–10 | after **Apply now** |  |
 | Rebuilds before asking you | `2` | 1–10 | after **Apply now** |  |
+| Provider waits before a build counts as failed | `6` | 1–50 | after **Apply now** | A build no provider could take (usage limit, rate limit, sign-in) waits for the provider's reset without using an attempt, up to this many times. |
+| Restarts survived per build | `3` | 0–20 | after **Apply now** | A build whose worker was lost (restart, crash, reboot) runs again without using an attempt, up to this many times. |
+| Pause Claude at plan usage (%) | `95` | 50–100 | after **Apply now** | Claude reports its 5-hour and 7-day plan usage with every run; at this share LAIka stops sending it work until the window resets, instead of waiting for a hard limit. |
 | Review retries before asking you | `2` | 0–10 | after **Apply now** |  |
 | Build twice from attempt | `2` | 0–10 | after **Apply now** | A retried build is made twice in parallel and the smaller passing change wins. 0 = never. |
 | Builder time limit (seconds) | `900` | 120–14400 | after **Apply now** |  |

@@ -103,7 +103,26 @@ def providers():
     stale = time.time() - float(status.get("checked_at") or 0) > STALE_SECONDS
     return {"status": status, "stale": stale,
             "login": {name: _json(f"laika:provider-login:{name}") for name in ("claude", "codex")},
-            "keys": {field: env in keys for field, env in KEYS.items()}}
+            "keys": {field: env in keys for field, env in KEYS.items()},
+            "holds": {name: hold(name) for name in ("claude", "codex")},
+            "usage": {"claude": _json("laika:provider-usage:claude")}}
+
+
+def hold(provider):
+    """A provider LAIka is not sending work to right now (services/provider_health.py):
+    {held, kind, reason, until, seconds_left}."""
+    main = projects._redis()
+    try:
+        reason = main.redis.get(f"laika:provider-cooldown:{provider}")
+        if not reason:
+            return {"held": False}
+        left = main.redis.ttl(f"laika:provider-cooldown:{provider}")
+    except Exception:
+        return {"held": False}
+    detail = _json(f"laika:provider-hold:{provider}") or {}
+    seconds = left if isinstance(left, int) and left > 0 else 0
+    return {"held": True, "kind": detail.get("kind") or "unavailable", "reason": detail.get("reason") or reason,
+            "until": detail.get("until") or (time.time() + seconds), "seconds_left": seconds}
 
 
 @router.post("/api/ai-providers/refresh", status_code=202)

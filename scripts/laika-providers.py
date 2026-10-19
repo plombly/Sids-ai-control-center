@@ -136,6 +136,8 @@ def login_codex(r, clock=time.time):
         return 1
     ok = process.returncode == 0
     shown = re.sub(r"\bsk-\S+", "[key]", ANY_SECRET.sub("[token]", plain(output)))[-300:]
+    if ok:  # a fresh sign-in ends a pause for sign-in or limits
+        r.delete("laika:provider-cooldown:codex", "laika:provider-hold:codex")
     publish(r, "codex", state="done" if ok else "failed", message="" if ok else shown)
     status(r)
     return 0 if ok else 1
@@ -317,7 +319,7 @@ def finish_claude(r, exit_code, output, check=None, saver=save_token, tester=tok
             status(r)
             return 1
         saver(working)
-        r.delete("laika:provider-cooldown:claude")
+        r.delete("laika:provider-cooldown:claude", "laika:provider-hold:claude")
         publish(r, "claude", state="done", message="Signed in for a year.")
         status(r)
         return 0

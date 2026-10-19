@@ -108,7 +108,7 @@ or imported projects; dashboard caching.
 ## 1.6: improvements from Phoenix (agreed 2026-10-18; dev LAIka only for testing)
 
 Reimplemented ideas only (memory phoenix-integration). Order:
-- [ ] CP1 providers: classify Claude/Codex failures (quota/rate/auth/other)
+- [x] CP1 providers: classify Claude/Codex failures (quota/rate/auth/other)
       with reset-time parsing; per-provider holds until reset (+2 min, caps);
       provider waits and worker-lost interruptions requeue without using a
       build attempt (capped); Claude rate_limit_event -> usage meter + early

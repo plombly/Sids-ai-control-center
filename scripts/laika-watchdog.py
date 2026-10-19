@@ -227,10 +227,17 @@ def check_restore(r, now):
 
 def check_pipeline(r):
     notes, level = [], "ok"
-    cooldown = r.get("laika:provider-cooldown:claude")
-    if cooldown:
-        notes.append(f"claude cooling down ({cooldown[:80]})")
-        level = "warn"
+    for provider in ("claude", "codex"):
+        cooldown = r.get(f"laika:provider-cooldown:{provider}")
+        if cooldown:
+            left = r.ttl(f"laika:provider-cooldown:{provider}")
+            until = time.strftime("%H:%M", time.localtime(time.time() + left)) if isinstance(left, int) and left > 0 else "soon"
+            notes.append(f"{provider} paused until {until} ({cooldown[:80]})")
+            level = "warn"
+    deferred = sum(1 for key in r.scan_iter("laika:jobs:*") if r.hget(key, "status") == "deferred") \
+        if hasattr(r, "hget") else 0
+    if deferred:
+        notes.append(f"{deferred} build(s) waiting for a provider or a worker (no attempt used)")
     needs_human, invalid = [], []
     for key in r.scan_iter("laika:jobs:*"):
         job = r.hgetall(key)

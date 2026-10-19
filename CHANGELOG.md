@@ -2,6 +2,29 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 1.6.0 (in progress)
+
+**AI providers that don't waste attempts** (ideas from Phoenix, reimplemented):
+
+- Claude and Codex failures are sorted into usage limit, rate limit,
+  sign-in needed and outage, from the providers' own wording, and LAIka
+  reads the reset time they give ("try again in 2h 5m", "resets 3am
+  (America/Chicago)", …). A provider is paused until then (+2 minutes),
+  with sane caps; Codex gets the same pauses Claude always had.
+- A build that no provider can take right now waits for the reset without
+  using up an attempt (setting: provider waits before it counts as failed),
+  and a build whose worker was lost to a restart, crash or reboot runs the
+  same attempt again (setting: restarts survived per build).
+- Claude's own plan-usage report (5-hour and 7-day windows) is read from
+  every run: shown in Settings → AI, and at 95% (setting) LAIka pauses
+  Claude until the window resets instead of hitting the hard limit.
+- Settings → AI shows each provider's availability: taking work, or
+  paused until when and why. The watchdog reports pauses and waiting
+  builds. Signing a provider in again ends its pause.
+- Codex runs that exceed their time limit are force-stopped after 10
+  seconds, and anything an AI tool leaves running is cleaned up.
+- Error text shown on the dashboard is cleaned of secrets.
+
 ## 1.5.3 (2026-10-15)
 
 Faster everywhere, found by watching a server with a few hundred jobs:
