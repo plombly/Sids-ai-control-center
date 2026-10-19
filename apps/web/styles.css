@@ -2829,3 +2829,8 @@ table {
   align-items: center;
   margin-top: 6px;
 }
+.criteria ul,
+.gate-checks {
+  list-style: none;
+  padding-left: 0;
+}
