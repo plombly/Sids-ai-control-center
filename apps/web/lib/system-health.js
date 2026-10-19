@@ -21,6 +21,26 @@ function backupMarkup(backup) {
   }</div>`;
 }
 
+// What a failing watchdog check means and what to do about it.
+export const HINTS = {
+  units: ['A LAIka service is not running, so part of the pipeline is stopped.', 'Run `sudo laika doctor`; it restarts what it can. `systemctl status <unit>` shows why one failed.'],
+  redis: ['Redis holds every job and goal; without it nothing moves.', 'Check `docker ps` for laika-redis, then `sudo laika repair`.'],
+  heartbeats: ['A worker or the orchestrator stopped reporting: work may be stuck.', 'Settings → Workers shows which; `scripts/laika-restart.sh workers` restarts them safely.'],
+  disk: ['Low disk space: builds, logs and backups start failing.', 'Remove old builds and trash, or let `laika-prune` run; check /var/lib/laika and /var/backups.'],
+  memory: ['Low memory: the scaler stops new work to protect running jobs.', 'Fewer workers (Settings → Workers) or more memory for the server.'],
+  load: ['The server is very busy: jobs and pages are slow.', 'Lower the number of workers, or wait for running jobs to finish.'],
+  backup: ['The last nightly backup failed or is old.', 'Its error is shown here; run `sudo systemctl start laika-backup` to retry, then check this page again.'],
+  restore_check: ['The monthly test restore of a backup failed or is overdue.', 'Run `sudo systemctl start laika-restore-check` and read which part failed here afterwards.'],
+  pipeline: ['Some jobs need you, or an AI provider is paused.', 'See Needs you on the home page; Settings → AI shows provider pauses and when they lift.'],
+  exposure: ['LAIka may be reachable from outside your network.', 'Keep it on your LAN or VPN only: close the port forward or firewall rule it names.'],
+  live_tree: ["LAIka's own checkout has changes, so its updates and merges are refused.", 'Run `git status` in LAIka\'s folder and commit or remove the changes.']
+};
+
+export const hintMarkup = check => {
+  const hint = check && check.level !== 'ok' ? HINTS[check.name] : null;
+  return hint ? `<div class="subtle">${esc(hint[0])} <b>What to do:</b> ${esc(hint[1])}</div>` : '';
+};
+
 function reportMarkup(report) {
   if (!report || typeof report !== 'object') return reportEmpty;
 
@@ -31,7 +51,7 @@ function reportMarkup(report) {
   ordered.push(...checks.filter(check => !levels.includes(check?.level)));
   const rows = ordered
     .map(
-      check => `<tr><td>${esc(text(check?.name))}</td><td>${pill(check?.level)}</td><td>${esc(text(check?.detail))}</td></tr>`
+      check => `<tr><td>${esc(text(check?.name))}</td><td>${pill(check?.level)}</td><td>${esc(text(check?.detail))}${hintMarkup(check)}</td></tr>`
     )
     .join('');
   const checked = age === null ? '' : ` <span class="subtle">checked ${esc(`${age}`)}s ago</span>`;

@@ -58,3 +58,10 @@ test('escapes check details', () => {
   assert.doesNotMatch(markup, /<b>x<\/b>/);
   assert.match(markup, /&lt;b&gt;x&lt;\/b&gt;/);
 });
+
+test('a failing check says what it means and what to do', async () => {
+  const { hintMarkup } = await import('./lib/system-health.js');
+  assert.match(hintMarkup({ name: 'backup', level: 'fail' }), /nightly backup failed.*What to do:<\/b> Its error is shown here/);
+  assert.equal(hintMarkup({ name: 'backup', level: 'ok' }), '');
+  assert.equal(hintMarkup({ name: 'unknown-check', level: 'warn' }), '');
+});
