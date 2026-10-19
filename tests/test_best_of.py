@@ -108,7 +108,7 @@ def test_skipped_when_claude_is_at_capacity(worker, monkeypatch):
     monkeypatch.setenv("BEST_OF_ALT_PROVIDER", "claude")  # opt-in only
     monkeypatch.setenv("CLAUDE_MAX_CONCURRENT", "1")
     worker.agent_cli.acquire_claude_slot(worker.redis, "job:busy", 1000)
-    worker.agent_cli.wait_for_claude_slot = lambda *a, **k: False
+    monkeypatch.setattr(worker.agent_cli, "wait_for_claude_slot", lambda *a, **k: None)
     calls = []
     worker.run_agent = lambda job, wt, log: calls.append(job["id"]) or (0, 1.0)
     _, worktree = worker.create_worktree("b1")
@@ -140,8 +140,9 @@ def test_default_second_build_is_codex_and_never_claude(repo, tmp_path, monkeypa
     module.run_agent = lambda job, wt, log: (0, 1.0)
     prompts = []
     module.run_codex = lambda job, wt, log, account=None: prompts.append(job["prompt"]) or (0, 1.0)
-    module.agent_cli.run_claude = lambda *a, **k: pytest.fail("Claude must not build")
-    module.agent_cli.wait_for_claude_slot = lambda *a, **k: pytest.fail("no Claude slot needed")
+    # monkeypatch: agent_cli is shared by every loaded worker module (other tests).
+    monkeypatch.setattr(module.agent_cli, "run_claude", lambda *a, **k: pytest.fail("Claude must not build"))
+    monkeypatch.setattr(module.agent_cli, "wait_for_claude_slot", lambda *a, **k: pytest.fail("no Claude slot needed"))
     _, worktree = module.create_worktree("b1")
     module.run_best_of({"id": "b1", "role": "builder", "prompt": "task"}, worktree, worktree.parent / "l")
     assert len(prompts) == 1 and "independent second attempt" in prompts[0]
