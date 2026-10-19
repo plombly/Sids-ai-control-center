@@ -962,9 +962,15 @@ def _job_gate(data):
     gate = _json_value(data.get("integration_result"), dict)
     if gate is None:
         return None
+    checks = [c for c in (gate.get("checks") or []) if isinstance(c, dict)][:60]
     return {
         "returncode": _number(gate.get("returncode")),
         "summary": str(gate.get("stdout") or "")[-3000:],
+        "errors": str(gate.get("stderr") or "")[-1500:],
+        "command": _text(gate.get("command")),
+        "seconds": _number(gate.get("seconds")),
+        "checks": [{"name": _text(c.get("name")), "result": _text(c.get("result")), "seconds": _number(c.get("seconds"))}
+                   for c in checks],
     }
 
 

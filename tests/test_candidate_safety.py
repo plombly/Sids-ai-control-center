@@ -150,3 +150,11 @@ def test_agents_never_see_laikas_secrets():
     env = agent_cli.agent_env({"REDIS_PASSWORD": "x", "LAIKA_OPERATOR_TOKEN": "y", "DATABASE_URL": "z",
                                "ANTHROPIC_API_KEY": "keep", "PATH": "/bin", "HOME": "/h"})
     assert env == {"ANTHROPIC_API_KEY": "keep", "PATH": "/bin", "HOME": "/h"}
+
+
+def test_gate_lines_become_checks():
+    worker = worker_module()
+    out = "x\n[ PASS ] host-tests (45.2s)\n[ FAIL ] web-tests (3.0s)\n[ SKIP ] local-diagnostic\nINTEGRATION: FAILED"
+    assert worker.gate_checks(out) == [{"name": "host-tests", "result": "pass", "seconds": 45.2},
+                                       {"name": "web-tests", "result": "fail", "seconds": 3.0},
+                                       {"name": "local-diagnostic", "result": "skip", "seconds": None}]

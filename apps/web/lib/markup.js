@@ -62,6 +62,19 @@ const detailRows = (job, fields) =>
     )
     .join('');
 const detailSection = (title, content) => `<section class="detail-block"><h3>${esc(title)}</h3>${content}</section>`;
+// What LAIka itself ran on the integrated change before review: the command
+// (chosen from main, never from the change), each check and its output.
+export const gateEvidenceMarkup = gate => {
+  const passed = Number(gate.returncode) === 0;
+  const head = `<p><b>${passed ? 'Passed' : 'Failed'}</b>${gate.command ? ` · <code>${esc(gate.command)}</code>` : ''}${gate.seconds != null ? ` · ${esc(gate.seconds)} s` : ''}</p>`;
+  const checks = Array.isArray(gate.checks) && gate.checks.length
+    ? `<ul class="plain-list gate-checks">${gate.checks.map(c => `<li><span class="crit ${c.result === 'pass' ? 'ok' : c.result === 'fail' ? 'bad' : 'unknown'}">${c.result === 'pass' ? '✓' : c.result === 'fail' ? '✗' : '–'}</span> ${esc(c.name)}${c.seconds != null ? ` <span class="subtle">${esc(c.seconds)} s</span>` : ''}</li>`).join('')}</ul>`
+    : '';
+  const output = gate.summary ? `<details><summary>Output (last part)</summary><pre class="gate-output">${esc(gate.summary)}</pre></details>` : '';
+  const errors = gate.errors ? `<details><summary>Errors</summary><pre class="gate-output">${esc(gate.errors)}</pre></details>` : '';
+  return head + checks + output + errors;
+};
+
 export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
   job = { ...job, _started: clockText(job.started_at, now), _finished: job.started_at == null ? '' : job.finished_at == null ? '—' : clockText(job.finished_at, now), _elapsed: job.started_at == null ? '' : job.finished_at == null ? elapsedMarkup(job.started_at, null, now) : elapsedText(job.elapsed_seconds) };
   const lineage = asObject(job.lineage) || {},
@@ -84,12 +97,7 @@ export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
       ? `<ol>${sourceCommits.map(commit => `<li>${detailValue(commit)}</li>`).join('')}</ol>`
       : detailValue(null),
     gate = asObject(job.gate),
-    gateMarkup = gate
-      ? detailRows(gate, [
-          ['Return code', 'returncode'],
-          ['Summary', 'summary']
-        ])
-      : '<p>No gate result</p>',
+    gateMarkup = gate ? gateEvidenceMarkup(gate) : '<p>No gate result</p>',
     timingRows = job.started_at == null ? [] : [
       ['Started', '_started'],
       ['Finished', '_finished'],
@@ -156,7 +164,7 @@ export const jobDetailMarkup = (job, now = Date.now() / 1000) => {
       ['Review job ID', 'review_job_id'],
       ['Review findings', 'review_findings']
     ]) + `<h4>Source candidate commits</h4>${sourceMarkup}<h4>Review history</h4>${historyMarkup}`
-  )}${detailSection('Gate', gateMarkup)}${detailSection('History', timelineMarkup(job.timeline, now))}${detailSection('Related jobs', relatedMarkup)}`;
+  )}${detailSection('Test evidence', gateMarkup)}${detailSection('History', timelineMarkup(job.timeline, now))}${detailSection('Related jobs', relatedMarkup)}`;
 };
 
 // Every status change of the job (services/job_events.py): who, when, why.

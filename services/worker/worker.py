@@ -668,20 +668,25 @@ def _prepare_integration_locked(job_id, key):
         if safety["refused"]:
             raise RuntimeError("change refused by the safety check: " + "; ".join(safety["refused"][:10]))
 
+        gate_started = time.time()
         if PROJECT is not None and not PROJECT.is_builtin:
+            gate_command = trusted_gate(path, base)[0] or ""
             gate_ok, gate_output = project_gate(path, network=gate_network(job_id), base=base)
             if not gate_ok:
                 note_network_need(job_id, gate_output, "integration tests")
             gate = subprocess.CompletedProcess([], 0 if gate_ok else 1, gate_output, "")
         else:
+            gate_command = f"scripts/integration-check.py (from {base[:12]})"
             gate = run_builtin_gate(path, base)
+        integration_metadata.update(command=gate_command, seconds=round(time.time() - gate_started, 1),
+                                    checks=gate_checks(gate.stdout))
         integrated = run_git("rev-parse", "HEAD", cwd=path).stdout.strip()
-        integration_metadata = {
+        integration_metadata.update({
             "returncode": gate.returncode,
             "stdout": gate.stdout[-4000:],
             "stderr": gate.stderr[-4000:],
             "commit": integrated,
-        }
+        })
         if gate.returncode != 0:
             raise RuntimeError("deterministic integration gate failed")
 
@@ -753,6 +758,20 @@ def guard_git_control(worktree):
         except OSError as exc:
             print(f"[{WORKER_ID}] could not restore {path}: {exc}", flush=True)
     raise RuntimeError("the agent changed git configuration or hooks (restored): " + ", ".join(changed[:5]))
+
+
+_CHECK_LINE = re.compile(r"^\[\s*(PASS|FAIL|SKIP)\s*\]\s+(\S+)(?:\s+\(([\d.]+)s\))?")
+
+
+def gate_checks(output):
+    """[{name, result, seconds}] from LAIka's gate lines ("[ PASS ] host-tests (45.2s)")."""
+    checks = []
+    for line in str(output or "").splitlines():
+        match = _CHECK_LINE.match(line.strip())
+        if match:
+            checks.append({"name": match.group(2), "result": match.group(1).lower(),
+                           "seconds": float(match.group(3)) if match.group(3) else None})
+    return checks[:60]
 
 
 def run_builtin_gate(path, base):

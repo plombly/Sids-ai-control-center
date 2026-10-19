@@ -2807,3 +2807,9 @@ table {
 .crit.ok { color: var(--green, #2da44e); }
 .crit.bad { color: var(--red, #e5534b); }
 .crit.unknown { color: var(--muted, #888); }
+.gate-output {
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}

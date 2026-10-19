@@ -166,7 +166,7 @@ async function main() {
   assert.match(detailMarkup, /1m 00s/);
   const running = jobDetailMarkup({ id: 'run', started_at: 100, finished_at: null }, 112);
   assert.match(running, /<b>Elapsed<\/b><span><span class="elapsed" data-elapsed-since="100">12s<\/span><\/span>/);
-  for (const heading of ['Summary', 'Candidate', 'Attempts', 'Review', 'Gate', 'Related jobs']) {
+  for (const heading of ['Summary', 'Candidate', 'Attempts', 'Review', 'Test evidence', 'History', 'Related jobs']) {
     assert.match(detailMarkup, new RegExp(`<h3>${heading}</h3>`));
   }
   assert.match(jobDetailMarkup({id:'j2'}), /No gate result/);
@@ -241,4 +241,13 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
   assert.match(html, /worker lost while running/);
   assert.match(html, /class="unexpected".*Unusual change/s);
   assert.match(timelineMarkup([]), /No recorded changes yet/);
+}
+
+{
+  const { gateEvidenceMarkup } = await import('./lib/markup.js');
+  const html = gateEvidenceMarkup({ returncode: 0, command: 'npm test', seconds: 12.5, checks: [{ name: 'host-tests', result: 'pass', seconds: 40 }, { name: 'web', result: 'fail', seconds: null }], summary: '14 passed', errors: '' });
+  assert.match(html, /<b>Passed<\/b> · <code>npm test<\/code> · 12\.5 s/);
+  assert.match(html, /crit ok">✓<\/span> host-tests/);
+  assert.match(html, /crit bad">✗<\/span> web/);
+  assert.match(html, /<pre class="gate-output">14 passed<\/pre>/);
 }
