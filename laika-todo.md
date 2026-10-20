@@ -147,8 +147,11 @@ Reimplemented ideas only (memory phoenix-integration). Order:
 - [x] Before 2.0 (owner, 2026-10-19): account notifications (ai_account),
       "Stop at" per account, upgrading notes, doctor ai-accounts check,
       Codex plan usage from its session file, backups/sign-ins documented.
-- [ ] Release 2.0.0: signed update test 1.5.3 -> 2.0 (needs the key); then
-      the owner tests a second real paid account on production.
+- [x] Release 2.0.0 (2026-10-19): signed, update + clean-install tests,
+      public CI green; production deployed by the owner the same day.
+- [ ] Owner, soon: add the second paid AI account on production (Settings
+      -> AI -> More accounts, sign in; lower "Stop at" on the plan used by
+      hand); Claude watches the first jobs that run on it.
 
 ## Backlog (not scheduled)
 
