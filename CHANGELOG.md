@@ -2,6 +2,17 @@
 
 All notable changes to LAIka. Versions follow [semantic versioning](https://semver.org).
 
+## 2.0.1 (2026-10-21)
+
+- **Git push works with any server, not only GitHub.** A project's push
+  after each approval can now go to a self-hosted git server, for example a
+  hosting service that builds and deploys on push: the first push records
+  the server's host key instead of failing with "Host key verification
+  failed" (a changed key still stops the push). Set it up under the
+  project's Settings → Git push; projects already pushing to GitHub need
+  nothing. Projects that set up a push before 2.0.1 to a server LAIka has
+  never contacted: run the push setup again.
+
 ## 2.0.0 (2026-10-19)
 
 **Upgrading from 1.5:** update as usual (Settings → System → Update now,
