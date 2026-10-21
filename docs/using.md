@@ -17,6 +17,12 @@ app), **Activity**, **Files**, **Builds**, **History** and **Settings**.
 **Importance** (high / medium / low) decides which project's work runs
 first when workers are busy.
 
+**Git push** (Settings) pushes every approved change to another git
+repository: GitHub, or a hosting server that builds and deploys on push
+(give its `ssh://user@host/app.git` address). LAIka makes a deploy key for
+it and shows it to you to add there; the first push records the server's
+host key.
+
 ## Goals
 
 Type what you want into a goal box, as you would tell a developer:

@@ -109,7 +109,7 @@ def test_register_mutations_push_and_list(redis, tmp_path, capsys):
     code, _, data = invoke(["push-setup", "zeta", "git@github.com:org/repo.git"], capsys)
     assert code == 0 and data["push_remote"] == "git@github.com:org/repo.git"
     assert Path(data["deploy_key"]).stat().st_mode & 0o777 == 0o600
-    assert subprocess.run(["git", "-C", str(repo), "config", "core.sshCommand"], capture_output=True, text=True).stdout.strip().startswith("ssh -i")
+    assert subprocess.run(["git", "-C", str(repo), "config", "core.sshCommand"], capture_output=True, text=True).stdout.strip().endswith("-o StrictHostKeyChecking=accept-new")
     assert invoke(["set-importance", "zeta", "urgent"], capsys)[0] == 1
     assert invoke(["set-importance", "zeta", "high"], capsys)[2]["importance"] == "high"
     assert invoke(["archive", "zeta"], capsys)[2]["status"] == "archived"

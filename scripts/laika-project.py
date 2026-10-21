@@ -154,7 +154,10 @@ def do_push_setup(redis_client, record, url):
         run_git(["remote", "set-url", "origin", url], cwd=record["repo"])
     except ProjectError:
         run_git(["remote", "add", "origin", url], cwd=record["repo"])
-    run_git(["config", "core.sshCommand", f"ssh -i {key} -o IdentitiesOnly=yes"], cwd=record["repo"])
+    # accept-new: the first push to a new host (e.g. a self-hosted git server)
+    # records its key instead of failing non-interactively; a changed key still fails.
+    run_git(["config", "core.sshCommand", f"ssh -i {key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"],
+            cwd=record["repo"])
     record["push_remote"] = url
     record["deploy_key"] = str(key)
     record["updated_at"] = now()

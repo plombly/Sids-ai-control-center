@@ -5,7 +5,7 @@ setting says when it takes effect: *at once*, or *after Apply now*, which
 restarts LAIka's services safely (running jobs finish first).
 
 Per-project settings (importance, tests, how to run and build the project,
-internet access for tests, secrets, GitHub push) are on each project's
+internet access for tests, secrets, git push to GitHub or to a hosting app) are on each project's
 **Settings** tab.
 
 ## Your account and access
