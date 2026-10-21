@@ -152,6 +152,12 @@ Reimplemented ideas only (memory phoenix-integration). Order:
 - [ ] Owner, soon: add the second paid AI account on production (Settings
       -> AI -> More accounts, sign in; lower "Stop at" on the plan used by
       hand); Claude watches the first jobs that run on it.
+- [ ] Git push to any host (2026-10-21, on dev/claude, gate passed, on the
+      dev LAIka): push-setup sets StrictHostKeyChecking=accept-new so the
+      first push to a self-hosted server (BLU hosting app) works; wording
+      "Git push" in Settings and docs. Live-tested from the dev LAIka to a
+      hosting app (built and deployed). Next: owner tries it, then release
+      (2.0.1) or merge.
 
 ## Backlog (not scheduled)
 
