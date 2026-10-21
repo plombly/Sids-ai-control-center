@@ -156,8 +156,10 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       dev LAIka): push-setup sets StrictHostKeyChecking=accept-new so the
       first push to a self-hosted server (BLU hosting app) works; wording
       "Git push" in Settings and docs. Live-tested from the dev LAIka to a
-      hosting app (built and deployed). Next: owner tries it, then release
-      (2.0.1) or merge.
+      hosting app (built and deployed). 2.0.1 prepared 2026-10-21 (VERSION,
+      CHANGELOG, gate, release check + private scan, CI rehearsal on Debian 12
+      as a normal user, dev LAIka on 2.0.1). Waiting for the signing key in
+      /home/administrator/keydrop to publish.
 
 ## Backlog (not scheduled)
 
