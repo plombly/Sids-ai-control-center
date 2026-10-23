@@ -171,7 +171,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       Deploy to LNMT from project Settings, template "WordPress site" (whole
       site as code: theme + pages/menu/images; WordPress edits kept).
       Also fixed: `laika reset-password` crashed on installs (no FastAPI).
-- [ ] Production: owner's go; ff-merge, mkdir -m700 /etc/laika/link,
+- [x] Production (2026-10-23): ff-merged, /etc/laika/link made, api+web rebuilt, paired; devyn came in. Was:
       docker compose up -d --build api web, pair with LNMT; release 2.1.0.
 - [ ] The test: Devyn's site on aegvori.com, built through LNMT + LAIka;
       Claude observes.
