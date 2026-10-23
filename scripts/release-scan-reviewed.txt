@@ -2,3 +2,4 @@
 # found harmless, in commits that cannot be changed any more (history).
 # One per line: <commit> <file> <label>   # why
 72d0e93 apps/api/tests/test_teams.py private key   # fake "BEGIN OPENSSH PRIVATE KEY" in the SSH-key validation test; allow marker added in db96781
+e242bdd tests/test_provider_health.py password in a URL   # fake Redis password in the redaction test; allow markers added later
