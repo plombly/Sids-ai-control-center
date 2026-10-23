@@ -2834,3 +2834,10 @@ table {
   list-style: none;
   padding-left: 0;
 }
+
+/* LNMT: "Sign in to LNMT" (lib/lnmt-link.js) */
+.lnmt-connect { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px;
+  background: rgba(0, 0, 0, 0.5); }
+.lnmt-connect-card { width: min(440px, 100%); background: var(--panel); border-radius: 12px; padding: 20px 22px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); }
+.lnmt-connect-card h2 { margin-top: 0; }

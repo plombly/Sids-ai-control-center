@@ -30,9 +30,11 @@ export function deployCardMarkup(projectId, info = {}, apps = null) {
   return `<h3>Deploy to LNMT</h3>${current}<form class="form-row" data-lnmt-deploy-form="${esc(projectId)}">${picker}<span class="form-status" data-lnmt-deploy-status role="status"></span></form>`;
 }
 
-export const connectDialogMarkup = (name, service) => `<div class="lnmt-connect card"><h2>Sign in to ${esc(service || 'LNMT')}</h2>
+export const connectDialogMarkup = (name, service) => `<div class="lnmt-connect" role="dialog" aria-modal="true" aria-labelledby="lnmt-connect-title"><div class="lnmt-connect-card">
+  <h2 id="lnmt-connect-title">Sign in to ${esc(service || 'LNMT')}</h2>
   <p>${esc(service || 'LNMT')} asks to sign you in as <b>${esc(name)}</b>. It learns your user name and role here, nothing else.</p>
-  <div class="form-row"><button type="button" data-lnmt-allow>Continue as ${esc(name)}</button><button type="button" data-lnmt-deny>Cancel</button><span class="form-status" data-lnmt-status role="status"></span></div></div>`;
+  <div class="form-row"><button type="button" class="primary" data-lnmt-allow>Continue as ${esc(name)}</button><button type="button" data-lnmt-deny>Cancel</button></div>
+  <span class="form-status" data-lnmt-status role="status"></span></div></div>`;
 
 export const connectState = hash => {
   const match = /^#\/connect\?(?:.*&)?state=([A-Za-z0-9_-]{16,128})/.exec(String(hash || ''));
@@ -110,6 +112,6 @@ if (typeof document !== 'undefined') {
     if (document.querySelector('.lnmt-connect')) return;
     const holder = document.createElement('div');
     holder.innerHTML = connectDialogMarkup(me.username, service);
-    document.querySelector('main')?.prepend(holder.firstElementChild);
+    document.body.appendChild(holder.firstElementChild);
   });
 }
