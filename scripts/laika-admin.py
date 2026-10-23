@@ -48,11 +48,19 @@ def setup_code(r):
     return 0
 
 
+def end_sessions(r, user):
+    """Sign one person out everywhere (as auth.end_sessions, without FastAPI)."""
+    for sid in list(r.smembers("laika:session-ids") or []):
+        if (r.hget(f"laika:sessions:{sid}", "user") or "").lower() == user.lower():
+            r.delete(f"laika:sessions:{sid}")
+            r.srem("laika:session-ids", sid)
+
+
 def reset_password(r, username=""):
     """A new password for one account (default: the first administrator);
     that person is signed out everywhere."""
     import access
-    import auth
+    from passwords import hash_password  # not auth.py: the host has no FastAPI
     access.migrate(r)
     if username:
         account = access.get_user(r, username)
@@ -62,8 +70,8 @@ def reset_password(r, username=""):
         print("No such account. With no account yet: use setup-code and the web setup.", file=sys.stderr)
         return 1
     password = "-".join("".join(secrets.choice(ALPHABET.lower()) for _ in range(5)) for _ in range(4))
-    access.save_user(r, account["name"], password=auth.hash_password(password), password_reset_at=time.time(), disabled="")
-    auth.end_sessions(r, user=account["name"])
+    access.save_user(r, account["name"], password=hash_password(password), password_reset_at=time.time(), disabled="")
+    end_sessions(r, account["name"])
     print(f"user: {account.get('username')}\npassword: {password}\n(change it in Settings → Access after signing in)")
     return 0
 

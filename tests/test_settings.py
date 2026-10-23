@@ -110,6 +110,18 @@ def test_setup_code_and_password_reset(capsys):
     assert admin.main(["x", "reset-password", "ALEX"], r) == 0  # any capitals
 
 
+def test_password_reset_works_without_fastapi_on_the_host(monkeypatch, capsys):
+    """Installs have no FastAPI in the host venv: reset-password must not need it."""
+    import sys
+    monkeypatch.setitem(sys.modules, "fastapi", None)
+    monkeypatch.delitem(sys.modules, "auth", raising=False)
+    admin = load_module(ROOT / "scripts/laika-admin.py")
+    r = MemoryRedis()
+    r.records["laika:auth:admin"] = {"username": "alex", "password": "old"}
+    assert admin.main(["x", "reset-password"], r) == 0
+    assert "user: alex" in capsys.readouterr().out
+
+
 def test_provider_helper_reads_cli_output_without_leaking_details():
     import subprocess
     helper = load_module(ROOT / "scripts/laika-providers.py")
