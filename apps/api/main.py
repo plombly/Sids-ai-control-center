@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 import zipfile
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -381,8 +382,25 @@ def _job(key, data):
         # An internet-access request (services/network_access.py); credentials already masked.
         "network_request_reason": _text(data.get("network_request_reason"), "")[:1200],
         "network_request_step": _text(data.get("network_request_step")),
+        # The rendered preview on LNMT (services/visual_preview.py); screenshots by file name.
+        "visual_status": _text(data.get("visual_status")),
+        "visual_error": _text(data.get("visual_error"))[:400],
+        "visual": _visual(data.get("visual_preview")),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
+
+
+def _visual(raw):
+    preview = _json_object(raw) or {}
+    pages = []
+    for page in preview.get("pages", [])[:6] if isinstance(preview.get("pages"), list) else []:
+        if not isinstance(page, dict):
+            continue
+        shots = {k: Path(str(v)).name for k, v in (page.get("shots") or {}).items() if v}
+        problems = {k: [_text(p)[:300] for p in v][:10] for k, v in (page.get("problems") or {}).items() if isinstance(v, list)}
+        pages.append({"path": _text(page.get("path"), "/")[:200], "title": _text(page.get("title"))[:200],
+                      "shots": shots, "problems": problems})
+    return {"url": _text(preview.get("url")), "pages": pages, "errors": [_text(e)[:300] for e in preview.get("errors", [])][:10]} if pages or preview.get("url") else None
 
 
 def _json_object(value):
@@ -1445,3 +1463,5 @@ from backups_routes import router as backups_router  # noqa: E402
 app.include_router(backups_router)
 from link_routes import router as link_router  # noqa: E402
 app.include_router(link_router)
+from visual_routes import router as visual_router  # noqa: E402
+app.include_router(visual_router)

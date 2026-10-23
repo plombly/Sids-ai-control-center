@@ -30,6 +30,7 @@ import project_reference  # noqa: E402  (services/project_reference.py)
 import laika_projects  # noqa: E402  (services/laika_projects.py)
 import project_sandbox  # noqa: E402  (services/project_sandbox.py)
 import laika_redis  # noqa: E402  (services/laika_redis.py)
+import visual_preview  # noqa: E402  (services/visual_preview.py)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = os.environ.get("WORKER_QUEUE", "laika:jobs")
@@ -703,6 +704,10 @@ def _prepare_integration_locked(job_id, key):
             "integration_result": json.dumps(integration_metadata, separators=(",", ":")),
             "updated_at": str(time.time()),
         })
+        try:  # a site on LNMT: render this candidate for the reviewer and the human
+            visual_preview.request(redis, job_id, data.get("project_id") or "laika", integrated)
+        except Exception as exc:
+            print(f"[{WORKER_ID}] visual preview for {job_id}: {exc}", flush=True)
         return True
     except Exception as exc:
         current = redis.hgetall(key)
@@ -1897,7 +1902,18 @@ def process_review_job(job, key, log_path):
         },
     )
 
-    returncode, duration = run_agent(job, worktree, log_path)
+    # A site on LNMT: wait for the rendered preview of this exact candidate and
+    # let the reviewer look at it (services/visual_preview.py).
+    seen = visual_preview.wait(redis, builder_job_id, candidate_commit, tick=lambda: heartbeat("working"))
+    extra_dirs = list(agent_cli.EXTRA_DIRS)
+    if seen:
+        job = {**job, "prompt": job.get("prompt", "") + visual_preview.review_section(seen)}
+        agent_cli.EXTRA_DIRS = extra_dirs + visual_preview.screenshot_dirs(seen)
+        redis.hset(key, "visual_reviewed", seen.get("visual_status", ""))
+    try:
+        returncode, duration = run_agent(job, worktree, log_path)
+    finally:
+        agent_cli.EXTRA_DIRS = extra_dirs
     session_id, usage = parse_codex_log(log_path)
 
     head_after = run_git("rev-parse", "HEAD", cwd=worktree).stdout.strip()

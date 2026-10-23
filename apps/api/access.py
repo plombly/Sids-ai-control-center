@@ -170,7 +170,7 @@ PROJECT_RULES = [
     ("PUT", rf"/api/projects/({PID})/env", "project", "approve"),
     ("DELETE", rf"/api/projects/({PID})/env/.+", "project", "approve"),
     ("POST", rf"/api/projects/({PID})/(?:parent|push-setup|undo|retry-clone|deploy-lnmt)", "project", "approve"),
-    ("GET", rf"/api/jobs/({ID})(?:/log|/why)?", "job", "view"),
+    ("GET", rf"/api/jobs/({ID})(?:/log|/why|/visual/[a-z0-9-]{{1,80}}\.png)?", "job", "view"),
     ("POST", rf"/api/jobs/({ID})/preview", "job", "build"),
     ("DELETE", rf"/api/jobs/({ID})/preview", "job", "build"),
     ("POST", rf"/api/jobs/({ID})/actions", "job", "build"),  # approving needs more: checked in the endpoint

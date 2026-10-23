@@ -564,6 +564,27 @@ def maybe_playtest(project, status, opener=None):
         print(f"[laika-apps] play-test of {project.id}: {(result.stderr or result.stdout).strip()[:200]}", flush=True)
 
 
+VISUAL_SCRIPT = Path(__file__).resolve().parents[2] / "scripts/laika-visual.py"
+
+
+def launch_visuals(limit=4):
+    """Start scripts/laika-visual.py for candidates waiting to be looked at
+    (services/visual_preview.py), one unit each."""
+    import visual_preview
+    for _ in range(limit):
+        job_id = redis.lpop(visual_preview.QUEUE)
+        if not job_id:
+            return
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", job_id):
+            continue
+        result = run([SYSTEMD_RUN, f"--unit=laika-visual-{job_id}-{int(time.time())}", "--quiet", "--collect",
+                      "--property=RuntimeMaxSec=1200", f"--description=LAIka visual preview {job_id}",
+                      "/var/lib/laika/venv/bin/python", str(VISUAL_SCRIPT), job_id])
+        if result.returncode:
+            redis.hset(f"laika:jobs:{job_id}", mapping={"visual_status": "failed",
+                       "visual_error": f"could not start: {(result.stderr or result.stdout).strip()[:300]}"})
+
+
 ASSIST_SCRIPT = Path(__file__).resolve().parents[2] / "scripts/laika-assist.py"
 
 
@@ -641,6 +662,10 @@ def loop_once():
     publish_histories(with_git(laika_projects.all_projects(redis)))  # LAIka too (read-only history)
     publish_types(with_git(laika_projects.all_projects(redis)))
     launch_builds([p for p in laika_projects.all_projects(redis) if not p.is_builtin])
+    try:
+        launch_visuals()
+    except Exception as exc:
+        print(f"[laika-apps] visual previews: {exc}", flush=True)
     projects = [p for p in laika_projects.all_projects(redis) if not p.is_builtin]
     known = set(redis.smembers("laika:projects") or [])
     for project in projects:

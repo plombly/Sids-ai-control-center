@@ -691,6 +691,22 @@ imported on deploy by mu-plugins/site-content.php; pages edited in
 WordPress since are kept), Dockerfile for LNMT's "WordPress site built
 by LAIka" apps (LNMT kind id wordpress-theme).
 
+Visual previews (2.1): for a project with laika:link:deploy:<id>, the
+worker asks for a preview after the gate passes (services/visual_preview.py:
+laika:visual-queue, builder fields visual_status/visual_commit/
+visual_preview/visual_error); the apps service starts scripts/laika-visual.py
+(root unit laika-visual-<job>-<ts>): git push --force <candidate>:refs/heads/
+lnmt-preview/<job> to the LNMT app (LNMT's hook builds a throwaway copy with
+its own in-memory DB, prints "LNMT preview: <url>"), then the play-test's
+headless Chrome takes full-page screenshots of / and up to 3 menu pages at
+1280 and 390 wide into <root>/visual/<job>/ and runs CHECKS_JS (sideways
+scroll, words broken across lines, small h1, missing images, overflow).
+The reviewer (process_review_job) waits up to VISUAL_WAIT_SECONDS (600) for
+it, gets review_section() in its prompt and the folder via
+agent_cli.EXTRA_DIRS; visible defects from the change are BLOCKING.
+GET /api/jobs/<id>/visual/<file>.png (visual_routes.py); approval card
+lib/visual-preview.js. VISUAL_PREVIEWS=false turns it off.
+
 ## Style
 
 Small, reviewable commits with clear messages. Tests with every behavior

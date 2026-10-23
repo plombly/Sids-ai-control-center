@@ -2841,3 +2841,13 @@ table {
 .lnmt-connect-card { width: min(440px, 100%); background: var(--panel); border-radius: 12px; padding: 20px 22px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); }
 .lnmt-connect-card h2 { margin-top: 0; }
+
+/* Rendered previews on LNMT (lib/visual-preview.js) */
+.visual { margin: 8px 0; }
+.visual-shots { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.visual-shot { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); text-decoration: none; }
+.visual-shot img { height: 170px; object-fit: cover; object-position: top; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.visual-shot.desktop img { width: 240px; }
+.visual-shot.phone img { width: 80px; }
+.visual-problems { margin: 6px 0; }
+.warn-text { color: #c98a14; }
