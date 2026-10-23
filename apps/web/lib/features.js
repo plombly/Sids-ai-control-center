@@ -26,3 +26,4 @@ import './pause.js';
 import './away.js';
 import './backups.js';
 import './provider-accounts.js';
+import './lnmt-link.js';

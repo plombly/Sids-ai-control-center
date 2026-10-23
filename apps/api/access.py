@@ -150,9 +150,10 @@ SIGNED_IN = [
             rf"|/api/goals|/api/goals/recent|/api/jobs|/api/jobs/recent|/api/approvals|/api/jobs/approvals|/api/failures"
             rf"|/api/action-required|/api/actions-required|/api/queue|/api/merge-queue|/api/dismissals|/api/projects"
             rf"|/api/usage|/api/devices|/api/repository|/api/operator/status|/api/operator-requests/{ID}|/api/me"
-            rf"|/api/me/notifications|/api/me/notifications/digest-preview|/api/sftp|/api/me/ssh-keys"),
+            rf"|/api/me/notifications|/api/me/notifications/digest-preview|/api/sftp|/api/me/ssh-keys"
+            rf"|/api/link/lnmt|/api/link/lnmt/apps"),
     ("POST", r"/api/auth/logout|/api/auth/password|/api/devices|/api/dismissals|/api/me/notifications/test"
-             r"|/api/me/ssh-keys"),
+             r"|/api/me/ssh-keys|/api/connect/authorize"),
     ("PUT", r"/api/me/notifications/(?:settings|targets)"),
     ("DELETE", rf"/api/auth/sessions/[a-f0-9]{{16}}|/api/devices/{ID}|/api/dismissals/.+|/api/me/ssh-keys/[a-f0-9]{{12}}"),
 ]
@@ -168,7 +169,7 @@ PROJECT_RULES = [
     ("PATCH", rf"/api/projects/({PID})", "project", "approve"),
     ("PUT", rf"/api/projects/({PID})/env", "project", "approve"),
     ("DELETE", rf"/api/projects/({PID})/env/.+", "project", "approve"),
-    ("POST", rf"/api/projects/({PID})/(?:parent|push-setup|undo|retry-clone)", "project", "approve"),
+    ("POST", rf"/api/projects/({PID})/(?:parent|push-setup|undo|retry-clone|deploy-lnmt)", "project", "approve"),
     ("GET", rf"/api/jobs/({ID})(?:/log|/why)?", "job", "view"),
     ("POST", rf"/api/jobs/({ID})/preview", "job", "build"),
     ("DELETE", rf"/api/jobs/({ID})/preview", "job", "build"),

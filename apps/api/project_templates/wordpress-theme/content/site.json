@@ -1,0 +1,6 @@
+{
+  "title": "{{NAME}}",
+  "tagline": "",
+  "front_page": "home",
+  "menu": ["home", "about", "contact"]
+}

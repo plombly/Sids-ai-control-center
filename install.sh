@@ -189,7 +189,7 @@ install -d -m 0755 -o root -g root "$DATA/branding"
 install -d -m 0700 -o root -g root "$DATA/trash" "$DATA/db" "$BACKUPS"
 install -d -m 2770 -o "$USER_NAME" -g "$USER_NAME" "$LOGS" "$LOGS/jobs" "$LOGS/integration" "$LOGS/assist"
 install -d -m 0750 -o root -g "$USER_NAME" "$CONF"
-install -d -m 0700 -o root -g root "$CONF/providers" "$CONF/notify" "$CONF/project-env" "$CONF/project-keys"
+install -d -m 0700 -o root -g root "$CONF/providers" "$CONF/notify" "$CONF/project-env" "$CONF/project-keys" "$CONF/link"
 # The SFTP server's host key (made once; the laika-run service may read it).
 install -d -m 0750 -o root -g "$USER_NAME" "$CONF/sftp"
 if [ ! -s "$CONF/sftp/ssh_host_ed25519_key" ]; then

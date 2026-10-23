@@ -54,6 +54,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: ${REDIS_URL}
       LAIKA_NOTIFY_DIR: /notify
+      LAIKA_LINK_DIR: /link
     # LAIKA_OPERATOR_TOKEN for write access (root-only file on the host,
     # outside the repo). Absent file: writes stay open, Web approve refused.
     env_file:
@@ -80,6 +81,9 @@ services:
       - /etc/laika/notify:/notify
       # AI provider API keys (apps/api/provider_routes.py), write-only from the page.
       - /etc/laika/providers:/providers
+      # The connection to LNMT (apps/api/link_routes.py): its address, pinned
+      # certificate and tokens; root-only on the host.
+      - /etc/laika/link:/link
     depends_on:
       postgres:
         condition: service_healthy

@@ -667,6 +667,30 @@ provides it, adds python3.11 when python3 < 3.10 ($PYTHON), opens 8080 and
 8100-8299 in firewalld's default zone and every active zone except docker; doctor check_firewall. The
 clean-install test runs firewalld in Fedora/RHEL machines.
 
+LNMT link (2.1): LNMT (LAIka NGINx Management Terminal, the owner's web
+hosting panel; its own repo, not this one) pairs with LAIka:
+apps/api/link_routes.py. An LNMT admin makes a pairing code (LNMT URL, a
+token, LNMT's cert SHA-256); a LAIka admin pastes it (Settings → System →
+LNMT; web lib/lnmt-link.js); LAIka calls LNMT /api/link/hello over the
+PINNED cert with its own token. Secrets only in root-only
+/etc/laika/link/lnmt.json (mounted at /link in the api; inbound token kept
+as SHA-256). LNMT's calls: /api/link/service/* (public prefix in auth.py,
+the bearer token checked in link_routes._service; act for one LAIka user
+with that user's access): users (LNMT makes accounts for LAIka's people),
+token (sign-in code exchange: #/connect?state= in the web asks the person,
+POST /api/connect/authorize makes a one-use code laika:link:code:<sha256>,
+2 min, redirect only to the paired LNMT), projects (LNMT "Build with
+LAIka": create_project for the person + grant LNMT_PROJECT_ACCESS
+(approve) + project_push_setup to the app's ssh:// URL; returns the deploy
+key, which LNMT forces to that one app's git), projects/<id>?for_user=
+(status for LNMT's app page). Project Settings → Deploy to LNMT
+(POST /api/projects/<id>/deploy-lnmt, approve level) does the same from
+LAIka's side. Template project_templates/wordpress-theme: a whole
+WordPress site as code (theme + content/ pages, menu, images, site.json,
+imported on deploy by mu-plugins/site-content.php; pages edited in
+WordPress since are kept), Dockerfile for LNMT's "WordPress, its theme
+built in LAIka" apps.
+
 ## Style
 
 Small, reviewable commits with clear messages. Tests with every behavior

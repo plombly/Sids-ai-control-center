@@ -1,0 +1,5 @@
+{
+ "name": "WordPress site",
+ "description": "A complete WordPress site built here (theme, pages, menu, images) and deployed to a WordPress app on LNMT; people can still edit it in WordPress.",
+ "type": "website"
+}

@@ -41,7 +41,9 @@ FAILS_ALLOWED = 10
 FAILS_WINDOW = 900
 AUDIT_KEEP = 5000
 PUBLIC = {"/health", "/api/auth/state", "/api/auth/login", "/api/setup/state", "/api/setup/admin"}
-PUBLIC_PREFIXES = ("/api/invites/",)  # accepting an invite (users_routes.py)
+# Accepting an invite (users_routes.py); LNMT's calls, whose token is checked
+# by link_routes.py itself.
+PUBLIC_PREFIXES = ("/api/invites/", "/api/link/service/")
 MIN_PASSWORD = 10
 
 

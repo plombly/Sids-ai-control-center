@@ -17,6 +17,15 @@ app), **Activity**, **Files**, **Builds**, **History** and **Settings**.
 **Importance** (high / medium / low) decides which project's work runs
 first when workers are busy.
 
+**Websites on LNMT.** If your server also runs LNMT (the LAIka NGINx
+Management Terminal, a web hosting panel), an administrator connects it
+once: Settings → System → LNMT, paste the pairing code LNMT makes. Then
+people sign in to LNMT with their LAIka account, LNMT can start a LAIka
+project for a site ("Build with LAIka" on an app), and a project's
+Settings can deploy it to one of your LNMT apps. The **WordPress site**
+template builds a complete WordPress site as code: its look, its pages,
+menu and images; people can still edit pages in WordPress afterwards.
+
 **Git push** (Settings) pushes every approved change to another git
 repository: GitHub, or a hosting server that builds and deploys on push
 (give its `ssh://user@host/app.git` address). LAIka makes a deploy key for
