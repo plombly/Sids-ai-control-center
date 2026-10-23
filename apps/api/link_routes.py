@@ -370,7 +370,9 @@ def service_create_project(payload: ServiceProject, request: Request):
     key = _push_to_lnmt(payload.id, payload.git_url, payload.request_id + "-push")
     import auth
     auth.audit(redis, request, 200, f"LNMT created project {payload.id} for {ctx.name}")
-    redis.set(f"laika:link:deploy:{payload.id}", json.dumps({"git_url": payload.git_url}))
+    target = re.fullmatch(r"ssh://c-([a-z0-9][a-z0-9-]*)@[^/]+/([a-z][a-z0-9-]*)\.git", payload.git_url)
+    redis.set(f"laika:link:deploy:{payload.id}", json.dumps({"git_url": payload.git_url, "customer": target.group(1) if target else "",
+                                                              "app": target.group(2) if target else ""}))
     return {"project": payload.id, "public_key": key, "url": f"{_service(request).get('laika_url', '')}/#/projects/{payload.id}"}
 
 

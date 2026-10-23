@@ -24,7 +24,7 @@ export function deployCardMarkup(projectId, info = {}, apps = null) {
     : target?.git_url ? '<p>Deploys to its LNMT app (set up from LNMT): every approved change is pushed there, built and put live.</p>'
       : '<p class="subtle">Pick one of your LNMT apps built from git (kind “Your own Dockerfile” or “WordPress site built by LAIka”): every approved change of this project is pushed there, built and put live.</p>';
   const choices = Array.isArray(apps) ? apps.filter(a => a.git_url) : [];
-  const picker = apps === null ? '<button type="button" data-lnmt-apps>Choose an LNMT app…</button>'
+  const picker = apps === null ? `<button type="button" data-lnmt-apps>${target?.app || target?.git_url ? 'Change…' : 'Choose an LNMT app…'}</button>`
     : choices.length ? `<select name="target">${choices.map(a => `<option value="${esc(`${a.customer}/${a.name}`)}">${esc(a.name)}${a.sites?.length ? ` (${esc(a.sites.join(', '))})` : ''}</option>`).join('')}</select><button type="submit">Deploy there</button>`
       : '<span class="subtle">You have no LNMT apps built from git yet: create one in LNMT first.</span>';
   return `<h3>Deploy to LNMT</h3>${current}<form class="form-row" data-lnmt-deploy-form="${esc(projectId)}">${picker}<span class="form-status" data-lnmt-deploy-status role="status"></span></form>`;

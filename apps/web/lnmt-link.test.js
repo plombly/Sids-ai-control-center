@@ -12,7 +12,9 @@ test('Settings card: connect with a pairing code, or show the connection without
 test('Deploy to LNMT: nothing when not connected; the current target; only git-built apps to pick', () => {
   assert.equal(deployCardMarkup('shop', { connected: false }), '');
   assert.match(deployCardMarkup('shop', { connected: true, target: null }), /data-lnmt-apps/);
-  assert.match(deployCardMarkup('shop', { connected: true, target: { app: 'site' } }), /Deploys to <b>site<\/b>/);
+  const set = deployCardMarkup('shop', { connected: true, target: { app: 'site', git_url: 'ssh://c-sam@n/site.git' } });
+  assert.match(set, /Deploys to <b>site<\/b>/);
+  assert.match(set, /data-lnmt-apps>Change…/);
   const picked = deployCardMarkup('shop', { connected: true }, [
     { customer: 'sam', name: 'site', git_url: 'ssh://c-sam@n/site.git', sites: ['devyn.example.com'] },
     { customer: 'sam', name: 'db', git_url: '' }]);
