@@ -22,7 +22,7 @@ export function deployCardMarkup(projectId, info = {}, apps = null) {
   const target = info.target;
   const current = target?.app ? `<p>Deploys to <b>${esc(target.app)}</b> on LNMT: every approved change is pushed there, built and put live.</p>`
     : target?.git_url ? '<p>Deploys to its LNMT app (set up from LNMT): every approved change is pushed there, built and put live.</p>'
-      : '<p class="subtle">Pick one of your LNMT apps built from git (kind “Your own Dockerfile” or “WordPress, its theme built in LAIka”): every approved change of this project is pushed there, built and put live.</p>';
+      : '<p class="subtle">Pick one of your LNMT apps built from git (kind “Your own Dockerfile” or “WordPress site built by LAIka”): every approved change of this project is pushed there, built and put live.</p>';
   const choices = Array.isArray(apps) ? apps.filter(a => a.git_url) : [];
   const picker = apps === null ? '<button type="button" data-lnmt-apps>Choose an LNMT app…</button>'
     : choices.length ? `<select name="target">${choices.map(a => `<option value="${esc(`${a.customer}/${a.name}`)}">${esc(a.name)}${a.sites?.length ? ` (${esc(a.sites.join(', '))})` : ''}</option>`).join('')}</select><button type="submit">Deploy there</button>`

@@ -688,8 +688,8 @@ key, which LNMT forces to that one app's git), projects/<id>?for_user=
 LAIka's side. Template project_templates/wordpress-theme: a whole
 WordPress site as code (theme + content/ pages, menu, images, site.json,
 imported on deploy by mu-plugins/site-content.php; pages edited in
-WordPress since are kept), Dockerfile for LNMT's "WordPress, its theme
-built in LAIka" apps.
+WordPress since are kept), Dockerfile for LNMT's "WordPress site built
+by LAIka" apps (LNMT kind id wordpress-theme).
 
 ## Style
 
