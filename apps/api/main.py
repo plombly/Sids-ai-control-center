@@ -384,7 +384,7 @@ def _job(key, data):
         "network_request_step": _text(data.get("network_request_step")),
         # The rendered preview on LNMT (services/visual_preview.py); screenshots by file name.
         "visual_status": _text(data.get("visual_status")),
-        "visual_error": _text(data.get("visual_error"))[:400],
+        "visual_error": _text(data.get("visual_error"), "")[:400],
         "visual": _visual(data.get("visual_preview")),
         "sort_time": _timestamp(data.get("updated_at", data.get("created_at"))),
     }
@@ -397,10 +397,10 @@ def _visual(raw):
         if not isinstance(page, dict):
             continue
         shots = {k: Path(str(v)).name for k, v in (page.get("shots") or {}).items() if v}
-        problems = {k: [_text(p)[:300] for p in v][:10] for k, v in (page.get("problems") or {}).items() if isinstance(v, list)}
-        pages.append({"path": _text(page.get("path"), "/")[:200], "title": _text(page.get("title"))[:200],
+        problems = {k: [_text(p, "")[:300] for p in v][:10] for k, v in (page.get("problems") or {}).items() if isinstance(v, list)}
+        pages.append({"path": _text(page.get("path"), "/")[:200], "title": _text(page.get("title"), "")[:200],
                       "shots": shots, "problems": problems})
-    return {"url": _text(preview.get("url")), "pages": pages, "errors": [_text(e)[:300] for e in preview.get("errors", [])][:10]} if pages or preview.get("url") else None
+    return {"url": _text(preview.get("url")), "pages": pages, "errors": [_text(e, "")[:300] for e in preview.get("errors", [])][:10]} if pages or preview.get("url") else None
 
 
 def _json_object(value):
