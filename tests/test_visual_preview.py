@@ -87,3 +87,10 @@ def test_the_candidate_is_pushed_as_a_preview_branch_never_to_main(tmp_path):
     assert module.push_preview(project, "j1", "c" * 40, runner=runner) == ("http://10.0.0.121:30001/", "")
     assert calls[0][-1] == f"{'c' * 40}:refs/heads/lnmt-preview/j1" and "core.hooksPath=/dev/null" in calls[0]
     assert not any("main" in part for part in calls[0])
+
+
+def test_the_page_checks_cover_what_the_first_site_got_wrong():
+    js = visual_preview.CHECKS_JS
+    for finding in ("scrolls sideways", "words broken across lines", "barely bigger than", "hidden from view",
+                    "main headings (h1) on one page", "hardly be seen", "images that do not load", "reach past the right edge"):
+        assert finding in js, finding

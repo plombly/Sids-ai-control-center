@@ -150,11 +150,37 @@ CHECKS_JS = r"""(() => {
   }
   if (broken.size) out.push(`words broken across lines: ${[...broken].slice(0, 8).join(', ')}`);
   const body = parseFloat(getComputedStyle(document.body).fontSize) || 16;
-  const h1 = [...document.querySelectorAll('h1')].find(e => e.offsetParent);
+  const seen = e => { const r = e.getBoundingClientRect(); return e.offsetParent && r.width > 2 && r.height > 2; };
+  const h1s = [...document.querySelectorAll('h1')];
+  const hidden = h1s.filter(e => (e.innerText || e.textContent || '').trim() && !seen(e));
+  if (hidden.length) out.push(`a main heading is hidden from view: ${hidden.map(e => '"' + (e.textContent || '').trim().slice(0, 50) + '"').join(', ')}`);
+  if (h1s.filter(seen).length > 1) out.push(`${h1s.filter(seen).length} main headings (h1) on one page: ${h1s.filter(seen).map(e => '"' + (e.innerText || '').trim().slice(0, 30) + '"').join(', ')}`);
+  const h1 = h1s.filter(seen).slice(-1)[0];
   if (h1) {
     const size = parseFloat(getComputedStyle(h1).fontSize);
     if (size < body * 1.4) out.push(`the main heading is ${Math.round(size)}px, barely bigger than the ${Math.round(body)}px text`);
   }
+  // Text that can hardly be seen: headings, buttons and links against their background.
+  const rgb = c => (c.match(/[\d.]+/g) || []).map(Number);
+  const lum = ([r, g, b]) => [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const backdrop = el => {
+    for (let e = el; e; e = e.parentElement) {
+      const c = rgb(getComputedStyle(e).backgroundColor);
+      if (c.length >= 3 && (c.length < 4 || c[3] > 0.5)) return c;
+    }
+    return [255, 255, 255];
+  };
+  const faint = new Set();
+  for (const el of document.querySelectorAll('h1,h2,h3,.wp-block-button__link,nav a,p')) {
+    if (!el.offsetParent || !(el.innerText || '').trim()) continue;
+    const style = getComputedStyle(el);
+    if (parseFloat(style.opacity) < 0.3 || style.visibility === 'hidden') { faint.add((el.innerText || '').trim().slice(0, 40)); continue; }
+    const a = lum(rgb(style.color)), b = lum(backdrop(el));
+    const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    if (ratio < 2) faint.add((el.innerText || '').trim().slice(0, 40));
+  }
+  if (faint.size) out.push(`text that can hardly be seen against its background: ${[...faint].slice(0, 5).map(t => '"' + t + '"').join(', ')}`);
   const missing = [...document.images].filter(i => i.complete && i.naturalWidth === 0).map(i => i.getAttribute('src') || '?');
   if (missing.length) out.push(`images that do not load: ${missing.slice(0, 5).join(', ')}`);
   const wide = [...document.querySelectorAll('body *')].filter(e => {
