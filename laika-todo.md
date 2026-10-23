@@ -175,7 +175,7 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       docker compose up -d --build api web, pair with LNMT; release 2.1.0.
 - [ ] The test: Devyn's site on aegvori.com, built through LNMT + LAIka;
       Claude observes.
-- [ ] Visual previews + theme.json checks (2026-10-23, on dev/claude, gate
+- [x] Visual previews + theme.json checks (2026-10-23; in production the same day, on dev/claude, gate
       passed; LNMT node side deployed): each LNMT-site candidate is
       rendered on LNMT (lnmt-preview/<job>), screenshotted at desktop and
       phone width with layout checks, shown to the reviewer (blocking) and
