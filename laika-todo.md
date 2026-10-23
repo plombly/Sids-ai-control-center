@@ -162,6 +162,20 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       CI green, signed assets on GitHub, key shredded). Production update:
       owner's call.
 
+## LNMT link (owner, 2026-10-23: build it all, then build Devyn's site with it)
+
+- [x] Built on dev/claude, gate passed, tested on the dev LAIka with the real
+      LNMT: pairing (pinned cert), sign in to LNMT with LAIka (browser round
+      trip), LAIka's people as LNMT accounts, Build with LAIka (project for
+      the person, push to the LNMT app, deploy key forced to one app),
+      Deploy to LNMT from project Settings, template "WordPress site" (whole
+      site as code: theme + pages/menu/images; WordPress edits kept).
+      Also fixed: `laika reset-password` crashed on installs (no FastAPI).
+- [ ] Production: owner's go; ff-merge, mkdir -m700 /etc/laika/link,
+      docker compose up -d --build api web, pair with LNMT; release 2.1.0.
+- [ ] The test: Devyn's site on aegvori.com, built through LNMT + LAIka;
+      Claude observes.
+
 ## Backlog (not scheduled)
 
 - **Off-site backups** (moved from 1.4 on 2026-10-04: the owner first spins
