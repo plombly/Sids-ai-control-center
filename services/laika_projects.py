@@ -361,7 +361,9 @@ def templates(base=None):
             continue
         found[meta.parent.name] = {"id": meta.parent.name, "name": data.get("name", meta.parent.name),
                                    "description": data.get("description", ""), "type": data.get("type", ""),
-                                   "run_command": data.get("run_command", "")}
+                                   "run_command": data.get("run_command", ""),
+                                   # "lnmt": built here, run by LNMT (its Dockerfile), never by LAIka's apps service
+                                   "deploys_to": data.get("deploys_to", "")}
     return found
 
 

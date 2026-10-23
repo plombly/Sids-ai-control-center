@@ -43,5 +43,7 @@ def test_apps_with_a_page_or_port_have_a_run_command():
         detected = laika_projects.detect_run(read)
         if template_id == "cli-tool":
             assert not detected and not meta["run_command"]
+        elif meta["deploys_to"] == "lnmt":  # LNMT runs it from its Dockerfile
+            assert not detected and not meta["run_command"] and (root / "Dockerfile").is_file(), template_id
         else:
             assert detected or meta["run_command"], template_id
