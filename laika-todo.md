@@ -175,6 +175,14 @@ Reimplemented ideas only (memory phoenix-integration). Order:
       docker compose up -d --build api web, pair with LNMT; release 2.1.0.
 - [ ] The test: Devyn's site on aegvori.com, built through LNMT + LAIka;
       Claude observes.
+- [ ] Visual previews + theme.json checks (2026-10-23, on dev/claude, gate
+      passed; LNMT node side deployed): each LNMT-site candidate is
+      rendered on LNMT (lnmt-preview/<job>), screenshotted at desktop and
+      phone width with layout checks, shown to the reviewer (blocking) and
+      on the approval card. Tried the browser step on the real preview of
+      Devyn's site: it found the hidden hero heading and the 20px h1.
+      Production: needs workers + apps service restart and api/web rebuild
+      (owner's go).
 
 ## Backlog (not scheduled)
 
